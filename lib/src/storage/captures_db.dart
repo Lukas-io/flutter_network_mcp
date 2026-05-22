@@ -606,17 +606,7 @@ class CapturesDao {
   /// [olderThanMs] is millis-since-epoch; requests with start_us older than
   /// `olderThanMs * 1000` lose their bodies.
   int purgeBodies({int? sessionId, int? olderThanMs}) {
-    final clauses = <String>[];
-    final params = <Object?>[];
-    if (sessionId != null) {
-      clauses.add('session_id = ?');
-      params.add(sessionId);
-    }
-    if (olderThanMs != null) {
-      clauses.add('vm_id IN (SELECT vm_id FROM http_requests WHERE start_us < ?)');
-      params.add(olderThanMs * 1000);
-    }
-    final where = clauses.isEmpty ? '' : ' WHERE ${clauses.join(' AND ')}';
+    final (where, params, _) = _bodyPurgeWhere(sessionId, olderThanMs);
     final before = _db
         .select('SELECT COUNT(*) AS n FROM http_bodies$where', params)
         .first['n'] as int;
@@ -631,6 +621,37 @@ class CapturesDao {
       _db.execute('UPDATE http_requests SET bodies_fetched=0');
     }
     return before;
+  }
+
+  /// Dry-run count + total bytes for [purgeBodies] with the same filters.
+  /// Returns `{rowCount, totalBytes}`.
+  Map<String, int> countPurgeableBodies({int? sessionId, int? olderThanMs}) {
+    final (where, params, _) = _bodyPurgeWhere(sessionId, olderThanMs);
+    final row = _db
+        .select(
+          'SELECT COUNT(*) AS n, COALESCE(SUM(size), 0) AS bytes FROM http_bodies$where',
+          params,
+        )
+        .first;
+    return {
+      'rowCount': (row['n'] as int?) ?? 0,
+      'totalBytes': (row['bytes'] as int?) ?? 0,
+    };
+  }
+
+  (String, List<Object?>, bool) _bodyPurgeWhere(int? sessionId, int? olderThanMs) {
+    final clauses = <String>[];
+    final params = <Object?>[];
+    if (sessionId != null) {
+      clauses.add('session_id = ?');
+      params.add(sessionId);
+    }
+    if (olderThanMs != null) {
+      clauses.add('vm_id IN (SELECT vm_id FROM http_requests WHERE start_us < ?)');
+      params.add(olderThanMs * 1000);
+    }
+    final where = clauses.isEmpty ? '' : ' WHERE ${clauses.join(' AND ')}';
+    return (where, params, clauses.isNotEmpty);
   }
 
   /// Removes alerts matching the filters. Returns the count deleted.

@@ -1,15 +1,15 @@
 ---
 tool: network_query
-description: Read-only SQL escape hatch against the captures DB. Single SELECT (or WITH...SELECT). 500-row cap.
-when_to_use: When the structured tools can't express the question — joins across tables, aggregations, ad-hoc analysis.
+description: Read-only SQL escape hatch against the captures DB. Single SELECT only. BLOB-safe and cell-capped.
+when_to_use: When structured tools can't express the question — joins across tables, aggregations, ad-hoc analysis.
 ---
 
 ## DO NOT USE THIS TOOL WHEN
 
 - A purpose-built tool exists — `network_list` for filtered summaries, `network_search` for FTS, `alerts_drain` for alerts. Reach for SQL only when those can't express the question.
-- You want to mutate data — this tool rejects anything that isn't SELECT / WITH...SELECT. Use the DB tools or open the file directly.
-- The user wants a quick overview — SQL output is raw; for human-friendly summaries use the structured tools.
-- You're tempted to write a 5-table join because it's powerful — start simpler. Cumulative cost of repeatedly re-reading raw SQL output is high; structured tools have summary fields that fit context better.
+- You want to mutate data — this rejects anything that isn't SELECT / WITH...SELECT.
+- The user wants a quick overview — SQL output is raw; structured tools synthesize.
+- You're tempted to write a 5-table join — start simpler. Cumulative raw-SQL output is heavier than structured tools.
 
 ## Use this when
 
@@ -20,7 +20,7 @@ when_to_use: When the structured tools can't express the question — joins acro
 
 ## How it works
 
-Trims trailing semicolons. Rejects anything not starting with SELECT / WITH (case-insensitive). Rejects multiple statements (any `;` inside). Appends `LIMIT 500` to whatever you submit. Runs synchronously; no transaction wrapping.
+Trims trailing semicolons. Rejects non-SELECT/WITH. Rejects multi-statement (any internal `;`). Wraps your statement in `SELECT * FROM (...) LIMIT 500` so the row cap applies regardless of your own LIMIT. BLOB cells return `{type:"blob", size:N}` to avoid dumping bytes. String cells > 2 KB return `{value, truncated, totalLength}`.
 
 ## Schema
 
@@ -35,6 +35,8 @@ socket_events(session_id, vm_id, socket_type, address, port, start_us, end_us,
 log_records(id, session_id, timestamp_ms, source, level, logger, message, error, stack_trace)
 alerts(id, session_id, ts_ms, severity, kind, title, detail, source_kind, source_id, drained)
 ignored_hosts(host, added_at, reason)
+redacted_headers(name, added_at, reason)
+alert_patterns(id, kind, regex, severity, label, added_at)
 ```
 
 ## Args
@@ -44,17 +46,27 @@ ignored_hosts(host, added_at, reason)
 ## Returns
 
 ```json
-{"rowCount": 3, "rows": [{"host":"api.x","n":12}, ...]}
+{
+  "summary": "3 row(s) returned.",
+  "rowCount": 3,
+  "rows": [{"host":"api.x","n":12}, ...],
+  "nextSteps": [
+    "For HTTP bodies: network_body id:<vm_id> which:response",
+    "For session details: session_open id:<n>"
+  ]
+}
 ```
+
+`warnings: []` fires when the 500-row cap was hit OR BLOB cells were summarized.
 
 ## Pairs well with
 
-- `session_list` — once you find ids of interest in SQL, open them.
-- `network_search` — for body content; SQL is for metadata.
+- `session_list` — pick ids of interest before SQL.
+- `network_search` — body content; SQL is for metadata.
 
 ## Example
 
 ```
 > network_query sql:"SELECT host, COUNT(*) AS n FROM http_requests WHERE session_id=14 GROUP BY host ORDER BY 2 DESC"
-< [{host:"api.example.com", n:32}, {host:"cdn.example.com", n:8}]
+< {summary:"3 row(s) returned.", rows:[{host:"api.example.com", n:32}, ...]}
 ```
