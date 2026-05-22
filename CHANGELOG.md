@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.12] — 2026-05-22
+
+### Changed
+- **Batch 6 (SQL + Admin)** — final six tools through the checklist. Phase 6 sweep complete: all 32 tools now follow the checklist.
+  - `network_query` — `summary` reports row count + cap-hit + BLOB-summarized status; `warnings` for 500-row cap hits and BLOB summarization; `nextSteps` points at `network_body` / `session_open` for follow-up.
+  - `ignored_hosts` — every action has a `summary`; add-action warns when matching rows already exist in history; `list` action suggests `network_query` to find noisy hosts to add.
+  - `redacted_headers` — every action has a `summary`; built-in additions return success with `inserted:false` + warning; built-in removal still errors with a clear explanation.
+  - `db_stats` — `summary` synthesizes ("DB at X MB across N session(s) (Y MB in bodies, Z undrained alert(s))."); `warnings` for big DB (>100 MB), body-dominant (>70%), many sessions (≥50); capability-aware `nextSteps`.
+  - `db_vacuum` — `summary` shows reclaimed bytes ("Vacuumed: 45.20 MB → 7.10 MB (38.10 MB reclaimed)."); `warnings` when no space reclaimed (suggesting deletes first).
+  - `bodies_purge` — dry-run now reports `wouldPurgeRows` + `wouldPurgeBytes` (added `countPurgeableBodies` DAO method behind it) so the agent can echo the impact before committing.
+
+### Added
+- `CapturesDao.countPurgeableBodies({sessionId, olderThanMs})` — mirror of `purgeBodies` filters for dry-run impact reporting.
+
 ## [0.5.11] — 2026-05-22
 
 ### Fixed
