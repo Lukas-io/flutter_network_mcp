@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.2] — 2026-05-22
+
+### Fixed
+- **Install path** — `dart pub global activate` was emitting "Could not find bin/flutter_network_mcp.dart" because the entry file was `bin/main.dart` but the `executables:` pubspec entry expected the package-named file. Renamed `bin/main.dart` → `bin/flutter_network_mcp.dart` so the default convention matches and the installed binary actually runs.
+
 ## [0.5.1] — 2026-05-22
 
 ### Changed
