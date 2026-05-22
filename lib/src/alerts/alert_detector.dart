@@ -116,6 +116,23 @@ class AlertDetector {
         tsMs: timestampMs,
       );
     }
+
+    // Custom user-defined patterns. Run last so they don't pre-empt the
+    // built-in flutter_error path, but they CAN fire alongside log_keyword.
+    for (final pattern in _rules.customPatterns) {
+      if (pattern.regex.hasMatch(message)) {
+        _dao.insertAlert(
+          sessionId: sessionId,
+          severity: pattern.severity,
+          kind: pattern.kind,
+          title: pattern.label ?? _firstLine(message),
+          detail: message.length > 2048 ? message.substring(0, 2048) : message,
+          sourceKind: 'log',
+          sourceId: 'log:$logRowId:${pattern.id}',
+          tsMs: timestampMs,
+        );
+      }
+    }
   }
 
   static String _compact(Uri uri) {

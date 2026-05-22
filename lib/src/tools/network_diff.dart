@@ -25,6 +25,9 @@ final networkDiffTool = Tool(
       'maxBodyLines': Schema.int(
         description: 'Max body lines to diff (default 200, hard cap 1000).',
       ),
+      'maxLineLength': Schema.int(
+        description: 'Max characters per diffed line (default 2000, hard cap 8000). Longer lines are truncated with «…».',
+      ),
     },
     required: ['idA', 'idB'],
   ),
@@ -44,6 +47,9 @@ FutureOr<CallToolResult> networkDiff(CallToolRequest request) async {
   }
   final maxLinesRaw = (args['maxBodyLines'] as int?) ?? 200;
   final maxLines = maxLinesRaw <= 0 ? 200 : (maxLinesRaw > 1000 ? 1000 : maxLinesRaw);
+  final maxLineLenRaw = (args['maxLineLength'] as int?) ?? 2000;
+  final maxLineLen =
+      maxLineLenRaw <= 0 ? 2000 : (maxLineLenRaw > 8000 ? 8000 : maxLineLenRaw);
 
   try {
     final dao = CapturesDao();
@@ -65,7 +71,8 @@ FutureOr<CallToolResult> networkDiff(CallToolRequest request) async {
 
     Map<String, Object?>? bodyDiff;
     if (textA?.encoding == 'utf8' && textB?.encoding == 'utf8') {
-      bodyDiff = _diffText(textA!.value, textB!.value, maxLines: maxLines);
+      bodyDiff = _diffText(textA!.value, textB!.value,
+          maxLines: maxLines, maxLineLength: maxLineLen);
     }
 
     return jsonResult({
@@ -159,7 +166,12 @@ Map<String, String> _flat(Map<String, dynamic>? m) {
   return out;
 }
 
-Map<String, Object?> _diffText(String a, String b, {required int maxLines}) {
+Map<String, Object?> _diffText(
+  String a,
+  String b, {
+  required int maxLines,
+  required int maxLineLength,
+}) {
   if (a == b) {
     return {'comparable': true, 'equal': true, 'hunks': const <String>[]};
   }
@@ -168,19 +180,25 @@ Map<String, Object?> _diffText(String a, String b, {required int maxLines}) {
   final cap1 = ls1.length > maxLines ? ls1.sublist(0, maxLines) : ls1;
   final cap2 = ls2.length > maxLines ? ls2.sublist(0, maxLines) : ls2;
   final hunks = <String>[];
+  var anyLineTruncated = false;
+  String clip(String s) {
+    if (s.length <= maxLineLength) return s;
+    anyLineTruncated = true;
+    return '${s.substring(0, maxLineLength)} «…+${s.length - maxLineLength} chars»';
+  }
   final maxLen = cap1.length > cap2.length ? cap1.length : cap2.length;
   for (var i = 0; i < maxLen; i++) {
     final la = i < cap1.length ? cap1[i] : null;
     final lb = i < cap2.length ? cap2[i] : null;
     if (la == lb) continue;
-    if (la != null) hunks.add('- $la');
-    if (lb != null) hunks.add('+ $lb');
+    if (la != null) hunks.add('- ${clip(la)}');
+    if (lb != null) hunks.add('+ ${clip(lb)}');
   }
   return {
     'comparable': true,
     'equal': false,
-    'truncated':
-        ls1.length > maxLines || ls2.length > maxLines ? true : false,
+    'truncated': ls1.length > maxLines || ls2.length > maxLines,
+    'lineTruncated': anyLineTruncated,
     'hunks': hunks,
   };
 }

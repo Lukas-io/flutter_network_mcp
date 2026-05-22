@@ -1,8 +1,28 @@
+/// A single custom alert pattern loaded from the `alert_patterns` table.
+class CustomPattern {
+  CustomPattern({
+    required this.id,
+    required this.kind,
+    required this.regex,
+    required this.severity,
+    this.label,
+  });
+  final int id;
+  final String kind;
+  final RegExp regex;
+  final String severity;
+  final String? label;
+}
+
 /// Tunable rule set for the alert detector. Singleton; mutated by
 /// `alerts_config` at runtime.
 class AlertRules {
   AlertRules._();
   static final AlertRules instance = AlertRules._();
+
+  /// Custom user-defined regex patterns, refreshed from the DB by
+  /// `refreshCustomPatterns()` on add/remove.
+  List<CustomPattern> customPatterns = const [];
 
   int slowThresholdMs = 3000;
 

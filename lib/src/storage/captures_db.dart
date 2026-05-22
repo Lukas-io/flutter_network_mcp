@@ -1,4 +1,5 @@
 import 'dart:convert';
+// ignore: unused_import — Uint8List used in BLOB type check below.
 import 'dart:typed_data';
 
 import 'package:sqlite3/sqlite3.dart' as sql;
@@ -516,23 +517,25 @@ class CapturesDao {
     String which = 'any',
     int limit = 20,
   }) {
-    // Restrict to a specific column by prepending the FTS5 column-filter
-    // syntax `colname:` to the user query in Dart, so the SQL itself stays
-    // parameterized with a single placeholder.
+    // Wrap the user query as an FTS5 phrase so characters like '-', ':', '('
+    // don't get parsed as FTS5 operators. Anyone wanting raw operator syntax
+    // (AND/OR/NEAR) can pre-quote pieces themselves; this only protects the
+    // default case. Double-quote characters in the query are doubled to escape.
+    final phrase = '"${query.replaceAll('"', '""')}"';
     final String matchExpr;
     switch (which) {
       case 'request':
-        matchExpr = 'content_request:$query';
+        matchExpr = 'content_request:$phrase';
         break;
       case 'response':
-        matchExpr = 'content_response:$query';
+        matchExpr = 'content_response:$phrase';
         break;
       case 'url':
-        matchExpr = 'url:$query';
+        matchExpr = 'url:$phrase';
         break;
       case 'any':
       default:
-        matchExpr = query;
+        matchExpr = phrase;
     }
     const matchClause = 'http_search MATCH ?';
     final params = <Object?>[matchExpr];
@@ -564,9 +567,217 @@ class CapturesDao {
     return rows.map(_rowToMap).toList();
   }
 
+  // ----- session maintenance -----
+
+  /// Deletes a session and (via CASCADE) all its requests, bodies, sockets,
+  /// logs, alerts, and FTS index rows.
+  bool deleteSession(int sessionId) {
+    final exists = _db.select('SELECT 1 FROM sessions WHERE id=?', [sessionId]);
+    if (exists.isEmpty) return false;
+    // Manually drop FTS rows since SQLite FTS5 doesn't honor FK cascades.
+    _db.execute(
+      'DELETE FROM http_search WHERE rowid IN (SELECT rowid FROM http_search_map WHERE session_id=?)',
+      [sessionId],
+    );
+    _db.execute('DELETE FROM http_search_map WHERE session_id=?', [sessionId]);
+    _db.execute('DELETE FROM sessions WHERE id=?', [sessionId]);
+    return true;
+  }
+
+  /// Drops captured BLOB bodies (request + response) for matching requests.
+  /// Keeps the http_requests metadata row intact.
+  /// [olderThanMs] is millis-since-epoch; requests with start_us older than
+  /// `olderThanMs * 1000` lose their bodies.
+  int purgeBodies({int? sessionId, int? olderThanMs}) {
+    final clauses = <String>[];
+    final params = <Object?>[];
+    if (sessionId != null) {
+      clauses.add('session_id = ?');
+      params.add(sessionId);
+    }
+    if (olderThanMs != null) {
+      clauses.add('vm_id IN (SELECT vm_id FROM http_requests WHERE start_us < ?)');
+      params.add(olderThanMs * 1000);
+    }
+    final where = clauses.isEmpty ? '' : ' WHERE ${clauses.join(' AND ')}';
+    final before = _db
+        .select('SELECT COUNT(*) AS n FROM http_bodies$where', params)
+        .first['n'] as int;
+    if (before == 0) return 0;
+    _db.execute('DELETE FROM http_bodies$where', params);
+    if (sessionId != null) {
+      _db.execute(
+        'UPDATE http_requests SET bodies_fetched=0 WHERE session_id=?',
+        [sessionId],
+      );
+    } else {
+      _db.execute('UPDATE http_requests SET bodies_fetched=0');
+    }
+    return before;
+  }
+
+  /// Removes alerts matching the filters. Returns the count deleted.
+  int clearAlerts({int? sessionId, String? severityMin, bool drainedOnly = false}) {
+    final clauses = <String>[];
+    final params = <Object?>[];
+    if (sessionId != null) {
+      clauses.add('session_id = ?');
+      params.add(sessionId);
+    }
+    if (drainedOnly) clauses.add('drained = 1');
+    if (severityMin != null) {
+      final rank = _severityRank(severityMin);
+      clauses.add(_severityRankSql('severity', '>=', rank));
+    }
+    final where = clauses.isEmpty ? '' : ' WHERE ${clauses.join(' AND ')}';
+    final before =
+        _db.select('SELECT COUNT(*) AS n FROM alerts$where', params).first['n'] as int;
+    if (before == 0) return 0;
+    _db.execute('DELETE FROM alerts$where', params);
+    return before;
+  }
+
+  /// File + table statistics. The file size comes from `PRAGMA page_count *
+  /// page_size`; SQLite has no `dbinfo()` accessible from FFI.
+  Map<String, Object?> stats() {
+    final tables = [
+      'sessions',
+      'http_requests',
+      'http_bodies',
+      'socket_events',
+      'log_records',
+      'alerts',
+      'http_search_map',
+      'ignored_hosts',
+      'redacted_headers',
+      'alert_patterns',
+    ];
+    final counts = <String, int>{};
+    for (final t in tables) {
+      try {
+        counts[t] = _db.select('SELECT COUNT(*) AS n FROM $t').first['n'] as int;
+      } catch (_) {
+        counts[t] = -1;
+      }
+    }
+    final pageCount = _db.select('PRAGMA page_count').first['page_count'] as int;
+    final pageSize = _db.select('PRAGMA page_size').first['page_size'] as int;
+    final journalMode = _db.select('PRAGMA journal_mode').first['journal_mode'];
+    final fileBytes = pageCount * pageSize;
+    // Bodies on-disk size: sum of size column.
+    final bodiesBytes = _db
+            .select('SELECT COALESCE(SUM(size),0) AS n FROM http_bodies')
+            .first['n'] as int? ??
+        0;
+    final undrainedAlerts =
+        _db.select('SELECT COUNT(*) AS n FROM alerts WHERE drained=0').first['n']
+            as int;
+    return {
+      'rowCounts': counts,
+      'sizeBytes': fileBytes,
+      'sizeMb': (fileBytes / (1024 * 1024)).toStringAsFixed(2),
+      'bodiesBytes': bodiesBytes,
+      'bodiesMb': (bodiesBytes / (1024 * 1024)).toStringAsFixed(2),
+      'pageSize': pageSize,
+      'pageCount': pageCount,
+      'journalMode': journalMode,
+      'pendingAlerts': undrainedAlerts,
+    };
+  }
+
+  void vacuum() {
+    _db.execute('PRAGMA wal_checkpoint(TRUNCATE)');
+    _db.execute('VACUUM');
+    _db.execute('PRAGMA optimize');
+  }
+
+  // ----- redacted_headers (config) -----
+
+  bool addRedactedHeader(String name, {String? reason}) {
+    final norm = name.trim().toLowerCase();
+    if (norm.isEmpty) throw ArgumentError('header name cannot be empty');
+    final before = _db.select('SELECT 1 FROM redacted_headers WHERE name=?', [norm]);
+    final isNew = before.isEmpty;
+    _db.execute(
+      'INSERT OR REPLACE INTO redacted_headers(name, added_at, reason) VALUES (?,?,?)',
+      [norm, DateTime.now().millisecondsSinceEpoch, reason],
+    );
+    return isNew;
+  }
+
+  bool removeRedactedHeader(String name) {
+    final norm = name.trim().toLowerCase();
+    final before = _db.select('SELECT 1 FROM redacted_headers WHERE name=?', [norm]);
+    if (before.isEmpty) return false;
+    _db.execute('DELETE FROM redacted_headers WHERE name=?', [norm]);
+    return true;
+  }
+
+  List<Map<String, Object?>> listRedactedHeaders() {
+    final rows = _db.select(
+      'SELECT name, added_at, reason FROM redacted_headers ORDER BY name',
+    );
+    return rows.map(_rowToMap).toList();
+  }
+
+  /// Returns the lowercase set of header names that should be redacted.
+  /// Always includes the built-in defaults.
+  Set<String> redactedHeaderSet() {
+    final defaults = {
+      'authorization',
+      'cookie',
+      'proxy-authorization',
+      'x-api-key',
+      'x-auth-token',
+    };
+    final extra = _db.select('SELECT name FROM redacted_headers');
+    return {...defaults, ...extra.map((r) => r['name'] as String)};
+  }
+
+  // ----- alert_patterns (config) -----
+
+  int addAlertPattern({
+    required String kind,
+    required String regex,
+    required String severity,
+    String? label,
+  }) {
+    if (kind.trim().isEmpty || regex.trim().isEmpty) {
+      throw ArgumentError('kind and regex are required');
+    }
+    _severityRank(severity); // validates
+    // Validate regex compiles.
+    RegExp(regex, multiLine: true);
+    _db.execute(
+      'INSERT INTO alert_patterns(kind, regex, severity, label, added_at) VALUES (?,?,?,?,?)',
+      [kind.trim(), regex, severity, label, DateTime.now().millisecondsSinceEpoch],
+    );
+    return _db.lastInsertRowId;
+  }
+
+  bool removeAlertPattern(int id) {
+    final before = _db.select('SELECT 1 FROM alert_patterns WHERE id=?', [id]);
+    if (before.isEmpty) return false;
+    _db.execute('DELETE FROM alert_patterns WHERE id=?', [id]);
+    return true;
+  }
+
+  List<Map<String, Object?>> listAlertPatterns() {
+    final rows = _db
+        .select('SELECT id, kind, regex, severity, label, added_at FROM alert_patterns ORDER BY id');
+    return rows.map(_rowToMap).toList();
+  }
+
   // ----- raw query -----
 
-  List<Map<String, Object?>> rawSelect(String sql, {int rowCap = 500}) {
+  /// Read-only SQL escape hatch. Caps row count, per-cell length, and BLOB
+  /// values get summarized as `{type:'blob', size:N}` so a `SELECT * FROM
+  /// http_bodies` doesn't dump megabytes back through MCP.
+  List<Map<String, Object?>> rawSelect(
+    String sql, {
+    int rowCap = 500,
+    int cellMaxChars = 2048,
+  }) {
     final trimmed = sql.trim().replaceAll(RegExp(r';+\s*$'), '');
     final upper = trimmed.toUpperCase();
     if (!upper.startsWith('SELECT') && !upper.startsWith('WITH ')) {
@@ -575,8 +786,30 @@ class CapturesDao {
     if (trimmed.contains(';')) {
       throw ArgumentError('Multiple statements are not allowed.');
     }
-    final result = _db.select('$trimmed LIMIT $rowCap');
-    return result.map(_rowToMap).toList();
+    // Wrap in a subquery so we can apply the row cap regardless of whether
+    // the user already wrote their own LIMIT.
+    final result = _db.select('SELECT * FROM ($trimmed) LIMIT $rowCap');
+    return result.map((r) => _capRow(r, cellMaxChars)).toList();
+  }
+
+  Map<String, Object?> _capRow(sql.Row r, int cellMaxChars) {
+    final out = <String, Object?>{};
+    for (final k in r.keys) {
+      final v = r[k];
+      if (v is List<int> || v is Uint8List) {
+        final len = (v as List<int>).length;
+        out[k] = {'type': 'blob', 'size': len};
+      } else if (v is String && v.length > cellMaxChars) {
+        out[k] = {
+          'value': v.substring(0, cellMaxChars),
+          'truncated': true,
+          'totalLength': v.length,
+        };
+      } else {
+        out[k] = v;
+      }
+    }
+    return out;
   }
 
   // ----- helpers -----

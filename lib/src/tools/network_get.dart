@@ -37,9 +37,13 @@ FutureOr<CallToolResult> networkGet(CallToolRequest request) async {
   final includeBodies = (args['includeBodies'] as bool?) ?? true;
   final truncateRaw = args['bodyTruncateBytes'] as int?;
   final maxBytes = (truncateRaw == null) ? 4096 : (truncateRaw <= 0 ? -1 : truncateRaw);
+  final headerTruncateRaw = args['headerTruncateBytes'] as int?;
+  final headerTruncateBytes =
+      (headerTruncateRaw == null || headerTruncateRaw <= 0) ? 256 : headerTruncateRaw;
 
   if (session.isViewingHistory) {
-    return _historyGet(session.viewedSessionId!, id, includeBodies, maxBytes);
+    return _historyGet(session.viewedSessionId!, id, includeBodies, maxBytes,
+        headerTruncateBytes);
   }
 
   if (!session.isAttached) {
@@ -75,7 +79,7 @@ FutureOr<CallToolResult> networkGet(CallToolRequest request) async {
           : {
               if (r.request!.hasError) 'error': r.request!.error,
               if (!r.request!.hasError) ...{
-                'headers': r.request!.headers,
+                'headers': truncateHeaders(r.request!.headers, maxValueBytes: headerTruncateBytes),
                 'contentLength': r.request!.contentLength,
                 'cookies': r.request!.cookies,
               },
@@ -89,7 +93,7 @@ FutureOr<CallToolResult> networkGet(CallToolRequest request) async {
               if (!r.response!.hasError) ...{
                 'statusCode': r.response!.statusCode,
                 'reasonPhrase': r.response!.reasonPhrase,
-                'headers': r.response!.headers,
+                'headers': truncateHeaders(r.response!.headers, maxValueBytes: headerTruncateBytes),
                 'contentLength': r.response!.contentLength,
                 'compressionState': r.response!.compressionState,
               },
@@ -102,7 +106,13 @@ FutureOr<CallToolResult> networkGet(CallToolRequest request) async {
   }
 }
 
-FutureOr<CallToolResult> _historyGet(int sid, String id, bool includeBodies, int maxBytes) {
+FutureOr<CallToolResult> _historyGet(
+  int sid,
+  String id,
+  bool includeBodies,
+  int maxBytes,
+  int headerTruncateBytes,
+) {
   try {
     final dao = CapturesDao();
     final row = dao.getHttpRequest(sid, id);
@@ -127,7 +137,8 @@ FutureOr<CallToolResult> _historyGet(int sid, String id, bool includeBodies, int
       'durationMs':
           (row['duration_us'] as int?) == null ? null : ((row['duration_us'] as int) ~/ 1000),
       'request': {
-        if (reqHeaders != null) 'headers': reqHeaders,
+        if (reqHeaders != null)
+          'headers': truncateHeaders(reqHeaders, maxValueBytes: headerTruncateBytes),
         'contentLength': row['request_size'],
         if (includeBodies && reqBody != null)
           'body': decodeBody(reqBody, reqCt, maxBytes: maxBytes)?.toJson(),
@@ -135,7 +146,8 @@ FutureOr<CallToolResult> _historyGet(int sid, String id, bool includeBodies, int
       'response': {
         'statusCode': row['status_code'],
         'reasonPhrase': row['reason_phrase'],
-        if (respHeaders != null) 'headers': respHeaders,
+        if (respHeaders != null)
+          'headers': truncateHeaders(respHeaders, maxValueBytes: headerTruncateBytes),
         'contentLength': row['response_size'],
         if (includeBodies && respBody != null)
           'body': decodeBody(respBody, respCt, maxBytes: maxBytes)?.toJson(),

@@ -1,4 +1,5 @@
 import 'dart:collection';
+import 'dart:io' as io;
 
 /// One captured log record from the VM service Logging/Stdout/Stderr streams.
 class LogEntry {
@@ -34,7 +35,17 @@ class LogEntry {
 
 /// Bounded FIFO log buffer.
 class LogBuffer {
-  LogBuffer({this.capacity = 500});
+  LogBuffer({int? capacity}) : capacity = capacity ?? _envCapacity();
+
+  /// Reads `FLUTTER_NETWORK_MCP_LOG_BUFFER` (50–10000). Default 500.
+  static int _envCapacity() {
+    final raw = io.Platform.environment['FLUTTER_NETWORK_MCP_LOG_BUFFER'];
+    final parsed = raw == null ? null : int.tryParse(raw);
+    if (parsed == null) return 500;
+    if (parsed < 50) return 50;
+    if (parsed > 10000) return 10000;
+    return parsed;
+  }
 
   final int capacity;
   final Queue<LogEntry> _entries = Queue<LogEntry>();

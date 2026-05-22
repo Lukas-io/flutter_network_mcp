@@ -3,7 +3,7 @@
 // Bump [currentVersion] when changing this file and add a migration block in
 // the migration switch in database.dart.
 
-const int currentVersion = 2;
+const int currentVersion = 3;
 
 const List<String> initialSchema = [
   '''
@@ -129,6 +129,23 @@ const List<String> initialSchema = [
   'CREATE INDEX idx_logs_session_time ON log_records(session_id, timestamp_ms)',
   'CREATE INDEX idx_logs_level ON log_records(level)',
   'CREATE INDEX idx_alerts_drained ON alerts(drained, severity, ts_ms)',
+  '''
+  CREATE TABLE redacted_headers (
+    name      TEXT PRIMARY KEY,
+    added_at  INTEGER NOT NULL,
+    reason    TEXT
+  )
+  ''',
+  '''
+  CREATE TABLE alert_patterns (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind      TEXT NOT NULL,
+    regex     TEXT NOT NULL,
+    severity  TEXT NOT NULL,
+    label     TEXT,
+    added_at  INTEGER NOT NULL
+  )
+  ''',
 ];
 
 /// SQL statements to apply when upgrading from v1 → v2.
@@ -171,4 +188,25 @@ const List<String> migrationV1toV2 = [
   )
   ''',
   'CREATE INDEX IF NOT EXISTS idx_alerts_drained ON alerts(drained, severity, ts_ms)',
+];
+
+/// v2 → v3: configurability tables (redacted_headers, alert_patterns).
+const List<String> migrationV2toV3 = [
+  '''
+  CREATE TABLE IF NOT EXISTS redacted_headers (
+    name      TEXT PRIMARY KEY,
+    added_at  INTEGER NOT NULL,
+    reason    TEXT
+  )
+  ''',
+  '''
+  CREATE TABLE IF NOT EXISTS alert_patterns (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind      TEXT NOT NULL,
+    regex     TEXT NOT NULL,
+    severity  TEXT NOT NULL,
+    label     TEXT,
+    added_at  INTEGER NOT NULL
+  )
+  ''',
 ];

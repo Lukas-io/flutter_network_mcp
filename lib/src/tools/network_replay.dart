@@ -7,27 +7,28 @@ import '../state/session.dart';
 import '../storage/captures_db.dart';
 import 'result.dart';
 
-const _redactedHeaderNames = <String>{
-  'authorization',
-  'cookie',
-  'proxy-authorization',
-  'x-api-key',
-  'x-auth-token',
-};
+const _kDefaultBodyTruncate = 4096;
+const _kMaxBodyTruncate = 262144;
 
 final networkReplayTool = Tool(
   name: 'network_replay',
   description:
-      'Emits a runnable curl command for a captured HTTP request. Auth-like '
-      'headers (Authorization, Cookie, X-API-Key, etc.) are redacted by '
-      'default — pass `redact:false` to include them verbatim.',
+      'Emits a runnable curl command for a captured HTTP request. Sensitive '
+      'headers are redacted by default (built-in set + custom names added via '
+      'the redacted_headers tool). Request body is truncated to '
+      '`bodyTruncateBytes` (default 4 KB) so the response stays context-safe. '
+      'Pass `redact:false` for unredacted headers; `bodyTruncateBytes:0` for '
+      'the full body up to 256 KB.',
   inputSchema: Schema.object(
     properties: {
       'id': Schema.string(description: 'Request id.'),
       'sessionId': Schema.int(
         description: 'Session to look in. Default: current session.',
       ),
-      'redact': Schema.bool(description: 'Redact auth headers (default true).'),
+      'redact': Schema.bool(description: 'Redact auth-like headers (default true).'),
+      'bodyTruncateBytes': Schema.int(
+        description: 'Max bytes of body inlined into the curl. Default 4096, hard cap 262144. Pass 0 for "as much as the cap allows".',
+      ),
     },
     required: ['id'],
   ),
@@ -43,6 +44,10 @@ FutureOr<CallToolResult> networkReplay(CallToolRequest request) async {
     return errorResult('No session — attach or open one first.');
   }
   final redact = (args['redact'] as bool?) ?? true;
+  final bodyMaxRaw = (args['bodyTruncateBytes'] as int?) ?? _kDefaultBodyTruncate;
+  final bodyMax = bodyMaxRaw <= 0
+      ? _kMaxBodyTruncate
+      : (bodyMaxRaw > _kMaxBodyTruncate ? _kMaxBodyTruncate : bodyMaxRaw);
 
   try {
     final dao = CapturesDao();
@@ -52,6 +57,7 @@ FutureOr<CallToolResult> networkReplay(CallToolRequest request) async {
     final url = (row['url'] as String?) ?? '';
     final headers = _parseHeaders(row['request_headers_json']);
     final body = dao.getBody(sessionId, id, 'request');
+    final redactedSet = redact ? dao.redactedHeaderSet() : const <String>{};
 
     final buf = StringBuffer()..write("curl -X '$method'");
     if (headers != null) {
@@ -60,14 +66,19 @@ FutureOr<CallToolResult> networkReplay(CallToolRequest request) async {
         final value = e.value is List
             ? (e.value as List).join(', ')
             : (e.value?.toString() ?? '');
-        final redacted = redact && _redactedHeaderNames.contains(name.toLowerCase());
-        final shown = redacted ? '<redacted>' : value;
+        final shown = redactedSet.contains(name.toLowerCase()) ? '<redacted>' : value;
         buf.write(" -H '${_shellEscape(name)}: ${_shellEscape(shown)}'");
       }
     }
+
+    bool bodyTruncated = false;
+    int? totalSize;
     if (body != null && body.isNotEmpty) {
+      totalSize = body.length;
+      final clipped = body.length > bodyMax ? body.sublist(0, bodyMax) : body;
+      bodyTruncated = body.length > bodyMax;
       try {
-        final text = utf8.decode(body, allowMalformed: true);
+        final text = utf8.decode(clipped, allowMalformed: true);
         buf.write(" --data-raw '${_shellEscape(text)}'");
       } catch (_) {
         buf.write(' --data-binary @-');
@@ -81,6 +92,10 @@ FutureOr<CallToolResult> networkReplay(CallToolRequest request) async {
       'method': method,
       'url': url,
       'redacted': redact,
+      if (totalSize != null) ...{
+        'bodyTotalSize': totalSize,
+        'bodyTruncated': bodyTruncated,
+      },
       'curl': buf.toString(),
     });
   } catch (e) {
