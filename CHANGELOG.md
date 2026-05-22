@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.10] — 2026-05-22
+
+### Changed
+- **Batch 4 (Alerts)** — all five alert tools through the checklist:
+  - `alerts_drain` / `alerts_peek` — shared `buildAlertsResponse()` so both stay consistent. `summary` includes per-severity breakdown ("Drained 5 alert(s) session 14: 1 critical, 2 error, 2 warning"). Per-alert null fields (`detail`/`sourceKind`/`sourceId`) omitted. `nextSteps` points at `network_get` for the first HTTP-source alert and `logs_tail` for the first log-source alert (capability-gated).
+  - `alerts_config` — `summary` lists enabled/disabled rule keys. `mutated` field tells the agent whether `set` was applied. `warnings` for all-rules-disabled and dangerously-low `slowThresholdMs`. `nextSteps` differs based on get vs mutate.
+  - `alerts_clear` — added `confirm:true` requirement for `drainedOnly:false` (deleting undrained alerts is destructive). Reports `remainingPending` so the agent knows when the queue is clean. `summary` describes filter scope.
+  - `alert_patterns` — every action returns a `summary` and tailored `nextSteps`. `warnings` for overly-broad patterns (`.*` / `.+`). Error paths include `nextSteps` with concrete retry guidance.
+- All Batch 4 errors carry `nextSteps` with concrete recovery commands.
+
 ## [0.5.9] — 2026-05-22
 
 ### Changed
