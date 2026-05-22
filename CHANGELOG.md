@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.3] — 2026-05-22
+
+### Changed
+- `network_attach`:
+  - Adds `appNameContains` arg for case-insensitive substring filtering when DTD has multiple apps — no need to round-trip through an error and construct a `vmServiceUri`.
+  - Adds `force` flag (default false). Calling attach while already attached now errors with `currentApp` + `liveSessionId` and a `nextSteps` hint, instead of silently detaching. Pass `force:true` to restore the prior behavior.
+  - Strips `stackTrace` from `structuredContent` (writes to stderr instead) so error responses stay context-cheap.
+  - All error returns now include a `nextSteps` array with 1–2 concrete recovery actions. Zombie-DTD errors specifically suggest restarting the Flutter app.
+- `network_status` gains `attachIfOne` arg (default false). When true AND not already attached AND DTD reports exactly one app AND a default URI exists, the call auto-attaches in the same response. The full attach result lands under `autoAttached`.
+
+### Refactored
+- The attach core logic moved to a shared `performAttach()` function so both the `network_attach` tool and `network_status.attachIfOne` reuse the same code path.
+
 ## [0.5.2] — 2026-05-22
 
 ### Fixed

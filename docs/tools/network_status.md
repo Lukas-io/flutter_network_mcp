@@ -1,56 +1,76 @@
 ---
 tool: network_status
-description: Report attachment state, active capabilities, known apps, and pending alert count.
-when_to_use: As the first call of any investigation, and as a passive periodic check to notice when alerts have accumulated.
+description: Auto-orienting first call — reports attachment state, active capabilities, DTD-known apps, DB-wide alert counts, session totals, and a context-aware `nextSteps` hint. Optionally attaches in one shot.
+when_to_use: As the very first call of any investigation. It auto-connects DTD (if a default URI is set) so `knownApps` populates without a separate attach call.
 ---
 
 ## DO NOT USE THIS TOOL WHEN
 
-- You're polling it more than once a minute — it's idempotent but not free. Prefer `alerts_peek` for alert-only checks.
-- You need full alert details — this only returns a count. Use `alerts_drain` or `alerts_peek`.
-- You expect it to attach for you — it doesn't. It only reports state. Call `network_attach` to attach.
-- You've already attached this turn and the state can't have changed.
+- You're already attached AND the state can't have changed since last call. Spammy polling burns context.
+- You need full alert details — this only returns counts. Use `alerts_drain` or `alerts_peek`.
+- You explicitly want a passive read with no side effects — pass `connectDtd:false` so DTD isn't opened.
+- You're hoping `nextSteps` will execute itself — it won't. The hint is a string for you to act on.
+- You expect `attachIfOne:true` to attach across multiple apps — it only fires when DTD has exactly ONE app. Multi-app DTDs require explicit `network_attach appNameContains:"..."`.
 
 ## Use this when
 
-- Starting a session and need to know if you're attached, to what app, and which capabilities are enabled.
-- Checking whether `alerts.pending > 0` before diving into other tools.
-- Confirming a DTD URI was passed at startup (look at `dtd.defaultUri`).
-- Listing what apps DTD knows about so you can pick a `vmServiceUri` to pass to `network_attach`.
+- Starting a debugging conversation — call this first.
+- Confirming what capabilities the server was started with (the `--capabilities` flag is visible in the response).
+- Checking whether stale alerts are waiting from past sessions (`alerts.pendingTotal > 0`).
+- Discovering known DTD apps without calling attach.
+- "Orient and attach in one shot" — `attachIfOne:true` when you trust the heuristic.
 
 ## How it works
 
-Reads in-process state (no VM service calls if not attached) and queries the alerts table for a pending count. Returns instantly.
+Reads in-process state. If `connectDtd:true` (default) and DTD isn't already connected and a default URI exists, opens DTD with a 5s timeout so `knownApps` can populate. Queries the alerts table for three counts (current scope / DB-wide / critical). Reads the DB path and session count. Synthesizes a 1–2 item `nextSteps` array based on state.
+
+When `attachIfOne:true` AND `attached:false` AND `knownApps.length == 1` AND `defaultDtdUri != null`, the call additionally runs the full attach flow (same as `network_attach` with no args). The attach result is returned under `autoAttached`, and the top-level `attached`/`vmService`/`liveSessionId` fields are refreshed in the same response.
 
 ## Args
 
-None.
+- `connectDtd` (bool, default true) — opportunistically open DTD to populate `knownApps`. Set false for a pure in-process state read.
+- `attachIfOne` (bool, default false) — auto-attach when exactly one app is visible.
 
 ## Returns
 
 ```json
 {
   "attached": false,
-  "capabilities": ["http", "logs", "alerts", "sessions"],
-  "dtd": {"connected": false, "uri": null, "defaultUri": "ws://..."},
+  "capabilities": "all",
+  "dtd": {"connected": true, "uri": "ws://...", "defaultUri": "ws://..."},
   "vmService": {"connected": false, "uri": null, "isolateId": null, "appName": null},
   "liveSessionId": null,
   "viewedSessionId": null,
-  "alerts": {"pending": 0, "critical": 0},
-  "knownApps": [{"name": "...", "uri": "ws://..."}]
+  "dbPath": "/Users/me/.local/share/flutter_network_mcp/captures.db",
+  "sessionCount": 0,
+  "alerts": {"pendingCurrent": 0, "pendingTotal": 0, "critical": 0},
+  "knownApps": [{"name": "...", "uri": "ws://..."}],
+  "nextSteps": ["Call network_attach (one app available — will be auto-picked)"]
 }
 ```
 
+`capabilities` is the string `"all"` when every category is enabled, or an array of category keys when the user passed `--capabilities` / `--disable`. `dtd.connectError` appears (string) when the auto-connect attempt fails. `autoAttached` appears only when `attachIfOne:true` actually triggered an attach.
+
 ## Pairs well with
 
-- `network_attach` — when `attached:false` and `knownApps` has entries.
-- `alerts_drain` — when `alerts.pending > 0`.
+- `network_attach` — `nextSteps` usually points here.
+- `alerts_drain` — when `alerts.pendingTotal > 0`.
 - `session_list` — when no live session and the user is asking about history.
 
 ## Example
 
 ```
 > network_status
-< {attached:false, capabilities:[http,sessions], dtd:{defaultUri:"ws://..."}, alerts:{pending:0}}
+< {attached:false, capabilities:"all",
+   dtd:{connected:true, uri:"ws://..."},
+   knownApps:[{name:"Kind: Flutter - iPhone 17 - Package: sanga_mobile", uri:"ws://..."}],
+   nextSteps:["Call network_attach (one app available — will be auto-picked)"]}
 > network_attach
+```
+
+Or one-shot:
+
+```
+> network_status attachIfOne:true
+< {attached:true, autoAttached:{liveSessionId:14, ...}, nextSteps:["Drive the app, then call network_list"]}
 ```
