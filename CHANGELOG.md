@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.1] — 2026-05-22
+
+### Changed
+- `network_status` now auto-orients:
+  - Opportunistically connects to DTD when `defaultDtdUri` is set and the connection isn't already open, so `knownApps` populates on the very first status call. Pass `connectDtd:false` for purely passive checks.
+  - Compresses `capabilities` to the string `"all"` when every category is enabled (saves ~30 tokens on the typical case).
+  - Adds DB-level context: `dbPath` and `sessionCount`.
+  - Splits alert counts into `pendingCurrent` (in scope), `pendingTotal` (across all sessions), and `critical` so stale alerts from past sessions surface even when not attached.
+  - Adds a `nextSteps` array with 1–2 short, context-aware hints (e.g., "Multiple apps visible (2); call network_attach with explicit vmServiceUri").
+
 ## [0.5.0] — 2026-05-21
 
 ### Added
