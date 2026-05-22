@@ -1,15 +1,15 @@
 ---
 tool: session_note
-description: Set a freeform note on a session. Helps future-you find the right session later.
-when_to_use: At the end of an investigation, before detach — annotate what the session was about.
+description: Set or clear a freeform note on a capture session.
+when_to_use: At the end of an investigation (or right after attach) — annotate what the session is about.
 ---
 
 ## DO NOT USE THIS TOOL WHEN
 
-- You haven't done anything useful in the session yet — wait until there's something worth noting.
+- The session has nothing useful in it yet — wait until there's something worth noting.
 - You want structured metadata — this is a single text field. Use SQL UPDATE on `sessions` for richer schemas.
-- You want the note to apply to one request inside a session — it doesn't. Notes are session-wide.
-- You're putting secrets in the note — they're stored unencrypted in the DB.
+- You want the note to apply to one request — it doesn't. Notes are session-wide.
+- You're storing secrets — notes are stored unencrypted in the DB.
 
 ## Use this when
 
@@ -24,23 +24,31 @@ when_to_use: At the end of an investigation, before detach — annotate what the
 ## Args
 
 - `id` (int, required).
-- `note` (string, required) — pass empty string to clear.
+- `note` (string, required) — empty to clear.
 
 ## Returns
 
 ```json
-{"sessionId": 14, "note": "auth bug 2026-05-21"}
+{
+  "summary": "Set note on session 14: \"auth bug 2026-05-21\".",
+  "sessionId": 14,
+  "note": "auth bug 2026-05-21",
+  "nextSteps": [
+    "session_list — confirm the note shows up",
+    "session_export id:14 format:\"har\" outPath:\"...\" — share with the note as context"
+  ]
+}
 ```
 
 ## Pairs well with
 
-- `session_list` — the note is visible in list output.
+- `session_list` — the note is visible there.
+- `session_export` — note travels with future-you.
 
 ## Example
 
 ```
 > network_detach
 > session_note id:14 note:"auth-bug repro for #1842"
-> session_list limit:5
-< [{id:14, note:"auth-bug repro for #1842"}]
+< {summary:"Set note on session 14: \"auth-bug repro for #1842\"."}
 ```

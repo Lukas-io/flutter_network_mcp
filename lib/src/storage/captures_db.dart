@@ -67,6 +67,23 @@ class CapturesDao {
     return _rowToMap(rows.first);
   }
 
+  /// Like [getSession] but joins COUNT subqueries for http_count,
+  /// socket_count, log_count, alert_count. Use when you need per-session
+  /// counts for one specific id (dry-run summaries, export, etc.).
+  Map<String, Object?>? getSessionWithCounts(int id) {
+    final rows = _db.select(
+      'SELECT s.*, '
+      '(SELECT COUNT(*) FROM http_requests h WHERE h.session_id=s.id) AS http_count, '
+      '(SELECT COUNT(*) FROM socket_events sk WHERE sk.session_id=s.id) AS socket_count, '
+      '(SELECT COUNT(*) FROM log_records l WHERE l.session_id=s.id) AS log_count, '
+      '(SELECT COUNT(*) FROM alerts a WHERE a.session_id=s.id) AS alert_count '
+      'FROM sessions s WHERE s.id=?',
+      [id],
+    );
+    if (rows.isEmpty) return null;
+    return _rowToMap(rows.first);
+  }
+
   // ----- http -----
 
   /// Upserts a request summary. Returns true if a new row was inserted.

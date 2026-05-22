@@ -8,13 +8,14 @@ import 'result.dart';
 final sessionNoteTool = Tool(
   name: 'session_note',
   description:
-      'Sets a freeform note on a capture session. Helps you (and future-you) '
-      'remember what a session was about — "auth bug 2026-05-21", "release '
-      'smoke test", etc. Pass an empty string to clear.',
+      'Sets (or clears) a freeform note on a capture session. Helps you '
+      'find sessions later via session_list. Pass an empty string to clear.',
   inputSchema: Schema.object(
     properties: {
       'id': Schema.int(description: 'Session id.'),
-      'note': Schema.string(description: 'The note text. Empty string clears.'),
+      'note': Schema.string(
+        description: 'Free text. Empty string clears any existing note.',
+      ),
     },
     required: ['id', 'note'],
   ),
@@ -24,13 +25,38 @@ FutureOr<CallToolResult> sessionNote(CallToolRequest request) async {
   final args = request.arguments ?? const <String, Object?>{};
   final id = args['id'] as int?;
   final note = args['note'] as String?;
-  if (id == null) return errorResult('Missing required arg `id`.');
-  if (note == null) return errorResult('Missing required arg `note`.');
+  if (id == null) {
+    return errorResult('Missing required arg `id`.', extra: const {
+      'nextSteps': ['session_list — find a session id'],
+    });
+  }
+  if (note == null) {
+    return errorResult('Missing required arg `note`.', extra: const {
+      'nextSteps': ['Retry with note:"" to clear, or note:"<your text>" to set'],
+    });
+  }
 
   final dao = CapturesDao();
-  if (dao.getSession(id) == null) {
-    return errorResult('Session $id not found.');
+  final row = dao.getSession(id);
+  if (row == null) {
+    return errorResult('Session $id not found.', extra: const {
+      'nextSteps': ['session_list — see valid session ids'],
+    });
   }
-  dao.setSessionNote(id, note.isEmpty ? null : note);
-  return jsonResult({'sessionId': id, 'note': note.isEmpty ? null : note});
+
+  final cleared = note.isEmpty;
+  dao.setSessionNote(id, cleared ? null : note);
+
+  return jsonResult({
+    'summary': cleared
+        ? 'Cleared note on session $id.'
+        : 'Set note on session $id: "${note.length > 80 ? "${note.substring(0, 80)}…" : note}".',
+    'sessionId': id,
+    'note': cleared ? null : note,
+    'nextSteps': [
+      'session_list — confirm the note shows up',
+      if (!cleared)
+        'session_export id:$id format:"har" outPath:"..." — share with the note as context',
+    ],
+  });
 }
