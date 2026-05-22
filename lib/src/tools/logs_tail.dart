@@ -2,36 +2,50 @@ import 'dart:async';
 
 import 'package:dart_mcp/server.dart';
 
+import '../config/capabilities.dart';
 import '../state/session.dart';
 import '../storage/captures_db.dart';
 import '../util/filters.dart';
 import 'result.dart';
 
 const int _kMessageTruncateBytes = 2048;
+const int _kSevereLevel = 1200;
 
 final logsTailTool = Tool(
   name: 'logs_tail',
   description:
-      'Returns recent VM service log/stdout/stderr records. In live mode '
+      'Returns recent VM service log/stdout/stderr records. In LIVE mode '
       '(default), reads from an in-memory ring buffer (capacity 500). In '
-      'history mode (session_open active), reads from the persistent DB.',
+      'HISTORY mode (after session_open), reads from `log_records` for the '
+      'viewed session. Newest-first; cursor-based via `since`.',
   inputSchema: Schema.object(
     properties: {
-      'since': Schema.int(description: 'Cursor id from a prior nextCursor.'),
+      'since': Schema.int(
+        description:
+            'Cursor — local id from a prior nextCursor. Omit to fetch the '
+            'most recent up to `limit`.',
+      ),
       'levelMin': Schema.int(
         description:
-            'Minimum severity (package:logging scale 0–2000). Applies to '
-            'Logging records only.',
+            'Minimum severity (package:logging scale 0–2000; WARNING=900, '
+            'SEVERE=1200). Applies only to Logging records, not stdout/stderr.',
       ),
-      'loggerContains': Schema.string(description: 'Substring match on logger name.'),
-      'source': Schema.string(description: '"logging" | "stdout" | "stderr".'),
-      'limit': Schema.int(description: 'Max results (default 100, hard cap 500).'),
+      'loggerContains': Schema.string(
+        description: 'Substring match (case-insensitive) on logger name.',
+      ),
+      'source': Schema.string(
+        description: '"logging" | "stdout" | "stderr". Omit for all sources.',
+      ),
+      'limit': Schema.int(
+        description: 'Max records returned (default 100, hard cap 500). Newest-first.',
+      ),
     },
   ),
 );
 
 FutureOr<CallToolResult> logsTail(CallToolRequest request) async {
   final session = Session.instance;
+  final caps = CapabilityConfig.instance;
   final args = request.arguments ?? const <String, Object?>{};
   final sinceId = args['since'] as int?;
   final levelMin = args['levelMin'] as int?;
@@ -50,39 +64,41 @@ FutureOr<CallToolResult> logsTail(CallToolRequest request) async {
         source: source,
         limit: limit,
       );
-      int? maxId;
       final out = <Map<String, Object?>>[];
+      int? maxId;
+      int severeCount = 0;
       for (final r in rows) {
         final id = r['id'] as int;
         if (maxId == null || id > maxId) maxId = id;
-        final msg = (r['message'] as String?) ?? '';
-        final truncated = msg.length > _kMessageTruncateBytes;
-        out.add({
-          'id': id,
-          'source': r['source'],
-          'timestampMs': r['timestamp_ms'],
-          'level': r['level'],
-          'loggerName': r['logger'],
-          'message': truncated ? msg.substring(0, _kMessageTruncateBytes) : msg,
-          if (truncated) 'truncated': true,
-          if (truncated) 'totalLength': msg.length,
-          if (r['error'] != null) 'error': r['error'],
-          if (r['stack_trace'] != null) 'stackTrace': r['stack_trace'],
-        });
+        final lvl = r['level'] as int?;
+        if (lvl != null && lvl >= _kSevereLevel) severeCount++;
+        out.add(_historyEntry(r));
       }
-      return jsonResult({
-        'source': 'history',
-        'sessionId': sid,
-        'count': out.length,
-        'nextCursor': maxId,
-        'entries': out,
-      });
+      return jsonResult(_buildResponse(
+        source: 'history',
+        sessionId: sid,
+        entries: out,
+        nextCursor: maxId,
+        bufferSize: null,
+        streamActive: null,
+        severeCount: severeCount,
+        levelMin: levelMin,
+        loggerContains: loggerContains,
+        sourceFilter: source,
+        caps: caps,
+      ));
     } catch (e) {
-      return errorResult('history query failed: $e');
+      return errorResult('history query failed: $e', extra: {
+        'sessionId': sid,
+        'nextSteps': const [
+          'session_close — return to live mode',
+          'session_list — confirm the viewed session exists',
+        ],
+      });
     }
   }
 
-  // Live mode — read from ring buffer.
+  // Live mode — ring buffer.
   final entries = session.logBuffer.tail(
     sinceId: sinceId,
     levelMin: levelMin,
@@ -92,30 +108,128 @@ FutureOr<CallToolResult> logsTail(CallToolRequest request) async {
   );
   final out = <Map<String, Object?>>[];
   int? maxId;
+  int severeCount = 0;
   for (final e in entries) {
     if (maxId == null || e.id > maxId) maxId = e.id;
-    final msg = e.message;
-    final truncated = msg.length > _kMessageTruncateBytes;
-    out.add({
-      'id': e.id,
-      'source': e.source,
-      'timestampMs': e.timestampMs,
-      'level': e.level,
-      'loggerName': e.loggerName,
-      'message': truncated ? msg.substring(0, _kMessageTruncateBytes) : msg,
-      if (truncated) 'truncated': true,
-      if (truncated) 'totalLength': msg.length,
-      if (e.error != null) 'error': e.error,
-      if (e.stackTrace != null) 'stackTrace': e.stackTrace,
-    });
+    if ((e.level ?? 0) >= _kSevereLevel) severeCount++;
+    out.add(_liveEntry(e));
   }
-  return jsonResult({
-    'source': 'live',
-    'sessionId': session.liveSessionId,
-    'count': out.length,
-    'bufferSize': session.logBuffer.length,
-    'streamActive': session.logStream.isActive,
-    'nextCursor': maxId,
-    'entries': out,
-  });
+  return jsonResult(_buildResponse(
+    source: 'live',
+    sessionId: session.liveSessionId,
+    entries: out,
+    nextCursor: maxId,
+    bufferSize: session.logBuffer.length,
+    streamActive: session.logStream.isActive,
+    severeCount: severeCount,
+    levelMin: levelMin,
+    loggerContains: loggerContains,
+    sourceFilter: source,
+    caps: caps,
+  ));
+}
+
+Map<String, Object?> _historyEntry(Map<String, Object?> r) {
+  final msg = (r['message'] as String?) ?? '';
+  final truncated = msg.length > _kMessageTruncateBytes;
+  return {
+    'id': r['id'],
+    'source': r['source'],
+    if (r['timestamp_ms'] != null) 'timestampMs': r['timestamp_ms'],
+    if (r['level'] != null) 'level': r['level'],
+    if (r['logger'] != null) 'loggerName': r['logger'],
+    'message': truncated ? msg.substring(0, _kMessageTruncateBytes) : msg,
+    if (truncated) 'truncated': true,
+    if (truncated) 'totalLength': msg.length,
+    if (r['error'] != null) 'error': r['error'],
+    if (r['stack_trace'] != null) 'stackTrace': r['stack_trace'],
+  };
+}
+
+Map<String, Object?> _liveEntry(dynamic e) {
+  final msg = e.message as String;
+  final truncated = msg.length > _kMessageTruncateBytes;
+  return {
+    'id': e.id,
+    'source': e.source,
+    if (e.timestampMs != null) 'timestampMs': e.timestampMs,
+    if (e.level != null) 'level': e.level,
+    if (e.loggerName != null) 'loggerName': e.loggerName,
+    'message': truncated ? msg.substring(0, _kMessageTruncateBytes) : msg,
+    if (truncated) 'truncated': true,
+    if (truncated) 'totalLength': msg.length,
+    if (e.error != null) 'error': e.error,
+    if (e.stackTrace != null) 'stackTrace': e.stackTrace,
+  };
+}
+
+Map<String, Object?> _buildResponse({
+  required String source,
+  required int? sessionId,
+  required List<Map<String, Object?>> entries,
+  required int? nextCursor,
+  required int? bufferSize,
+  required bool? streamActive,
+  required int severeCount,
+  required int? levelMin,
+  required String? loggerContains,
+  required String? sourceFilter,
+  required CapabilityConfig caps,
+}) {
+  final filters = _filterDesc(levelMin, loggerContains, sourceFilter);
+  final summary = entries.isEmpty
+      ? (source == 'live' && streamActive == false
+          ? 'Log stream not active — buffer is empty.'
+          : 'No log records${filters.isEmpty ? "" : " matching $filters"} in $source mode${sessionId != null ? " (session $sessionId)" : ""}.')
+      : '${entries.length} record(s) from $source${sessionId != null ? " session $sessionId" : ""}'
+          '${severeCount > 0 ? ", $severeCount severe (level ≥ 1200)" : ""}'
+          '${filters.isEmpty ? "" : "; filtered by $filters"}.';
+
+  final warnings = <String>[];
+  if (source == 'live' && streamActive == false) {
+    warnings.add('Log stream is not subscribed — buffer will stay empty. Re-attach to start log capture.');
+  }
+  if (entries.isEmpty && filters.isNotEmpty) {
+    warnings.add('No matches — try widening levelMin / dropping loggerContains.');
+  }
+  if (source == 'live' && bufferSize != null && bufferSize >= 480) {
+    warnings.add('Ring buffer near capacity ($bufferSize / 500) — older records may have rotated out. Use history mode (session_open) for the full record.');
+  }
+
+  final nextSteps = <String>[];
+  if (entries.isEmpty) {
+    nextSteps.add('Drive the app to generate logs');
+    if (filters.isNotEmpty) {
+      nextSteps.add('Drop filters to broaden the search');
+    }
+  } else {
+    if (severeCount > 0 && caps.isEnabled(Category.alerts)) {
+      nextSteps.add('alerts_drain — see what the detector flagged for these severe records');
+    }
+    if (nextCursor != null) {
+      nextSteps.add('logs_tail since:$nextCursor — page incrementally on next call');
+    }
+  }
+
+  return {
+    'source': source,
+    'sessionId': sessionId,
+    'summary': summary,
+    'count': entries.length,
+    if (bufferSize != null) 'bufferSize': bufferSize,
+    if (streamActive != null) 'streamActive': streamActive,
+    if (severeCount > 0) 'severeCount': severeCount,
+    'nextCursor': nextCursor,
+    if (warnings.isNotEmpty) 'warnings': warnings,
+    'nextSteps': nextSteps,
+    'entries': entries,
+  };
+}
+
+String _filterDesc(int? levelMin, String? loggerContains, String? source) {
+  final parts = <String>[];
+  if (levelMin != null) parts.add('level≥$levelMin');
+  if (loggerContains != null && loggerContains.isNotEmpty) parts.add('logger~"$loggerContains"');
+  if (source != null && source.isNotEmpty) parts.add('source=$source');
+  return parts.join(', ');
 }

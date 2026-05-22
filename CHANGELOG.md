@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.9] — 2026-05-22
+
+### Changed
+- **Batch 3 (Logs)** — both log tools through the checklist:
+  - `logs_tail` — `summary` reports count + severe-level breakdown + active filters ("12 record(s), 2 severe (level ≥ 1200); filtered by level≥900"). `severeCount` field surfaces high-priority entries. `warnings` for stream-not-subscribed, buffer-near-rotation (≥480/500), no-match-on-filters. `nextSteps` points at `alerts_drain` when severe records present (and alerts capability on), `logs_tail since:` for incremental polling. Per-entry null fields (level/loggerName/error/stackTrace) omitted.
+  - `logs_clear` — `clearedCount` reports how many records were dropped (so the agent can echo it). `summary` clarifies the DB is untouched. `nextSteps` for verification.
+
 ## [0.5.8] — 2026-05-22
 
 ### Changed
