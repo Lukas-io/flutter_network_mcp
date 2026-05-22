@@ -47,7 +47,7 @@ base class FlutterNetworkMcpServer extends MCPServer with ToolsSupport {
   }) : super.fromStreamChannel(
           implementation: Implementation(
             name: 'flutter_network_mcp',
-            version: '0.5.2',
+            version: '0.5.3',
           ),
           instructions:
               'Read HTTP, sockets, and logs from a running Flutter/Dart app, '

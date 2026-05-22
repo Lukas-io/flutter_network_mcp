@@ -6,6 +6,7 @@ import '../config/capabilities.dart';
 import '../state/session.dart';
 import '../storage/captures_db.dart';
 import '../storage/database.dart';
+import 'network_attach.dart' as attach_helper;
 import 'result.dart';
 
 final networkStatusTool = Tool(
@@ -23,6 +24,12 @@ final networkStatusTool = Tool(
             'When true (default), opportunistically opens the DTD connection '
             'to populate knownApps. Set false for a pure in-process state read.',
       ),
+      'attachIfOne': Schema.bool(
+        description:
+            'When true AND not yet attached AND exactly one app is visible, '
+            'auto-attaches and includes the attach result under `autoAttached`. '
+            'Default false — status stays a read-only check.',
+      ),
     },
   ),
 );
@@ -33,6 +40,7 @@ FutureOr<CallToolResult> networkStatus(
 ) async {
   final args = request.arguments ?? const <String, Object?>{};
   final connectDtd = (args['connectDtd'] as bool?) ?? true;
+  final attachIfOne = (args['attachIfOne'] as bool?) ?? false;
 
   final session = Session.instance;
   final caps = CapabilityConfig.instance;
@@ -110,6 +118,27 @@ FutureOr<CallToolResult> networkStatus(
       ];
     } catch (e) {
       out['knownAppsError'] = e.toString();
+    }
+  }
+
+  // Opt-in one-shot orient+attach: convenient for agents that want a single
+  // call when DTD has exactly one app.
+  if (attachIfOne && !session.isAttached) {
+    final apps = out['knownApps'] as List?;
+    if (apps != null && apps.length == 1 && defaultDtdUri != null) {
+      final result = await attach_helper.performAttach(
+        defaultDtdUri: defaultDtdUri,
+      );
+      out['autoAttached'] = result;
+      if (result['attached'] == true) {
+        // Refresh top-level state from the now-attached session.
+        out['attached'] = true;
+        (out['vmService'] as Map<String, Object?>)['connected'] = true;
+        (out['vmService'] as Map<String, Object?>)['uri'] = result['vmServiceUri'];
+        (out['vmService'] as Map<String, Object?>)['isolateId'] = result['isolateId'];
+        (out['vmService'] as Map<String, Object?>)['appName'] = result['appName'];
+        out['liveSessionId'] = result['liveSessionId'];
+      }
     }
   }
 

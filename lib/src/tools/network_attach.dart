@@ -11,23 +11,31 @@ import 'result.dart';
 final networkAttachTool = Tool(
   name: 'network_attach',
   description:
-      'Connects to a running Flutter/Dart app via DTD, enables HTTP + socket '
-      'profiling, subscribes to log streams, and opens a new capture session '
-      'in the persistent database. Provide `dtdUri` to use DTD discovery '
-      '(auto-picks the app if exactly one is connected), or `vmServiceUri` '
-      'to bypass DTD entirely. If neither arg is given and a default DTD URI '
-      'was passed at startup, that is used.',
+      'Connect to a running Flutter/Dart app via DTD, enable HTTP + socket '
+      'profiling, subscribe to log streams, and open a new capture session '
+      'in the persistent database. Zero-arg works when DTD has exactly one '
+      'app and a default URI is configured. Use `appNameContains` to pick '
+      'when multiple apps are visible. Re-attaching to a different target '
+      'requires `force:true` so live state is never silently lost.',
   inputSchema: Schema.object(
     properties: {
       'dtdUri': Schema.string(
-        description:
-            'DTD WebSocket URI, e.g. ws://127.0.0.1:61827/<token>=. Use '
-            'network_status to see whether a default is configured.',
+        description: 'DTD WebSocket URI. Overrides the default.',
       ),
       'vmServiceUri': Schema.string(
         description:
-            'VM service WebSocket URI, e.g. ws://127.0.0.1:61828/<token>=/ws. '
-            'When set, DTD is skipped.',
+            'VM service URI. Bypasses DTD entirely; takes priority over '
+            'dtdUri / appNameContains.',
+      ),
+      'appNameContains': Schema.string(
+        description:
+            'Case-insensitive substring match on the DTD app name (from '
+            'network_status.knownApps[].name). Use when DTD has multiple apps.',
+      ),
+      'force': Schema.bool(
+        description:
+            'Required (true) if currently attached — otherwise the call '
+            'errors so live capture state is not accidentally discarded.',
       ),
     },
   ),
@@ -37,10 +45,44 @@ FutureOr<CallToolResult> networkAttach(
   CallToolRequest request,
   String? defaultDtdUri,
 ) async {
-  final session = Session.instance;
   final args = request.arguments ?? const <String, Object?>{};
-  final dtdUriArg = args['dtdUri'] as String?;
-  final vmServiceUriArg = args['vmServiceUri'] as String?;
+  final result = await performAttach(
+    dtdUri: args['dtdUri'] as String?,
+    vmServiceUri: args['vmServiceUri'] as String?,
+    appNameContains: args['appNameContains'] as String?,
+    force: (args['force'] as bool?) ?? false,
+    defaultDtdUri: defaultDtdUri,
+  );
+  return jsonResult(result, isError: result['error'] != null);
+}
+
+/// Shared attach implementation. Returns a Map suitable for [jsonResult].
+/// If `error` is set, the caller should mark the result as an error.
+///
+/// This is exported so [networkStatus] can reuse it for `attachIfOne:true`.
+Future<Map<String, Object?>> performAttach({
+  String? dtdUri,
+  String? vmServiceUri,
+  String? appNameContains,
+  bool force = false,
+  String? defaultDtdUri,
+}) async {
+  final session = Session.instance;
+
+  if (session.isAttached && !force) {
+    return {
+      'error':
+          'Already attached to "${session.attachedAppName ?? '(unknown app)'}" '
+          '(session ${session.liveSessionId}). Pass `force:true` to detach '
+          'and re-attach, or call network_detach first.',
+      'currentApp': session.attachedAppName,
+      'liveSessionId': session.liveSessionId,
+      'nextSteps': [
+        'network_detach (graceful, keeps existing session data)',
+        'network_attach force:true (silently detaches first)',
+      ],
+    };
+  }
 
   try {
     if (session.isAttached) await session.detach();
@@ -48,33 +90,72 @@ FutureOr<CallToolResult> networkAttach(
     String resolvedVmServiceUri;
     String? appName;
 
-    if (vmServiceUriArg != null) {
-      resolvedVmServiceUri = vmServiceUriArg;
+    if (vmServiceUri != null) {
+      resolvedVmServiceUri = vmServiceUri;
     } else {
-      final dtdUri = dtdUriArg ?? defaultDtdUri;
-      if (dtdUri == null) {
-        return errorResult(
-          'No DTD URI provided and no default configured. Pass `dtdUri` or '
-          '`vmServiceUri`, or set FLUTTER_NETWORK_MCP_DTD_URI / --dtd-uri.',
-        );
+      final useDtd = dtdUri ?? defaultDtdUri;
+      if (useDtd == null) {
+        return {
+          'error':
+              'No DTD URI provided and no default configured. Pass '
+              '`dtdUri` or `vmServiceUri`, or set '
+              'FLUTTER_NETWORK_MCP_DTD_URI / --dtd-uri.',
+          'nextSteps': [
+            'Find the DTD URI in your IDE console after `flutter run`',
+            'Re-spawn the server with --dtd-uri <ws://...>',
+          ],
+        };
       }
-      await session.dtd.connect(Uri.parse(dtdUri));
+      await session.dtd.connect(Uri.parse(useDtd));
       final apps = await session.dtd.getConnectedApps();
       if (apps.isEmpty) {
-        return errorResult('DTD is up but reports no connected apps yet.');
+        return {
+          'error': 'DTD is up but reports no connected apps yet.',
+          'nextSteps': [
+            'Launch a Flutter app in debug mode',
+            'Re-check via network_status',
+          ],
+        };
       }
-      if (apps.length > 1) {
-        return errorResult(
-          'DTD has multiple apps. Pass `vmServiceUri` explicitly.',
-          extra: {
+
+      // Optional substring filter on app name (case-insensitive).
+      var filtered = apps;
+      if (appNameContains != null && appNameContains.isNotEmpty) {
+        final needle = appNameContains.toLowerCase();
+        filtered = apps
+            .where((a) => (a.name ?? '').toLowerCase().contains(needle))
+            .toList();
+        if (filtered.isEmpty) {
+          return {
+            'error':
+                'No DTD app name contains "$appNameContains". '
+                'Visible apps: ${apps.map((a) => a.name).join(', ')}.',
             'apps': [
               for (final a in apps) {'name': a.name, 'uri': a.uri},
             ],
-          },
-        );
+            'nextSteps': [
+              'Re-check spelling or try a different substring',
+              'Call network_status to see the current app list',
+            ],
+          };
+        }
       }
-      resolvedVmServiceUri = apps.single.uri;
-      appName = apps.single.name;
+
+      if (filtered.length > 1) {
+        return {
+          'error': 'DTD has multiple matching apps; pass `appNameContains` or '
+              'an explicit `vmServiceUri`.',
+          'apps': [
+            for (final a in filtered) {'name': a.name, 'uri': a.uri},
+          ],
+          'nextSteps': [
+            'network_attach appNameContains:"<unique substring>"',
+            'network_attach vmServiceUri:"<from apps[].uri>"',
+          ],
+        };
+      }
+      resolvedVmServiceUri = filtered.single.uri;
+      appName = filtered.single.name;
     }
 
     await session.vm.connect(Uri.parse(resolvedVmServiceUri));
@@ -86,7 +167,6 @@ FutureOr<CallToolResult> networkAttach(
     final socketEnabled = await session.vm.enableSocketProfiling();
     session.socketProfilingEnabled = socketEnabled;
 
-    // Open the persistent DB (no-op if already open) and create a session row.
     final db = CapturesDatabase.instance;
     final dao = CapturesDao();
     final sid = dao.createSession(
@@ -97,20 +177,17 @@ FutureOr<CallToolResult> networkAttach(
     );
     session.liveSessionId = sid;
 
-    // Logs go to ring buffer AND DB (sourcing session id lazily so future
-    // ramped session changes don't strand listeners).
     await session.logStream.start(
       session.vm.service,
       session.logBuffer,
       sessionIdProvider: () => session.liveSessionId,
     );
 
-    // Start the live capture writer (HTTP + sockets).
     session.captureWriter.start(session.vm, sid);
 
     session.attachedAppName = appName;
 
-    return jsonResult({
+    return {
       'attached': true,
       'appName': appName,
       'vmServiceUri': resolvedVmServiceUri,
@@ -120,9 +197,27 @@ FutureOr<CallToolResult> networkAttach(
       'logStreamActive': session.logStream.isActive,
       'liveSessionId': sid,
       'capturesDbPath': db.path,
-    });
+      'nextSteps': const [
+        'Drive the app to generate traffic',
+        'Then call network_list, logs_tail, or alerts_drain',
+      ],
+    };
   } catch (e, st) {
+    // Stack trace goes to stderr only — never into the LLM context.
+    io.stderr.writeln('network_attach failed: $e\n$st');
     await session.detach();
-    return errorResult('Attach failed: $e', extra: {'stackTrace': st.toString()});
+    final msg = e.toString();
+    final isZombie = msg.contains('did not respond to getVersion');
+    return {
+      'error': 'Attach failed: $msg',
+      'nextSteps': isZombie
+          ? const [
+              'Restart the Flutter app to spawn a fresh DTD/DDS',
+              'Re-check via network_status (new DTD URI will auto-populate knownApps)',
+            ]
+          : const [
+              'Call network_status to confirm the DTD URI is still valid',
+            ],
+    };
   }
 }
