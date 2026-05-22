@@ -170,7 +170,7 @@ void _refreshDetector(CapturesDao dao) {
 }
 
 /// Loads custom patterns from DB into the AlertRules singleton. Called from
-/// bin/main.dart at startup so existing patterns apply immediately.
+/// bin/flutter_network_mcp.dart at startup so existing patterns apply immediately.
 void loadCustomPatternsFromDb() {
   final rows = CapturesDao().listAlertPatterns();
   AlertRules.instance.customPatterns = [

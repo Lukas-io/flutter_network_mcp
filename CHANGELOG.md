@@ -4,6 +4,46 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.15] — 2026-05-22
+
+### Changed
+- **Live mode is now push-like.** `jsonResult()` (used by every success response across all 32 tools) auto-annotates a top-level `pendingAlerts: {count, critical?}` field when the alerts capability is on, the DB is open, and there are undrained alerts in scope. The agent no longer has to poll `network_status` to discover that alerts have accumulated — any tool call surfaces the count.
+  - Shadow-skipped on tools that already report alerts in richer shapes (`alerts_drain`, `alerts_peek`, `network_status`) or have their own `pendingAlerts` field (`db_stats`).
+  - Best-effort: any DB hiccup falls through silently — never blocks a tool response.
+  - Skipped entirely when `--disable alerts` is set.
+
+## [0.5.14] — 2026-05-22
+
+### Changed
+- **`docs/tools/` reorganized into 11 use-case subfolders** so listing the directory no longer dumps 32 flat files. Moves done via `git mv` so file history is preserved. Each subfolder gets its own `README.md` orienting the agent within it. Top-level `docs/README.md` index updated to link the new paths.
+
+```
+docs/tools/
+├── lifecycle/        (3) network_status, network_attach, network_detach
+├── finding/          (2) network_list, network_search
+├── inspecting/       (2) network_get, network_body
+├── comparing/        (2) network_diff, network_replay
+├── what-went-wrong/  (3) alerts_drain, alerts_peek, logs_tail
+├── history/          (5) session_list, session_open, session_close, session_export, session_note
+├── tuning/           (4) alerts_config, alert_patterns, ignored_hosts, redacted_headers
+├── reset-live/       (4) network_clear, socket_clear, logs_clear, alerts_clear
+├── db-management/    (4) db_stats, bodies_purge, session_delete, db_vacuum
+├── sockets/          (2) socket_list, socket_get
+└── power/            (1) network_query
+```
+
+## [0.5.13] — 2026-05-22
+
+### Fixed
+- README: corrected stale tool count ("Twenty-five tools" → "Thirty-two tools") and stale entry-file reference (`bin/main.dart` → `bin/flutter_network_mcp.dart` — renamed in 0.5.2 for the install path fix).
+- README + `docs/README.md`: corrected stale alert-counter field (`alerts.pending` → `alerts.pendingTotal` / `critical`, post-0.5.1 split).
+- Code comments in `alert_patterns.dart` + `capabilities.dart` still referenced `bin/main.dart`. Updated.
+
+### Added
+- README — new "The agent-facing contract" section documenting the consistent response shape every tool follows (`summary` / `nextSteps` / `warnings`, error structure, confirm-guards on destructive ops).
+- `docs/README.md` — restructured around USE CASES (Getting started, Finding a request, Inspecting one request, Comparing/reproducing, What went wrong, Investigating history, Tuning capture, Resetting live state, Managing the DB, Sharing/exporting, Sockets, Power user, Wrapping up). Tools that serve more than one job (e.g. `network_replay` for both compare+share) appear under each. The original capability-based index is preserved below for `--capabilities` / `--disable` flag mapping.
+- `.github/ISSUE_TEMPLATE/bug_report.md` — captures DTD URI freshness, dart version, server invocation, and `network_status` output upfront so the most common debug context lands in the first comment.
+
 ## [0.5.12] — 2026-05-22
 
 ### Changed

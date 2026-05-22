@@ -37,7 +37,7 @@ enum Category {
 }
 
 /// Process-global capability configuration. Set once at startup by
-/// [bin/main.dart] before the server is constructed; immutable afterwards.
+/// [bin/flutter_network_mcp.dart] before the server is constructed; immutable afterwards.
 class CapabilityConfig {
   CapabilityConfig._(this._enabled);
 
@@ -73,7 +73,7 @@ class CapabilityConfig {
     return CapabilityConfig._(on);
   }
 
-  /// Replaces the singleton. Intended for `bin/main.dart` startup.
+  /// Replaces the singleton. Intended for `bin/flutter_network_mcp.dart` startup.
   static void install(CapabilityConfig config) {
     _instance = config;
   }
