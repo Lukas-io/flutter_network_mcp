@@ -3,9 +3,9 @@ import 'dart:io' as io;
 
 import 'package:dart_mcp/server.dart';
 
+import '../config/capabilities.dart';
 import '../state/session.dart';
 import '../storage/captures_db.dart';
-import '../storage/database.dart';
 import 'result.dart';
 
 final networkAttachTool = Tool(
@@ -98,11 +98,11 @@ Future<Map<String, Object?>> performAttach({
         return {
           'error':
               'No DTD URI provided and no default configured. Pass '
-              '`dtdUri` or `vmServiceUri`, or set '
-              'FLUTTER_NETWORK_MCP_DTD_URI / --dtd-uri.',
-          'nextSteps': [
-            'Find the DTD URI in your IDE console after `flutter run`',
-            'Re-spawn the server with --dtd-uri <ws://...>',
+              '`dtdUri` or `vmServiceUri`, or have the user configure '
+              'a default at server startup.',
+          'nextSteps': const [
+            'Ask the user for the DTD URI (printed in the IDE console after `flutter run`)',
+            'Update --dtd-uri in .mcp.json and have the user restart Claude Code',
           ],
         };
       }
@@ -164,10 +164,15 @@ Future<Map<String, Object?>> performAttach({
     final httpState = await session.vm.enableHttpLogging();
     session.httpProfilingEnabled = httpState.enabled;
 
-    final socketEnabled = await session.vm.enableSocketProfiling();
+    final caps = CapabilityConfig.instance;
+    final bool socketEnabled;
+    if (caps.isEnabled(Category.sockets)) {
+      socketEnabled = await session.vm.enableSocketProfiling();
+    } else {
+      socketEnabled = false;
+    }
     session.socketProfilingEnabled = socketEnabled;
 
-    final db = CapturesDatabase.instance;
     final dao = CapturesDao();
     final sid = dao.createSession(
       appName: appName,
@@ -177,29 +182,69 @@ Future<Map<String, Object?>> performAttach({
     );
     session.liveSessionId = sid;
 
-    await session.logStream.start(
-      session.vm.service,
-      session.logBuffer,
-      sessionIdProvider: () => session.liveSessionId,
-    );
+    if (caps.isEnabled(Category.logs)) {
+      await session.logStream.start(
+        session.vm.service,
+        session.logBuffer,
+        sessionIdProvider: () => session.liveSessionId,
+      );
+    }
 
     session.captureWriter.start(session.vm, sid);
 
     session.attachedAppName = appName;
 
+    // Synthesize warnings for partial degradation.
+    final warnings = <String>[];
+    if (!httpState.enabled) {
+      warnings.add(
+        'HTTP timeline logging did not enable cleanly — captured requests may be incomplete.',
+      );
+    }
+    if (caps.isEnabled(Category.sockets) && !socketEnabled) {
+      warnings.add(
+        'socket profiling unavailable on this isolate — socket_* tools will return empty.',
+      );
+    }
+    if (caps.isEnabled(Category.logs) && !session.logStream.isActive) {
+      warnings.add(
+        'log stream subscription did not start — logs_tail will be empty.',
+      );
+    }
+
+    // Capability-aware nextSteps for the post-attach read tools.
+    final readTools = <String>[];
+    if (caps.isEnabled(Category.http)) readTools.add('network_list');
+    if (caps.isEnabled(Category.logs) && session.logStream.isActive) {
+      readTools.add('logs_tail');
+    }
+    if (caps.isEnabled(Category.alerts)) readTools.add('alerts_drain');
+    final secondStep = readTools.isEmpty
+        ? 'Then read via the enabled tools (see network_status.capabilities)'
+        : 'Then call ${readTools.join(' / ')}';
+
+    // One-line summary the agent can echo back to the user.
+    final captured = <String>[];
+    if (httpState.enabled) captured.add('HTTP');
+    if (socketEnabled) captured.add('sockets');
+    if (session.logStream.isActive) captured.add('logs');
+    final what =
+        captured.isEmpty ? 'no streams (degraded)' : captured.join('+');
+    final summary =
+        'Attached to ${appName ?? "app"} — capturing $what into session $sid.';
+
     return {
       'attached': true,
+      'summary': summary,
       'appName': appName,
       'vmServiceUri': resolvedVmServiceUri,
       'isolateId': isolateId,
-      'httpProfilingEnabled': session.httpProfilingEnabled,
-      'socketProfilingEnabled': session.socketProfilingEnabled,
-      'logStreamActive': session.logStream.isActive,
       'liveSessionId': sid,
-      'capturesDbPath': db.path,
-      'nextSteps': const [
+      'socketProfilingEnabled': socketEnabled,
+      if (warnings.isNotEmpty) 'warnings': warnings,
+      'nextSteps': [
         'Drive the app to generate traffic',
-        'Then call network_list, logs_tail, or alerts_drain',
+        secondStep,
       ],
     };
   } catch (e, st) {

@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.4] — 2026-05-22
+
+### Changed
+- `network_attach` response polish:
+  - Adds a one-line `summary` field the agent can echo verbatim ("Attached to <app> — capturing HTTP+sockets+logs into session N.").
+  - Adds a `warnings: []` array that surfaces partial degradation (socket profiling unavailable, log stream subscription failed, HTTP timeline did not enable cleanly). Omitted when everything is healthy.
+  - `nextSteps` is now capability-aware — tools the user disabled via `--capabilities`/`--disable` never appear in the suggested follow-ups.
+  - Removed always-true / redundant fields from the success payload: `httpProfilingEnabled`, `logStreamActive`, `capturesDbPath`. Saves ~50 tokens; the DB path is already in `network_status`, and the other two are implicit on a successful return.
+  - Honors capability gates while attaching: skips socket profiling if `sockets` is disabled, skips log stream subscription if `logs` is disabled (instead of trying and silently failing).
+- `network_attach` no-DTD-URI error: rewrote the `nextSteps` to acknowledge the agent can't restart Claude Code itself — now suggests asking the user for the URI and updating `.mcp.json`.
+
 ## [0.5.3] — 2026-05-22
 
 ### Changed
