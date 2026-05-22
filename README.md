@@ -52,7 +52,7 @@ Beyond capability gating, three env vars tune runtime behavior:
 
 ## Capability gating (control your context budget)
 
-Twenty-five tools is a lot of schema for the agent to load. Disable the categories you don't use:
+Thirty-two tools is a lot of schema for the agent to load. Disable the categories you don't use:
 
 ```json
 {
@@ -135,6 +135,17 @@ The agent calls `alerts_drain` at the top of an investigation and gets the queue
 
 **Per-tool docs live in [`docs/tools/`](docs/tools/) — every tool has its own page with a `## DO NOT USE THIS TOOL WHEN` section at the top.** Point your agent at these. The negative cases catch the bulk of misuse before it happens.
 
+### The agent-facing contract
+
+Every tool response — success OR error — follows the same shape, so an agent can branch on it without parsing prose:
+
+- **`summary`** — one human-readable sentence (echo-able to the user).
+- **`nextSteps`** — 1–3 concrete commands the agent can execute next; filtered against active capabilities.
+- **`warnings`** — only present when something is partially degraded (truncation, in-flight, host not yet backfilled, etc.).
+- **`pendingAlerts`** — `{count, critical?}` auto-injected on any success response when alerts are queued in scope. Lets the agent notice fresh alerts during normal work without polling `network_status` (the alerts pipeline is push-like in practice).
+- **Errors** are `{error, contextual fields, nextSteps}` — never bare strings, never stack traces.
+- Destructive ops (`session_delete`, `bodies_purge`, `alerts_clear` with `drainedOnly:false`) require explicit `confirm:true` / `force:true`; the default is a dry-run that reports impact.
+
 ## A typical session
 
 ```
@@ -191,7 +202,7 @@ dart pub get
 dart analyze
 dart run tool/probe.dart 'ws://127.0.0.1:<port>/<token>='     # smoke-test DTD connectivity
 dart run tool/seed.dart /tmp/test-captures                    # seed synthetic data
-dart run bin/main.dart --dtd-uri 'ws://...' --data-dir /tmp/captures
+dart run bin/flutter_network_mcp.dart --dtd-uri 'ws://...' --data-dir /tmp/captures
 ```
 
 Built with `package:dart_mcp`, `package:dtd`, `package:vm_service`, and `package:sqlite3`.
