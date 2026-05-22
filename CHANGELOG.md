@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.7] — 2026-05-22
+
+### Changed
+- **Batch 1 (HTTP + Search)** — all six tools brought to the [tool review checklist](https://github.com/Lukas-io/flutter_network_mcp/blob/main/docs/README.md) in one pass:
+  - `network_body` — `summary`, `nextSteps` (paging hint when `nextOffset` set; replay/diff when complete), `warnings` for utf8-on-binary, offset-clamped, and history-not-yet-persisted; error paths now have `nextSteps`.
+  - `network_clear` — clearer `summary` + explicit `warnings` reminding the DB is untouched; `nextSteps` for `network_list` and `bodies_purge`/`session_delete` (the actual destructive ops).
+  - `network_diff` — `summary` ("POST /login → 500 vs POST /login → 200 → differs: status, 1 header, body."); `statusDiff`/`methodDiff`/`urlDiff` omitted when unchanged (token savings); `warnings` consolidates body-not-comparable cases; rejects `idA == idB`.
+  - `network_replay` — `summary`, `headerCount`, `redactedHeaders`, `bodyIsBinary` reported; `warnings` for binary body, truncation, and `redact:false`; `nextSteps` includes "Paste the curl into your terminal".
+  - `network_detach` — counts captured rows (http/logs/alerts) for the just-ended session and includes them in the response summary + `captured` block; `nextSteps` points at `session_open`/`session_list`/`network_attach`.
+  - `network_search` — `summary`, BM25-aware `nextSteps` (top match + 2-way diff when ≥2), empty-result `warnings` hint at backfill delay.
+- All Batch 1 tools now follow the consistent error shape `{error, contextual fields, nextSteps}`.
+- Per-tool docs in `docs/tools/` rewritten to match new args, returns, and error shapes.
+
 ## [0.5.6] — 2026-05-22
 
 ### Changed

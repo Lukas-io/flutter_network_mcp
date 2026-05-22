@@ -1,24 +1,24 @@
 ---
 tool: network_clear
-description: Wipe the LIVE HTTP profile on the attached isolate. Does not touch the DB.
-when_to_use: When you want a clean slate for new captures — e.g., before triggering a specific action to isolate its requests.
+description: Wipe the LIVE in-VM HTTP profile on the attached isolate. Does NOT touch the persistent DB.
+when_to_use: To isolate one user action's traffic, OR to reset the cursor without managing it manually.
 ---
 
 ## DO NOT USE THIS TOOL WHEN
 
-- You think this deletes session history — it doesn't. The DB row stays. Only the in-VM profile is cleared.
-- You want to delete a past session — use `network_query` with `DELETE FROM sessions WHERE id=...` (cascades).
-- You're not attached — there's no live profile to clear.
-- You're viewing history (`viewedSessionId` set) — clearing the live profile is unrelated to what you're reading.
+- You think this deletes session history — it doesn't. The DB rows stay. Only the in-VM profile clears. Use `session_delete` / `bodies_purge` for DB cleanup.
+- You're viewing history (`viewedSessionId` set) — irrelevant; this only affects the live VM.
+- You're not attached — nothing to clear. The tool errors with that exact message.
+- You want to delete sockets too — use `socket_clear`. They're separate VM profiles.
 
 ## Use this when
 
-- About to trigger a specific action and want isolated network output (e.g., "tap login, then call network_list — I want to see only that request").
-- The VM-side profile has grown stale and you want a fresh `since` cursor without managing it manually.
+- About to trigger a specific user action and want isolated network output ("clear, then tap login, then `network_list`").
+- The cursor has drifted and you want a fresh start without managing offsets.
 
 ## How it works
 
-Calls `ext.dart.io.clearHttpProfile` on the attached isolate, resets the session's `lastHttpCursor`. Already-persisted rows in `http_requests` stay intact.
+Calls `ext.dart.io.clearHttpProfile` on the attached isolate. Resets `lastHttpCursor` to null. The DB session row + all captured `http_requests` / `http_bodies` / `alerts` etc. stay intact.
 
 ## Args
 
@@ -27,23 +27,30 @@ None.
 ## Returns
 
 ```json
-{"cleared": true}
+{
+  "cleared": true,
+  "summary": "Live VM HTTP profile cleared. Persistent DB session 14 is untouched (captured rows remain queryable).",
+  "liveSessionId": 14,
+  "warnings": ["The persistent DB is NOT cleared. Use session_delete or bodies_purge to remove historical rows."],
+  "nextSteps": [
+    "network_list — confirm the live profile is empty",
+    "Drive the app, then network_list — fresh isolated capture"
+  ]
+}
 ```
 
 ## Pairs well with
 
-- `network_list` — call immediately after to confirm 0 results.
-- `network_attach` — already does a clean start; you usually don't need clear right after attach.
+- `network_list` — verify empty after clear.
+- `bodies_purge` / `session_delete` — when you actually mean "delete data".
+- `socket_clear` / `logs_clear` — the sibling clears for other live state.
 
 ## Example
 
 ```
-> network_attach
-> # user taps "Sync" in the app
-> network_list
-< {count: 47, ...}
 > network_clear
-> # now tap the action you actually care about
+< {cleared:true, summary:"Live VM HTTP profile cleared..."}
+> # tap "Refresh" in the app
 > network_list
-< {count: 2, requests:[...]}
+< {count:1, requests:[<just the refresh call>]}
 ```

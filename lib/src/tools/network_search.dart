@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:dart_mcp/server.dart';
 
+import '../config/capabilities.dart';
 import '../state/session.dart';
 import '../storage/captures_db.dart';
 import '../util/filters.dart';
@@ -11,21 +12,27 @@ final networkSearchTool = Tool(
   name: 'network_search',
   description:
       'Full-text search across captured HTTP urls + request/response bodies '
-      'using SQLite FTS5. Returns ranked matches with a short snippet. '
-      'Defaults to the current session (live or viewed).',
+      'using SQLite FTS5. Queries are phrase-quoted by default so hyphens '
+      'and special chars work naturally. Returns ranked matches with a '
+      '12-token «highlighted» snippet. Bodies must have been backfilled by '
+      'the writer (~2s post request completion).',
   inputSchema: Schema.object(
     properties: {
       'query': Schema.string(
-        description: 'FTS5 MATCH query. Supports phrase quoting and AND/OR/NOT.',
+        description:
+            'Text to search for. Phrase-quoted by default — pass operator '
+            'syntax pre-escaped if you want AND/OR/NEAR semantics.',
       ),
       'sessionId': Schema.int(
-        description: 'Restrict to a session. Default: current session.',
+        description: 'Restrict to a session id (default: current session).',
       ),
       'which': Schema.string(
         description:
-            'Column to match: "url", "request", "response", or "any" (default).',
+            'Column to match: "url" | "request" | "response" | "any" (default).',
       ),
-      'limit': Schema.int(description: 'Max results (default 20, hard cap 100).'),
+      'limit': Schema.int(
+        description: 'Max results (default 20, hard cap 100). Ranked by BM25, lowest first.',
+      ),
     },
     required: ['query'],
   ),
@@ -33,17 +40,38 @@ final networkSearchTool = Tool(
 
 FutureOr<CallToolResult> networkSearch(CallToolRequest request) async {
   final args = request.arguments ?? const <String, Object?>{};
+  final caps = CapabilityConfig.instance;
   final query = args['query'] as String?;
   if (query == null || query.trim().isEmpty) {
-    return errorResult('Missing required arg `query`.');
+    return errorResult('Missing required arg `query`.', extra: const {
+      'nextSteps': [
+        'Retry with a non-empty query string',
+        'network_list — fallback if you only need metadata filtering',
+      ],
+    });
   }
   final whichArg = (args['which'] as String?) ?? 'any';
   if (!['url', 'request', 'response', 'any'].contains(whichArg)) {
-    return errorResult('`which` must be url, request, response, or any.');
+    return errorResult('`which` must be url, request, response, or any.', extra: const {
+      'nextSteps': ['Retry with which:"any" (default)'],
+    });
   }
   final session = Session.instance;
   final sessionId = (args['sessionId'] as int?) ?? session.effectiveSessionId;
   final limit = clampLimit(args['limit'] as int?, fallback: 20, hardMax: 100);
+
+  if (sessionId == null) {
+    return errorResult(
+      'No session — attach or open one first.',
+      extra: const {
+        'nextSteps': [
+          'network_attach — connect to a live app',
+          'session_open id:<n> — view a past session',
+          'session_list — see what past sessions exist',
+        ],
+      },
+    );
+  }
 
   try {
     final rows = CapturesDao().searchRequests(
@@ -52,25 +80,60 @@ FutureOr<CallToolResult> networkSearch(CallToolRequest request) async {
       which: whichArg,
       limit: limit,
     );
+
+    final matches = <Map<String, Object?>>[];
+    for (final r in rows) {
+      matches.add({
+        'sessionId': r['session_id'],
+        'id': r['vm_id'],
+        if (r['method'] != null) 'method': r['method'],
+        if (r['url'] != null) 'url': r['url'],
+        if (r['status_code'] != null) 'statusCode': r['status_code'],
+        if (r['snippet'] != null) 'snippet': r['snippet'],
+        if (r['rank'] != null) 'rank': r['rank'],
+      });
+    }
+
+    final summary = matches.isEmpty
+        ? 'No matches for "$query" in session $sessionId (which=$whichArg).'
+        : '${matches.length} match(es) for "$query" in session $sessionId (ranked by BM25).';
+
+    final warnings = <String>[];
+    if (matches.isEmpty) {
+      warnings.add(
+        'No matches. Bodies may not be indexed yet (writer backfills every ~2s) or the query is too specific.',
+      );
+    }
+
+    final nextSteps = <String>[];
+    if (matches.isNotEmpty) {
+      nextSteps.add('network_get id:"${matches.first['id']}" — full headers + body for the top match');
+      if (matches.length > 1 && caps.isEnabled(Category.http)) {
+        nextSteps.add('network_diff idA:"${matches.first['id']}" idB:"${matches[1]['id']}" — compare the top two');
+      }
+    } else {
+      nextSteps.add('Retry with a shorter substring or which:"any"');
+      nextSteps.add('network_list — browse by metadata instead');
+    }
+
     return jsonResult({
       'sessionId': sessionId,
+      'summary': summary,
       'query': query,
       'which': whichArg,
-      'count': rows.length,
-      'matches': [
-        for (final r in rows)
-          {
-            'sessionId': r['session_id'],
-            'id': r['vm_id'],
-            'method': r['method'],
-            'url': r['url'],
-            'statusCode': r['status_code'],
-            'snippet': r['snippet'],
-            'rank': r['rank'],
-          },
-      ],
+      'count': matches.length,
+      'matches': matches,
+      if (warnings.isNotEmpty) 'warnings': warnings,
+      'nextSteps': nextSteps,
     });
   } catch (e) {
-    return errorResult('network_search failed: $e');
+    return errorResult('network_search failed: $e', extra: {
+      'sessionId': sessionId,
+      'query': query,
+      'nextSteps': const [
+        'Simplify the query (avoid raw FTS5 operators)',
+        'network_list — fall back to metadata filtering',
+      ],
+    });
   }
 }
