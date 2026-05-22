@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.8] — 2026-05-22
+
+### Changed
+- **Batch 2 (Sockets)** — all three socket tools through the checklist:
+  - `socket_list` — `summary` reports counts + open/closed split ("3 socket(s) (1 open) in session 14"); null timing fields omitted per-row; `warnings` for empty profile; `nextSteps` points at `socket_get` for top, `network_list` for correlated HTTP traffic.
+  - `socket_get` — `summary` ("TCP api.example.com:443 — 12345 bytes read, 456 bytes written (open)."); `nextSteps` suggests `network_list hostContains:` for HTTP correlation, plus "re-call later" hint when socket is still open.
+  - `socket_clear` — clearer `summary` + explicit `warnings` reminding the DB is untouched.
+- All Batch 2 errors carry `nextSteps` (e.g., "network_status — confirm socketProfilingEnabled").
+
 ## [0.5.7] — 2026-05-22
 
 ### Changed
