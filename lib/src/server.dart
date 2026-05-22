@@ -4,9 +4,14 @@ import 'package:dart_mcp/server.dart';
 import 'package:dart_mcp/stdio.dart';
 
 import 'config/capabilities.dart';
+import 'tools/alert_patterns.dart';
+import 'tools/alerts_clear.dart';
 import 'tools/alerts_config.dart';
 import 'tools/alerts_drain.dart';
 import 'tools/alerts_peek.dart';
+import 'tools/bodies_purge.dart';
+import 'tools/db_stats.dart';
+import 'tools/db_vacuum.dart';
 import 'tools/ignored_hosts.dart';
 import 'tools/logs_clear.dart';
 import 'tools/logs_tail.dart';
@@ -21,7 +26,9 @@ import 'tools/network_query.dart';
 import 'tools/network_replay.dart';
 import 'tools/network_search.dart';
 import 'tools/network_status.dart';
+import 'tools/redacted_headers.dart';
 import 'tools/session_close.dart';
+import 'tools/session_delete.dart';
 import 'tools/session_export.dart';
 import 'tools/session_list.dart';
 import 'tools/session_note.dart';
@@ -32,7 +39,7 @@ import 'tools/socket_list.dart';
 
 /// MCP server exposing Flutter DevTools data via DTD + VM service, with
 /// persistent capture sessions in SQLite, full-text search, proactive alerts,
-/// and CLI-driven capability gating.
+/// CLI-driven capability gating, and runtime configurability.
 base class FlutterNetworkMcpServer extends MCPServer with ToolsSupport {
   FlutterNetworkMcpServer.fromStreamChannel(
     super.channel, {
@@ -40,16 +47,14 @@ base class FlutterNetworkMcpServer extends MCPServer with ToolsSupport {
   }) : super.fromStreamChannel(
           implementation: Implementation(
             name: 'flutter_network_mcp',
-            version: '0.4.0',
+            version: '0.5.0',
           ),
           instructions:
-              'Read HTTP traffic, socket stats, and app logs from a running '
-              'Flutter/Dart app, live or from history. Start with '
-              'network_status to see capabilities and pending alerts. '
-              'network_attach opens a capture session; tools auto-persist. '
-              'alerts_drain at the top of an investigation surfaces issues '
-              'the server detected without you having to ask. See docs/tools '
-              'for per-tool guidance including when NOT to use each tool.',
+              'Read HTTP, sockets, and logs from a running Flutter/Dart app, '
+              'live or from history. network_status → alerts_drain → '
+              'network_search / network_list / logs_tail. session_delete + '
+              'db_vacuum keep the DB lean. See docs/tools for per-tool guides '
+              'including when NOT to use each tool.',
         ) {
     final caps = CapabilityConfig.instance;
 
@@ -82,6 +87,8 @@ base class FlutterNetworkMcpServer extends MCPServer with ToolsSupport {
       registerTool(alertsDrainTool, alertsDrain);
       registerTool(alertsPeekTool, alertsPeek);
       registerTool(alertsConfigTool, alertsConfig);
+      registerTool(alertsClearTool, alertsClear);
+      registerTool(alertPatternsTool, alertPatterns);
     }
 
     if (caps.isEnabled(Category.search)) {
@@ -94,6 +101,7 @@ base class FlutterNetworkMcpServer extends MCPServer with ToolsSupport {
       registerTool(sessionCloseTool, sessionClose);
       registerTool(sessionExportTool, sessionExport);
       registerTool(sessionNoteTool, sessionNote);
+      registerTool(sessionDeleteTool, sessionDelete);
     }
 
     if (caps.isEnabled(Category.sql)) {
@@ -102,6 +110,10 @@ base class FlutterNetworkMcpServer extends MCPServer with ToolsSupport {
 
     if (caps.isEnabled(Category.admin)) {
       registerTool(ignoredHostsTool, ignoredHosts);
+      registerTool(redactedHeadersTool, redactedHeaders);
+      registerTool(dbStatsTool, dbStats);
+      registerTool(dbVacuumTool, dbVacuum);
+      registerTool(bodiesPurgeTool, bodiesPurge);
     }
   }
 

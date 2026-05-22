@@ -4,6 +4,7 @@ import 'package:args/args.dart';
 import 'package:flutter_network_mcp/src/config/capabilities.dart';
 import 'package:flutter_network_mcp/src/server.dart';
 import 'package:flutter_network_mcp/src/storage/database.dart';
+import 'package:flutter_network_mcp/src/tools/alert_patterns.dart' as alert_patterns;
 
 Future<void> main(List<String> args) async {
   final parser = ArgParser()
@@ -70,6 +71,12 @@ Future<void> main(List<String> args) async {
   }
 
   CapturesDatabase.open(dataDir: dataDir);
+
+  // Hydrate user-defined alert patterns from the DB so they fire from the
+  // very first capture tick.
+  try {
+    alert_patterns.loadCustomPatternsFromDb();
+  } catch (_) {/* table may be empty / freshly migrated */}
 
   FlutterNetworkMcpServer.stdio(defaultDtdUri: dtdUri);
 }

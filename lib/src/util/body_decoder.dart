@@ -82,7 +82,42 @@ bool _isTextContentType(String? contentType) {
       ct.contains('application/x-www-form-urlencoded') ||
       ct.contains('application/javascript') ||
       ct.contains('application/graphql') ||
+      ct.contains('application/ld+json') ||
+      ct.contains('application/vnd.api+json') ||
+      ct.contains('application/problem+json') ||
       ct.startsWith('text/');
+}
+
+/// Compresses a JSON header map into a context-safe form. Each value is
+/// truncated to [maxValueBytes] (default 256). A `_truncated` field is added
+/// alongside the affected key when truncation happens. List values are
+/// joined with ", ".
+Map<String, Object?>? truncateHeaders(
+  Map<String, dynamic>? headers, {
+  int maxValueBytes = 256,
+  int maxHeaders = 64,
+}) {
+  if (headers == null) return null;
+  final out = <String, Object?>{};
+  var i = 0;
+  for (final e in headers.entries) {
+    if (i++ >= maxHeaders) {
+      out['_omitted'] = headers.length - maxHeaders;
+      break;
+    }
+    final v = e.value;
+    final flat = v is List ? v.join(', ') : (v?.toString() ?? '');
+    if (flat.length > maxValueBytes) {
+      out[e.key] = {
+        'value': flat.substring(0, maxValueBytes),
+        'truncated': true,
+        'totalLength': flat.length,
+      };
+    } else {
+      out[e.key] = flat;
+    }
+  }
+  return out;
 }
 
 String? firstHeader(Map<String, dynamic>? headers, String name) {
