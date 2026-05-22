@@ -1,53 +1,64 @@
 ---
 tool: alerts_config
-description: Read or update alert detection rules. Tune the slow-request threshold or disable noisy rules.
-when_to_use: When alerts are too noisy (disable rules), too sensitive (raise slowThresholdMs), or you want to confirm current settings.
+description: Read or update alert detection rules. Tune slow-request threshold or disable noisy rules at runtime.
+when_to_use: When alerts are too noisy (disable rules), too sensitive (raise slowThresholdMs), or to confirm current settings.
 ---
 
 ## DO NOT USE THIS TOOL WHEN
 
-- You're just trying to read the current config and could check it once at session start — call this once, not on every turn.
-- You want to permanently change defaults across runs — this is per-process. Restart with `--disable alerts` to turn off detection entirely; rule toggles don't persist.
-- You're trying to suppress alerts about a specific host — use `ignored_hosts` instead. The host filter happens before detection.
-- You want to delete already-fired alerts — that's `network_query` with DELETE FROM alerts.
+- You're just reading config and could check once at session start — call this once, not per turn.
+- You want to permanently change defaults across runs — this is per-process. Rule toggles don't persist; capability gating via `--disable alerts` is the persistent way to turn the pipeline off.
+- You're trying to suppress alerts about a specific host — use `ignored_hosts` (host filter runs BEFORE detection).
+- You want to delete already-fired alerts — that's `alerts_clear`.
 
 ## Use this when
 
-- The user complains "too many slow alerts" — raise `slowThresholdMs` (default 3000).
-- 4xx alerts are noise (e.g., the app expects 404s as control flow) — disable `http_4xx`.
-- You want to confirm whether log-keyword detection is on.
+- "Too many slow alerts" — raise `slowThresholdMs` (default 3000).
+- 4xx alerts are control-flow noise — disable `http_4xx`.
+- Confirming whether log-keyword detection is on.
+- After mutation, check current state via the same call.
 
 ## How it works
 
-`get:true` (default) reads the current `AlertRules` singleton state. `set:{slowThresholdMs?, rules?:{...}}` mutates it. Rules supported: `http_5xx`, `http_4xx`, `http_error`, `http_slow`, `log_keyword`, `flutter_error`.
+`get` (default when `set` not given) reads the `AlertRules` singleton.
+`set:{slowThresholdMs?, rules?:{...}}` mutates the singleton in place. Missing fields keep their values. Changes apply IMMEDIATELY to subsequent capture writer ticks and log events — no restart needed.
 
-Changes apply immediately to subsequent capture writer ticks and log events — there's no restart needed.
+Rule keys: `http_5xx`, `http_4xx`, `http_error`, `http_slow`, `log_keyword`, `flutter_error`.
 
 ## Args
 
-- `get` (bool, optional) — defaults to true if `set` not provided.
-- `set` (object) — `{slowThresholdMs?: int, rules?: {http_5xx?: bool, ...}}`.
+- `get` (bool, optional, default true when `set` omitted).
+- `set` (object, optional) — `{slowThresholdMs?: int, rules?: {<rule_key>: bool}}`.
 
 ## Returns
 
 ```json
 {
+  "summary": "Updated alert config: slowThresholdMs=5000, enabled=[http_5xx, http_error, log_keyword, flutter_error], disabled=[http_4xx, http_slow].",
+  "mutated": true,
   "config": {
-    "slowThresholdMs": 3000,
-    "rules": {"http_5xx": true, "http_4xx": true, "http_error": true,
-              "http_slow": true, "log_keyword": true, "flutter_error": true}
-  }
+    "slowThresholdMs": 5000,
+    "rules": {"http_5xx":true, "http_4xx":false, ...}
+  },
+  "nextSteps": [
+    "alerts_drain — see what fires under the new config",
+    "alerts_clear — wipe alerts that predate this rule change"
+  ]
 }
 ```
 
+`warnings: []` fires when all rules are off (pipeline silent) or `slowThresholdMs` < 500 (noisy).
+
 ## Pairs well with
 
-- `alerts_drain` — after retuning, drain stale alerts so new ones reflect the new rules.
+- `alerts_drain` — after retuning, drain stale alerts so new ones reflect new rules.
+- `alerts_clear` — bulk-delete drained alerts that no longer apply.
 - `ignored_hosts` — when the right fix is filtering hosts, not rules.
+- `alert_patterns` — for project-specific regex rules.
 
 ## Example
 
 ```
 > alerts_config set:{slowThresholdMs:5000, rules:{http_4xx:false}}
-< {config:{slowThresholdMs:5000, rules:{http_4xx:false,...}}}
+< {summary:"Updated alert config: slowThresholdMs=5000...", config:{...}}
 ```

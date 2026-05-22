@@ -2,23 +2,29 @@ import 'dart:async';
 
 import 'package:dart_mcp/server.dart';
 
+import '../config/capabilities.dart';
 import '../state/session.dart';
 import '../storage/captures_db.dart';
+import 'alerts_drain.dart' show buildAlertsResponse;
 import 'result.dart';
 
 final alertsPeekTool = Tool(
   name: 'alerts_peek',
   description:
-      'Returns pending alerts WITHOUT marking them as drained. Use this when '
-      'you want to see what is waiting without committing to "I have read '
-      'this". Identical args + output to alerts_drain.',
+      'Returns pending alerts WITHOUT marking them as drained — read-only '
+      'sibling of alerts_drain. Use to triage what is waiting before '
+      'committing. Same args and response shape.',
   inputSchema: Schema.object(
     properties: {
-      'sessionId': Schema.int(description: 'Restrict to a session. Default: live.'),
-      'severityMin': Schema.string(
-        description: 'info | warning | error | critical. Default: any.',
+      'sessionId': Schema.int(
+        description: 'Restrict to a session id. Default: current session (live or viewed).',
       ),
-      'limit': Schema.int(description: 'Max alerts (default 20, hard cap 200).'),
+      'severityMin': Schema.string(
+        description: '"info" | "warning" | "error" | "critical". Default: any.',
+      ),
+      'limit': Schema.int(
+        description: 'Max alerts returned (default 20, hard cap 200). Newest-first.',
+      ),
     },
   ),
 );
@@ -26,6 +32,7 @@ final alertsPeekTool = Tool(
 FutureOr<CallToolResult> alertsPeek(CallToolRequest request) async {
   final args = request.arguments ?? const <String, Object?>{};
   final session = Session.instance;
+  final caps = CapabilityConfig.instance;
   final sessionId = (args['sessionId'] as int?) ?? session.effectiveSessionId;
   final severityMin = args['severityMin'] as String?;
   final limitRaw = (args['limit'] as int?) ?? 20;
@@ -37,25 +44,20 @@ FutureOr<CallToolResult> alertsPeek(CallToolRequest request) async {
       severityMin: severityMin,
       limit: limit,
     );
-    return jsonResult({
+    return jsonResult(buildAlertsResponse(
+      action: 'peek',
+      sessionId: sessionId,
+      severityMin: severityMin,
+      rows: rows,
+      caps: caps,
+    ));
+  } catch (e) {
+    return errorResult('alerts_peek failed: $e', extra: {
       'sessionId': sessionId,
-      'count': rows.length,
-      'alerts': [
-        for (final r in rows)
-          {
-            'id': r['id'],
-            'sessionId': r['session_id'],
-            'tsMs': r['ts_ms'],
-            'severity': r['severity'],
-            'kind': r['kind'],
-            'title': r['title'],
-            'detail': r['detail'],
-            'sourceKind': r['source_kind'],
-            'sourceId': r['source_id'],
-          },
+      'nextSteps': const [
+        'network_status — confirm DB is open',
+        'session_list — check the session id is valid',
       ],
     });
-  } catch (e) {
-    return errorResult('alerts_peek failed: $e');
   }
 }
