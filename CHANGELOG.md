@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.6] — 2026-05-22
+
+### Changed
+- `network_get` brought up to the [tool review checklist](https://github.com/Lukas-io/flutter_network_mcp/blob/main/docs/README.md) in one pass:
+  - Adds `summary` line ("GET /feed/vendors → 200 OK · 372ms · application/json").
+  - Adds capability-aware `nextSteps` — points at `network_body` first when bodies are truncated, then `network_replay` and `network_diff`. All gated on the `http` capability.
+  - Adds top-level `warnings: []` array for body truncation, in-flight requests, transport errors, and (history mode) not-yet-backfilled bodies. Omitted when healthy.
+  - Lifecycle `events` array is now opt-in via `includeEvents:true` (default false). When included, capped at 50 entries with `_omitted` count.
+  - Null-valued fields throughout (endTimeMs, durationMs, statusCode, reasonPhrase, cookies, etc.) omitted per-record so partial requests don't return placeholder nulls.
+  - Hard caps documented on every truncation arg: bodyTruncateBytes ≤ 262144, headerTruncateBytes ≤ 4096.
+  - All error paths now include `nextSteps` with concrete recovery commands.
+
 ## [0.5.5] — 2026-05-22
 
 ### Changed
