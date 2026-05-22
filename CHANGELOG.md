@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.5] — 2026-05-22
+
+### Changed
+- `network_list` brought up to the same shape as `network_attach` / `network_status` in one pass against the [tool review checklist](https://github.com/Lukas-io/flutter_network_mcp/blob/main/docs/README.md):
+  - Adds `summary` (one-line synthesis) and capability-aware `nextSteps` (1–3 actions; e.g., points at `network_search` only when search is enabled, `alerts_drain` only when alerts are enabled).
+  - Adds `warnings: []` for partial / degraded states: empty profile right after attach, all filters excluded, cursor produced no new captures, filter dropout >5×. Omitted when healthy.
+  - Per-request summaries now OMIT null-valued fields (statusCode, durationMs, contentType, etc.) — saves ~30% tokens per row on incomplete requests.
+  - Error returns now include `nextSteps` with concrete recovery commands (network_status / network_attach / session_open for "not attached"; check zombie state for VM call failures).
+  - Arg descriptions tightened — `since` now explicitly explains incremental-by-default and `pass nextCursor here` usage.
+
 ## [0.5.4] — 2026-05-22
 
 ### Changed
