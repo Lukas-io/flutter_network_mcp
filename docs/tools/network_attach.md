@@ -46,18 +46,20 @@ Success:
 ```json
 {
   "attached": true,
+  "summary": "Attached to sanga_mobile — capturing HTTP+sockets+logs into session 14.",
   "appName": "...",
   "vmServiceUri": "...",
   "isolateId": "...",
-  "httpProfilingEnabled": true,
-  "socketProfilingEnabled": true,
-  "logStreamActive": true,
   "liveSessionId": 14,
-  "capturesDbPath": "/Users/me/.local/share/flutter_network_mcp/captures.db",
+  "socketProfilingEnabled": true,
   "nextSteps": ["Drive the app to generate traffic",
-                "Then call network_list, logs_tail, or alerts_drain"]
+                "Then call network_list / logs_tail / alerts_drain"]
 }
 ```
+
+`summary` is a one-line synthesis the agent can echo to the user verbatim.
+`nextSteps` is filtered against active capabilities — disabled tools never appear there.
+A `warnings: [...]` array appears only when something was partially degraded (e.g., socket profiling unavailable on this isolate, log stream subscription failed).
 
 Error (already attached):
 ```json
