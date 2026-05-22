@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.11] — 2026-05-22
+
+### Fixed
+- `session_delete` dry-run and `session_export` were reporting all per-session counts as 0 because `dao.getSession(id)` returns the raw row without COUNT joins. Added `CapturesDao.getSessionWithCounts(id)` (joins COUNT subqueries for http_requests / socket_events / log_records / alerts), and pointed both tools at it.
+
+### Changed
+- **Batch 5 (Sessions)** — all six session tools through the checklist:
+  - `session_list` — `summary` ("3 session(s) — live: 14, viewing: live."); per-row null fields (vmServiceUri, isolateId, note, endedMs) omitted; `warnings` for empty/large session count; `nextSteps` suggests `session_open` on a pickable id + `session_delete` when count ≥ 50.
+  - `session_open` — `summary` describes the opened session in one line; reports `isLive` and `isEnded` flags; `warnings` when you open the live session (no-op); `nextSteps` for read tools + close.
+  - `session_close` — `summary` distinguishes no-op vs. revert; `nextSteps` adapt based on whether live session exists.
+  - `session_export` — pre-flight validates session id; reports `sizeBytes` and per-counts; `warnings` for live (snapshot), overwritten file, empty-HAR; `nextSteps` for opening in Chrome DevTools / cat+jq.
+  - `session_note` — `summary` echoes truncated note; `nextSteps` suggests `session_list` + `session_export`.
+  - `session_delete` — dry-run now includes per-counts ("would delete 38 http, 12 log(s), 3 socket(s)"); confirmed delete adds `warnings` reminding `db_vacuum` is needed to reclaim disk.
+
 ## [0.5.10] — 2026-05-22
 
 ### Changed
