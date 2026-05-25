@@ -15,10 +15,13 @@ const int _kDefaultLen = 16384;
 final networkBodyTool = Tool(
   name: 'network_body',
   description:
-      'Returns a byte range of a single HTTP request or response body. Works '
-      'in live mode and history mode (history requires the writer to have '
-      'persisted the body — usually within ~2s of request completion). '
-      'Returns `nextOffset` for iterative paging.',
+      'Fetch the rest of a body that network_get truncated. Call this '
+      'whenever a network_get response carries `truncated:true` plus a '
+      '`totalSize` larger than what was returned — that\'s the signal you '
+      'are missing data. Byte-range paged via `offset` + `length`; returns '
+      '`nextOffset` so you can iterate. Auto-decodes utf8 for text content '
+      'types, base64 for binary. Works against both live and history '
+      'sessions (history needs the writer\'s ~2s body backfill to have run).',
   inputSchema: Schema.object(
     properties: {
       'id': Schema.string(description: 'Request id from network_list / network_search.'),

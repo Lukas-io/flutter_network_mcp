@@ -13,9 +13,12 @@ const double _kBodiesHeavyRatio = 0.7;
 final dbStatsTool = Tool(
   name: 'db_stats',
   description:
-      'Reports captures DB statistics: per-table row counts, total file '
-      'size, body BLOB size, journal mode, pending-alert count, DB file '
-      'path. Use when the file might be getting big.',
+      'Check on the captures DB — file size on disk, per-table row counts, '
+      'body BLOB bytes, pending-alert count, journal mode, file path. Use '
+      'when the DB might be getting big (run this before `db_vacuum` so '
+      'you know whether vacuum will actually reclaim much), when '
+      'investigating which tables have grown most, or just to see where '
+      'on disk your captures live.',
   inputSchema: Schema.object(properties: {}),
 );
 

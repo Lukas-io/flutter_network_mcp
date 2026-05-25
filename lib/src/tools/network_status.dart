@@ -12,11 +12,13 @@ import 'result.dart';
 final networkStatusTool = Tool(
   name: 'network_status',
   description:
-      'Auto-orienting first call. Reports attachment state, active '
-      'capabilities, DTD-known apps, DB-wide alert counts, session totals, '
-      'and a `nextSteps` hint of what to do. Auto-connects DTD when a '
-      'default URI is configured so `knownApps` populates without needing '
-      'to attach first. Pass `connectDtd:false` for a purely passive check.',
+      'Call this FIRST, every session. Tells you: which apps are reachable '
+      'to attach to (`knownApps` — pick one of these for network_attach), '
+      'whether you\'re already attached, what alerts are queued, what '
+      'capabilities are enabled, and which DB on disk you\'re writing to. '
+      'Auto-opens the DTD connection so `knownApps` populates without a '
+      'separate attach step — pass `connectDtd:false` to skip that probe. '
+      'Reads `nextSteps` from the response to know what to call next.',
   inputSchema: Schema.object(
     properties: {
       'connectDtd': Schema.bool(

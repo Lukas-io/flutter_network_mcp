@@ -11,12 +11,15 @@ import 'result.dart';
 final networkAttachTool = Tool(
   name: 'network_attach',
   description:
-      'Connect to a running Flutter/Dart app via DTD, enable HTTP + socket '
-      'profiling, subscribe to log streams, and open a new capture session '
-      'in the persistent database. Zero-arg works when DTD has exactly one '
-      'app and a default URI is configured. Use `appNameContains` to pick '
-      'when multiple apps are visible. Re-attaching to a different target '
-      'requires `force:true` so live state is never silently lost.',
+      'Open a capture session against a running Flutter/Dart app — call '
+      'this after `network_status` shows the app you want under '
+      '`knownApps`. Enables HTTP + socket profiling, subscribes to log '
+      'streams, and creates a new row in `sessions` so everything that '
+      'follows is persisted. Zero-arg works when exactly one app is '
+      'reachable and a default DTD URI is set; pass `appNameContains` to '
+      'disambiguate when multiple apps are visible. Re-attaching to a '
+      'different target requires `force:true` so live state is never '
+      'silently lost.',
   inputSchema: Schema.object(
     properties: {
       'dtdUri': Schema.string(

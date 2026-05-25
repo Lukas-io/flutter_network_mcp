@@ -11,11 +11,13 @@ import 'result.dart';
 final networkSearchTool = Tool(
   name: 'network_search',
   description:
-      'Full-text search across captured HTTP urls + request/response bodies '
-      'using SQLite FTS5. Queries are phrase-quoted by default so hyphens '
-      'and special chars work naturally. Returns ranked matches with a '
-      '12-token «highlighted» snippet. Bodies must have been backfilled by '
-      'the writer (~2s post request completion).',
+      'Find a captured request by something inside it — a URL substring, a '
+      'body keyword, an error string from a stack trace. Use this when you '
+      'remember WHAT the request contained but not which id it was. '
+      'Searches URLs and (backfilled) request/response bodies; returns '
+      'ranked matches with «highlighted» snippets. Hyphens / colons in the '
+      'query work naturally. Cheaper than network_list when you have a '
+      'concrete needle but no idea where in the haystack to look.',
   inputSchema: Schema.object(
     properties: {
       'query': Schema.string(
