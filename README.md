@@ -38,6 +38,12 @@ Then in any project's `.mcp.json` (or `~/.claude.json` for machine-wide):
 
 `--dtd-uri` is optional — pass it once and `network_attach` works with no args. The DTD WS URI is printed in the IDE console when you `flutter run`.
 
+## Found a bug? File it — your agent will help
+
+This is a young package with a small user base. Any issue you hit — wrong output, missing field, confusing error, sluggish response, awkward UX, doc gap, anything — is worth a report. The repo's [issue tracker](https://github.com/Lukas-io/flutter_network_mcp/issues) has a bug-report template that captures the right context (DTD URI freshness, dart version, server invocation, `network_status` output).
+
+**Tell your agent to file proactively.** The MCP server's `instructions` field (sent at every handshake) directs the agent to open an issue or hand you a ready-to-paste body when something goes wrong — without waiting for you to ask. So if Claude (or any MCP-capable agent) notices something off, it should surface a report. If you don't see that happening, mention this section to it.
+
 ## Environment knobs (fine-tune at startup)
 
 Beyond capability gating, these env vars tune runtime behavior:

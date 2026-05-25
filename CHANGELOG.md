@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.17] — 2026-05-24
+
+### Added
+- **Proactive bug-report directive** — appended to the MCP server's `instructions` string (loaded into every agent's context at handshake) telling agents to open an issue at https://github.com/Lukas-io/flutter_network_mcp/issues or hand the user a paste-ready body whenever they hit a bug / wrong output / missing field / confusing error / UX friction, without asking permission first. Mirror sections added to `README.md` ("Found a bug? File it") and `docs/README.md` (top-of-file callout) so the directive shows up wherever an agent or human lands. Goal: shorten the maintainer's discovery loop on a young package with a small user base.
+
 ## [0.5.16] — 2026-05-24
 
 ### Fixed
