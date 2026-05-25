@@ -14,10 +14,14 @@ const int _kSevereLevel = 1200;
 final logsTailTool = Tool(
   name: 'logs_tail',
   description:
-      'Returns recent VM service log/stdout/stderr records. In LIVE mode '
-      '(default), reads from an in-memory ring buffer (capacity 500). In '
-      'HISTORY mode (after session_open), reads from `log_records` for the '
-      'viewed session. Newest-first; cursor-based via `since`.',
+      'Read recent app logs — the running app\'s `print`, `developer.log`, '
+      'stdout, and stderr. Use this when correlating a log line with a '
+      'nearby HTTP request, chasing an exception spotted via alerts_drain, '
+      'or just inspecting what the app is doing. Newest-first, '
+      'cursor-paginated (pass `since` for incremental polling). Live mode '
+      'reads from an in-memory ring buffer (capacity 500); after session_open '
+      'it reads persisted log_records for the viewed session instead. Filter '
+      'by `levelMin` to suppress noisy info logs and surface only WARNING+.',
   inputSchema: Schema.object(
     properties: {
       'since': Schema.int(

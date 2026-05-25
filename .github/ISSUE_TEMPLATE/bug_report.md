@@ -4,31 +4,45 @@ about: Something doesn't work or behaves unexpectedly
 labels: bug
 ---
 
-## What happened
+> **Filing this is dead simple — agents are the recommended channel.**
+> If you have Claude Code, Cursor, or another MCP-capable agent open right now, just say
+> *"file a bug for this"* and it should open this template, fill the Quick report section,
+> and submit. The Optional detail below is collapsible — skip it if you don't have it.
 
-<!-- One paragraph. What did you expect? What did you actually see? -->
+## Quick report (required — ~30 seconds)
 
-## How to reproduce
+**What broke**
+<!-- One sentence. What did you (or the agent) expect, what actually happened? -->
 
+**Failing tool call**
+<!-- Tool name + the args you used. e.g.  network_search query:"timeout" -->
+
+**`network_status` response**
+<!-- Paste the structuredContent from a recent network_status call.
+     If network_status itself is what's broken, write "n/a — network_status broken". -->
+
+---
+
+<details><summary><strong>Optional detail</strong> (helps a lot, never required)</summary>
+
+### Environment
+- `flutter_network_mcp` version: <!-- dart pub global list | grep flutter_network_mcp -->
+- Dart SDK: <!-- dart --version -->
+- macOS / Linux / Windows version:
+- IDE / agent: <!-- VS Code + Claude Code / Cursor / etc. -->
+
+### Capture context
+- DTD URI freshness: <!-- "fresh, app just started" or "DTD ~30 min old" -->
+- Debug build? <!-- release/profile have the VM service stripped -->
+- Server invocation: <!-- the `command` + `args` from your .mcp.json -->
+
+### Reproduction steps
 1.
 2.
 3.
 
-## Environment
+### Stderr / MCP host logs
+<!-- The MCP server writes stack traces to stderr (never into tool responses),
+     so check the IDE's MCP server logs for a traceback. -->
 
-- `flutter_network_mcp` version: <!-- run: dart pub global list | grep flutter_network_mcp -->
-- Dart SDK: <!-- run: dart --version -->
-- macOS / Linux / Windows version:
-- IDE / agent: <!-- VS Code + Claude Code / Cursor / etc. -->
-
-## Capture context (if applicable)
-
-- DTD URI age at time of bug: <!-- e.g. "fresh, app just started" or "DTD ~30 min old" -->
-- Was the app a debug build? <!-- release/profile have the VM service stripped -->
-- Server invocation: <!-- the `command` + `args` from your .mcp.json -->
-- `network_status` response: <!-- if you can, paste the structuredContent -->
-
-## Anything else
-
-<!-- Logs from stderr if relevant. The MCP server writes stack traces to stderr
-     (never into responses), so check the IDE's MCP server logs for a traceback. -->
+</details>

@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.18] — 2026-05-24
+
+### Changed
+- **Sharpened tool `description` fields** for 8 tools where an audit showed agents under-reaching because the description led with mechanism (FTS5 / SQL escape hatch / byte range / VM service streams / DTD) instead of use case. Each one now leads with WHEN to reach for it. Focus was on the entry-point tools (`network_status`, `network_attach`) plus the highest-leverage discovery / drilldown / housekeeping tools agents tend to skip:
+  - `network_status` — opens with "Call this FIRST, every session" + explicit pointer that `knownApps` is the list to pick from for `network_attach`. Replaces "Auto-orienting first call" which didn't tell the agent *what* it was orienting toward.
+  - `network_attach` — leads with the sequencing cue ("call this after `network_status` shows the app you want under `knownApps`") so the attach step has a clear place in the flow.
+  - `network_search` — "Find a captured request by something inside it…" instead of "Full-text search…using SQLite FTS5".
+  - `network_diff` — leads with the regression-hunting trigger ("a request that used to work now fails, or two similar-looking requests behave differently").
+  - `network_query` — reframed from "SQL escape hatch" to a positive use-case list (aggregates, joins, percentile timings) + an explicit "reach for this AFTER" hint pointing at the cheaper typed tools.
+  - `network_body` — leads with the exact trigger ("Call this whenever a network_get response carries `truncated:true`"), not the byte-range mechanism.
+  - `logs_tail` — leads with concrete use cases (correlate a log with a nearby HTTP request, chase an exception spotted via alerts_drain) before live-vs-history mechanics.
+  - `db_stats` — clarifies the practical triggers (before `db_vacuum`, investigating which tables grew, locating the DB file) instead of a flat "use when the file might be getting big".
+
+### Added
+- **README "32 tools" table now per-tool** — each row carries a WHEN-first one-liner so the user (and any agent reading the README) sees the cheatsheet at a glance, not just tool names grouped by category. Useful when reminding an agent that a specific tool exists for a job it isn't reaching for.
+- **Issue templates restructured for agent-first filing.** Bug-report template lightened: a 3-field "Quick report" section is the only required content (what broke, failing tool call, `network_status` response); environment, repro steps, and stderr move into a collapsible "Optional detail" block. New **"UX friction / suggestion"** template (3 fields, no environment) for things that work but feel awkward, confusing, or unclear — previously these got funneled into the bug template and diluted. Server `instructions`, README "Found a bug?" section, and `docs/README.md` callout all rewritten to point at both templates and make the agent-first flow explicit ("YOU are the recommended channel for filing").
+
 ## [0.5.17] — 2026-05-24
 
 ### Added

@@ -10,11 +10,16 @@ const int _kRowCap = 500;
 final networkQueryTool = Tool(
   name: 'network_query',
   description:
-      'Read-only SQL escape hatch against the captures DB. Single SELECT (or '
-      'WITH...SELECT) only. Wrapped in a subquery and hard-capped at 500 '
-      'rows. BLOB cells (http_bodies.bytes) return `{type:"blob", size}` so '
-      'they don\'t flood context. String cells > 2 KB return '
-      '`{value, truncated, totalLength}`.',
+      'Run a custom SELECT against the captures DB when the typed tools '
+      'can\'t express what you need: cross-session aggregates, slowest '
+      'endpoints by host, percentile timings, joins between requests and '
+      'alerts, top error URLs. Schema lives in '
+      'docs/tools/power/network_query.md. Single statement, read-only, '
+      '500-row cap. BLOB cells (http_bodies.bytes) return '
+      '`{type:"blob", size}` so they don\'t flood context; oversized strings '
+      'truncate. Reach for this AFTER you\'ve confirmed network_list / '
+      'network_search / session_list can\'t answer the question — those are '
+      'cheaper and don\'t need SQL.',
   inputSchema: Schema.object(
     properties: {
       'sql': Schema.string(

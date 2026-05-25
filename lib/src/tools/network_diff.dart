@@ -12,10 +12,13 @@ import 'result.dart';
 final networkDiffTool = Tool(
   name: 'network_diff',
   description:
-      'Structural diff of two captured HTTP requests in the SAME session: '
+      'Compare two captured requests side-by-side to see what changed: '
       'status, method, URL, response headers, and (when both bodies are '
-      'utf8) a line-based body diff. Reads from the DB; one or both ids '
-      'must exist in the chosen session.',
+      'utf8) a line-based body diff. Use this when investigating a '
+      'regression — a request that used to work now fails, or two '
+      'similar-looking requests behave differently. Also useful to confirm '
+      'two requests really are identical when you suspect they are. Both '
+      'ids must live in the SAME session.',
   inputSchema: Schema.object(
     properties: {
       'idA': Schema.string(description: 'First request id.'),

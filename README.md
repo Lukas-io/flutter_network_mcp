@@ -38,11 +38,16 @@ Then in any project's `.mcp.json` (or `~/.claude.json` for machine-wide):
 
 `--dtd-uri` is optional — pass it once and `network_attach` works with no args. The DTD WS URI is printed in the IDE console when you `flutter run`.
 
-## Found a bug? File it — your agent will help
+## Found a bug? Let your agent file it
 
-This is a young package with a small user base. Any issue you hit — wrong output, missing field, confusing error, sluggish response, awkward UX, doc gap, anything — is worth a report. The repo's [issue tracker](https://github.com/Lukas-io/flutter_network_mcp/issues) has a bug-report template that captures the right context (DTD URI freshness, dart version, server invocation, `network_status` output).
+**Issue filing for this MCP is agent-first.** Two templates in the repo, both designed for an agent to fill and submit in one shot — neither is required to be long:
 
-**Tell your agent to file proactively.** The MCP server's `instructions` field (sent at every handshake) directs the agent to open an issue or hand you a ready-to-paste body when something goes wrong — without waiting for you to ask. So if Claude (or any MCP-capable agent) notices something off, it should surface a report. If you don't see that happening, mention this section to it.
+- **[Bug report](https://github.com/Lukas-io/flutter_network_mcp/issues/new?template=bug_report.md)** — 3 required fields (what broke, the failing tool call, `network_status` response). Optional detail (environment, repro steps, stderr) lives under a collapsible block — agents fill what they can see and submit, you don't have to type anything.
+- **[UX friction / suggestion](https://github.com/Lukas-io/flutter_network_mcp/issues/new?template=ux_friction.md)** — even simpler. For anything that *works* but feels awkward, confusing, slow, or unclear. 3 fields, no environment needed.
+
+If you're using Claude Code, Cursor, or any MCP-capable agent, just say *"file a bug for this"* or *"file a UX friction report"* and the agent should open the template, fill it, and submit (using a GitHub tool if available, otherwise handing you a paste-ready body). The MCP server's `instructions` field directs agents to do this proactively, no permission needed.
+
+This is a young package with a small user base — every report compounds. Don't filter for "important enough" before filing; that's the maintainer's job.
 
 ## Environment knobs (fine-tune at startup)
 
@@ -128,19 +133,53 @@ The agent calls `alerts_drain` at the top of an investigation and gets the queue
 
 ## The 32 tools
 
-| Category | Tools |
-|---|---|
-| **Lifecycle** | `network_status` · `network_attach` · `network_detach` |
-| **HTTP** | `network_list` · `network_get` · `network_body` · `network_clear` · `network_diff` · `network_replay` |
-| **Sockets** | `socket_list` · `socket_get` · `socket_clear` |
-| **Logs** | `logs_tail` · `logs_clear` |
-| **Alerts** | `alerts_drain` · `alerts_peek` · `alerts_config` · `alerts_clear` · `alert_patterns` |
-| **Search** | `network_search` |
-| **Sessions** | `session_list` · `session_open` · `session_close` · `session_export` · `session_note` · `session_delete` |
-| **SQL** | `network_query` |
-| **Admin** | `ignored_hosts` · `redacted_headers` · `db_stats` · `db_vacuum` · `bodies_purge` |
+Each tool's MCP `description` (loaded into every agent at handshake) tells the agent WHEN to reach for it. This table is the same information at a glance — useful when you want to remind an agent that a tool exists, or when picking the right one yourself.
 
-**Per-tool docs live in [`docs/tools/`](docs/tools/) — every tool has its own page with a `## DO NOT USE THIS TOOL WHEN` section at the top.** Point your agent at these. The negative cases catch the bulk of misuse before it happens.
+| Tool | Use when |
+|---|---|
+| **Lifecycle** | |
+| `network_status` | Always call first. Reports attach state, DB path, active capabilities, known apps, pending alerts. Will auto-attach if exactly one app is reachable. |
+| `network_attach` | Connect to a running Flutter/Dart app to start capturing HTTP, sockets, and logs into a new session. |
+| `network_detach` | End the current capture session. Future read calls will fall back to history. |
+| **HTTP** | |
+| `network_list` | Browse recent HTTP requests by metadata: host, method, status, time. Cursor-paged. |
+| `network_get` | Read full details of ONE request — headers + body + lifecycle events. Use after `network_list` or `network_search` finds the id. |
+| `network_body` | Fetch the rest of a truncated body. Call when `network_get` reports `truncated:true`. |
+| `network_clear` | Wipe the LIVE in-memory HTTP buffer (DB untouched). |
+| `network_diff` | Compare two requests side-by-side to spot what changed — for regression hunting or confirming two are identical. |
+| `network_replay` | Emit a runnable curl command to reproduce a captured request in your terminal. Auth headers redacted by default. |
+| **Sockets** | |
+| `socket_list` | List `dart:io` socket connections (TCP/UDP). Mostly for correlating with HTTP. |
+| `socket_get` | Read one socket's read/write byte stats by id. |
+| `socket_clear` | Wipe the live socket buffer (DB untouched). |
+| **Logs** | |
+| `logs_tail` | Read recent app logs: `print`, `developer.log`, stdout, stderr. Correlate with HTTP or chase an exception. |
+| `logs_clear` | Wipe the live log ring buffer (DB untouched). |
+| **Alerts** | |
+| `alerts_drain` | "What is wrong right now?" — returns pending alerts and marks them drained. Top of any investigation. |
+| `alerts_peek` | Same as drain but read-only (does NOT mark them drained). |
+| `alerts_config` | Toggle alert rules / change thresholds at runtime. |
+| `alerts_clear` | Bulk-delete alerts (drained-only by default). |
+| `alert_patterns` | Add / list / remove custom regex alert rules. |
+| **Search** | |
+| `network_search` | Find a request by text in URL or body (FTS5 ranked + highlighted). Use when you know WHAT was in the request but not the id. |
+| **Sessions** | |
+| `session_list` | See past capture sessions. Pick one to reopen tomorrow. |
+| `session_open` | Switch read tools to view a historical session. |
+| `session_close` | Switch read tools back to the live session. |
+| `session_export` | Write a session to a HAR 1.2 file (or NDJSON) for sharing. |
+| `session_note` | Annotate a session ("auth bug 2026-05-21") so future-you can find it. |
+| `session_delete` | Delete a session + every row attached to it (cascade). Requires confirm:true. |
+| **SQL** | |
+| `network_query` | Run custom SELECT against the DB when the typed tools can't express what you need — aggregates, joins, percentile timings. |
+| **Admin** | |
+| `ignored_hosts` | Manage the capture-time host denylist (drop analytics / Sentry / telemetry). |
+| `redacted_headers` | Manage the header denylist for `network_replay` curl emission. |
+| `db_stats` | Report DB size, per-table row counts, body bytes. Tells you when to vacuum. |
+| `db_vacuum` | WAL-checkpoint + VACUUM + optimize. Run after big deletes. |
+| `bodies_purge` | Drop request/response BLOBs (keep metadata). Reclaim disk without losing history. |
+
+**Per-tool docs live in [`docs/tools/`](docs/tools/) — every tool has its own page with a `## DO NOT USE THIS TOOL WHEN` section at the top.** Point your agent at these when you need deeper guidance than the one-liner above. The negative cases catch the bulk of misuse before it happens.
 
 ### The agent-facing contract
 
