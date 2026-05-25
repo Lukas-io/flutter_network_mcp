@@ -17,8 +17,11 @@ Future<void> main(List<String> args) async {
     ..addOption(
       'data-dir',
       help:
-          'Directory for captures.db. Defaults to '
-          r'$XDG_DATA_HOME/flutter_network_mcp or ~/.local/share/flutter_network_mcp.',
+          'Directory for captures.db. macOS default: '
+          '~/Library/Application Support/flutter_network_mcp. '
+          r'Linux default: $XDG_DATA_HOME/flutter_network_mcp or '
+          '~/.local/share/flutter_network_mcp. Env-var fallback: '
+          'FLUTTER_NETWORK_MCP_DATA_DIR.',
     )
     ..addOption(
       'capabilities',
@@ -70,7 +73,22 @@ Future<void> main(List<String> args) async {
     return;
   }
 
-  CapturesDatabase.open(dataDir: dataDir);
+  try {
+    CapturesDatabase.open(dataDir: dataDir);
+  } on io.FileSystemException catch (e) {
+    io.stderr.writeln(
+      'flutter_network_mcp: cannot create data dir '
+      '(${e.osError?.message ?? e.message}).\n'
+      'Pass --data-dir <writable path> or set FLUTTER_NETWORK_MCP_DATA_DIR.',
+    );
+    io.exitCode = 73; // EX_CANTCREAT
+    return;
+  } on StateError catch (e) {
+    // Thrown by CapturesDatabase.open() when every candidate failed.
+    io.stderr.writeln('flutter_network_mcp: ${e.message}');
+    io.exitCode = 73;
+    return;
+  }
 
   // Hydrate user-defined alert patterns from the DB so they fire from the
   // very first capture tick.

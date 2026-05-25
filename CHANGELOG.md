@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.16] — 2026-05-24
+
+### Fixed
+- **Crash on fresh install** when the default data dir is unwritable (first external bug report). `CapturesDatabase.open()` previously called `Directory.createSync(recursive: true)` against a single resolved path; on macOS boxes where a prior `sudo` installer left `~/.local` root-owned, this raised `PathAccessException: '/Users/<u>/.local/share' (errno = 13)` before MCP handshake could complete. The MCP host (Claude Code) swallows stderr, so the user only saw `flutter-network: ✗ Failed to connect`.
+- **Stack-trace leak in `main()`** — `bin/flutter_network_mcp.dart` now catches `FileSystemException` + `StateError` from `CapturesDatabase.open()` and exits 73 (`EX_CANTCREAT`) with one actionable stderr line. No more raw Dart stack in the host log.
+
+### Changed
+- **`_resolveDataDir(override)` → `_candidateDataDirs(override)`** in `lib/src/storage/database.dart`. `open()` now walks a prioritized list and uses the first writable candidate; throws `StateError` listing every attempt + last OS error if all fail. Single-element list when `--data-dir` or `FLUTTER_NETWORK_MCP_DATA_DIR` is explicit (errors loudly — no silent fallback on user-named paths).
+- **macOS default moved** from `~/.local/share/flutter_network_mcp` to `~/Library/Application Support/flutter_network_mcp` (canonical macOS path). Linux/other platforms unchanged.
+- **macOS auto-migration (one-time, 0.5.16)**: on first launch, if `~/.local/share/flutter_network_mcp/captures.db` exists and the new location's `captures.db` does not, the server atomically renames the old dir to the new one (WAL/SHM files travel along) and emits a single stderr banner. If rename fails (cross-device, race, permissions) it leaves the old dir intact and the candidate walker falls back to it — no partial copy+delete, no corruption risk. Skipped entirely when `--data-dir` or `FLUTTER_NETWORK_MCP_DATA_DIR` is set.
+
+### Added
+- **`FLUTTER_NETWORK_MCP_DATA_DIR`** env var — parity with the existing `--data-dir` flag and with the other startup knobs (`FLUTTER_NETWORK_MCP_DTD_URI`, `FLUTTER_NETWORK_MCP_POLL_MS`, etc.).
+- README: per-platform default-path table + 0.5.16 migration callout + DB-segmentation paragraph explaining that captures partition by `session_id` (one row per `network_attach`, with `app_name` as filter metadata).
+
+### Notes
+- The reporter's first proposed fix (adding `recursive: true` to the `createSync` call) was already in place since 0.5.0 — the EACCES fired *because* `recursive: true` was walking up to `~/.local` and finding it root-owned. The real fix is the candidate fallback chain.
+
 ## [0.5.15] — 2026-05-22
 
 ### Changed

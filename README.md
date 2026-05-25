@@ -40,13 +40,14 @@ Then in any project's `.mcp.json` (or `~/.claude.json` for machine-wide):
 
 ## Environment knobs (fine-tune at startup)
 
-Beyond capability gating, three env vars tune runtime behavior:
+Beyond capability gating, these env vars tune runtime behavior:
 
 | Env var | Default | Clamped to | What it does |
 |---|---|---|---|
 | `FLUTTER_NETWORK_MCP_POLL_MS` | 2000 | 50–60000 | CaptureWriter poll interval. Lower for chatty apps, higher for quiet ones. |
 | `FLUTTER_NETWORK_MCP_LOG_BUFFER` | 500 | 50–10000 | In-memory log ring buffer size for `logs_tail` live mode. |
 | `FLUTTER_NETWORK_MCP_DTD_URI` | — | — | Default DTD URI for `network_attach`. |
+| `FLUTTER_NETWORK_MCP_DATA_DIR` | — | — | Directory for `captures.db`. Equivalent to `--data-dir`. When set, the candidate-fallback chain is skipped — unwritable values error loudly. |
 | `FLUTTER_NETWORK_MCP_CAPABILITIES` | (all) | — | Allowlist (see below). |
 | `FLUTTER_NETWORK_MCP_DISABLE` | — | — | Denylist (see below). |
 
@@ -183,9 +184,20 @@ You:    session_export id:14 format:har outPath:/tmp/auth-bug.har
 
 ## The database
 
-Lives at `${XDG_DATA_HOME:-~/.local/share}/flutter_network_mcp/captures.db`. Override with `--data-dir`. Schema lives in [`docs/tools/network_query.md`](docs/tools/network_query.md).
+Lives at one `captures.db` file resolved via a fallback chain:
+
+| Platform | Default path |
+|---|---|
+| macOS | `~/Library/Application Support/flutter_network_mcp/captures.db` |
+| Linux / other | `${XDG_DATA_HOME:-~/.local/share}/flutter_network_mcp/captures.db` |
+
+Override with `--data-dir` or `FLUTTER_NETWORK_MCP_DATA_DIR`. When neither is set, the server walks a candidate list (`$XDG_DATA_HOME` → platform default → `~/.cache`) and uses the first writable one, emitting a one-line stderr note if it fell back. Schema lives in [`docs/tools/network_query.md`](docs/tools/network_query.md).
+
+> **macOS users upgrading from ≤0.5.15**: on first launch of 0.5.16, the server moves `~/.local/share/flutter_network_mcp/` to `~/Library/Application Support/flutter_network_mcp/` (atomic rename, WAL files included). Skipped if either dir's `captures.db` is missing or the new dir already has one. To opt out: set `--data-dir` or `FLUTTER_NETWORK_MCP_DATA_DIR` before launching.
 
 WAL mode. Foreign keys with cascade delete. FTS5 virtual table for `network_search`. Indexes on `(session_id, start_us)`, `host`, `status_code`, `(session_id, timestamp_ms)`, `level`, `(drained, severity, ts_ms)`.
+
+**Segmentation**: every captured row (`http_requests`, `http_bodies`, `socket_events`, `log_records`, `alerts`) has a `session_id` FK with `ON DELETE CASCADE`. One row in `sessions` per `network_attach` call — with `app_name`, `vm_service_uri`, `isolate_id`, `project_path`, `note`. Read tools always scope to the current live or opened session; cross-session queries go through `network_query`.
 
 ## Known issues
 
