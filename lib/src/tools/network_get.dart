@@ -216,7 +216,7 @@ CallToolResult _buildLiveResponse({
       requestBody: reqBody,
       responseBody: respBody,
     ),
-  });
+  }, scopeSessionId: scope.sessionId);
 }
 
 FutureOr<CallToolResult> _historyGet({
@@ -318,7 +318,7 @@ FutureOr<CallToolResult> _historyGet({
         requestBody: reqBody,
         responseBody: respBody,
       ),
-    });
+    }, scopeSessionId: scope.sessionId);
   } catch (e) {
     return errorResult('history query failed: $e', extra: {
       'sessionId': sid,

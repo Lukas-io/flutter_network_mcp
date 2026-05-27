@@ -66,7 +66,7 @@ FutureOr<CallToolResult> networkClear(CallToolRequest request) async {
         'network_list — confirm the live profile is empty',
         'Drive the app, then network_list — fresh isolated capture',
       ],
-    });
+    }, scopeSessionId: scope.sessionId);
   } catch (e) {
     return errorResult('clearHttpProfile failed: $e', extra: const {
       'nextSteps': [

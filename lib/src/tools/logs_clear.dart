@@ -65,5 +65,5 @@ FutureOr<CallToolResult> logsClear(CallToolRequest request) async {
       'logs_tail — confirm the live buffer is empty',
       'Drive the app, then logs_tail — fresh isolated capture',
     ],
-  });
+  }, scopeSessionId: scope.sessionId);
 }

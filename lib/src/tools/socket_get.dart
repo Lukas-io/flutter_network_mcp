@@ -109,7 +109,7 @@ FutureOr<CallToolResult> socketGet(CallToolRequest request) async {
       'writeBytes': s.writeBytes,
       'open': s.endTime == null,
       'nextSteps': _nextSteps(caps, isOpen: s.endTime == null, address: s.address),
-    });
+    }, scopeSessionId: scope.sessionId);
   } catch (e) {
     return errorResult('getSocketProfile failed: $e', extra: const {
       'nextSteps': [
@@ -148,7 +148,7 @@ CallToolResult _historySuccess(Scope scope, Map<String, Object?> row, Capability
     'writeBytes': row['write_bytes'],
     'open': isOpen,
     'nextSteps': _nextSteps(caps, isOpen: isOpen, address: row['address'] as String?),
-  });
+  }, scopeSessionId: scope.sessionId);
 }
 
 String _summary({

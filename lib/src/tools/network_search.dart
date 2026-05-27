@@ -125,7 +125,7 @@ FutureOr<CallToolResult> networkSearch(CallToolRequest request) async {
       'matches': matches,
       if (warnings.isNotEmpty) 'warnings': warnings,
       'nextSteps': nextSteps,
-    });
+    }, scopeSessionId: scope.sessionId);
   } catch (e) {
     return errorResult('network_search failed: $e', extra: {
       'sessionId': sessionId,

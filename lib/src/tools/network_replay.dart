@@ -166,7 +166,7 @@ FutureOr<CallToolResult> networkReplay(CallToolRequest request) async {
       'curl': buf.toString(),
       if (warnings.isNotEmpty) 'warnings': warnings,
       'nextSteps': nextSteps,
-    });
+    }, scopeSessionId: scope.sessionId);
   } catch (e) {
     return errorResult('network_replay failed: $e', extra: {
       'sessionId': sessionId,

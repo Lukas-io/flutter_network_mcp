@@ -176,7 +176,7 @@ FutureOr<CallToolResult> networkList(CallToolRequest request) async {
       if (warnings.isNotEmpty) 'warnings': warnings,
       'nextSteps': nextSteps,
       'requests': filtered,
-    });
+    }, scopeSessionId: scope.sessionId);
   } catch (e) {
     return errorResult('getHttpProfile failed: $e', extra: const {
       'nextSteps': [
@@ -255,7 +255,7 @@ FutureOr<CallToolResult> _historyList(
       if (warnings.isNotEmpty) 'warnings': warnings,
       'nextSteps': nextSteps,
       'requests': out,
-    });
+    }, scopeSessionId: scope.sessionId);
   } catch (e) {
     return errorResult('history query failed: $e', extra: {
       'sessionId': sid,
