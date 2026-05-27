@@ -131,53 +131,71 @@ The agent calls `alerts_drain` at the top of an investigation and gets the queue
 - **`session_note id note`** — annotate sessions so future-you can find them ("auth bug 2026-05-21").
 - **`ignored_hosts action:add host:...`** — drop analytics/Sentry/telemetry traffic at capture time so the DB only contains the requests that matter.
 
+## Multi-attach (0.6.0)
+
+You can attach to multiple running Flutter/Dart apps **simultaneously** — debug `sanga_mobile` and `sanga_driver` in the same agent conversation, in the same DB, without losing either side. Each attach gets its own VM connection, capture writer, and log buffer.
+
+How it works in practice:
+
+- `network_attach` for the first app → `sessionId:14` returned in the response's `scope` block.
+- `network_attach` for the second app → `sessionId:15` (the first is untouched).
+- `network_list` with no scope errors out: "ambiguous — 2 sessions attached" with `nextSteps` listing `sessionId:14  // sanga_mobile`, `sessionId:15  // sanga_driver`.
+- `network_list sessionId:14` or `network_list appNameContains:"mobile"` returns just sanga_mobile's rows.
+- `network_detach all:true` drops everything cleanly when you're done.
+
+Single-attach is unchanged — when only one session is attached, every tool auto-resolves to it and no extra args are needed. Multi-attach only adds friction when you genuinely have two apps in flight, and the friction is a structured error with a ready-to-paste fix.
+
+Cap: `FLUTTER_NETWORK_MCP_MAX_ATTACH` env var, default 4 (clamped 1–32). Each attach costs ~100 KB of memory (log buffer) + one 2s polling timer + 3 VM stream subscriptions.
+
 ## The 32 tools
 
 Each tool's MCP `description` (loaded into every agent at handshake) tells the agent WHEN to reach for it. This table is the same information at a glance — useful when you want to remind an agent that a tool exists, or when picking the right one yourself.
 
-| Tool | Use when |
-|---|---|
-| **Lifecycle** | |
-| `network_status` | Always call first. Reports attach state, DB path, active capabilities, known apps, pending alerts. Will auto-attach if exactly one app is reachable. |
-| `network_attach` | Connect to a running Flutter/Dart app to start capturing HTTP, sockets, and logs into a new session. |
-| `network_detach` | End the current capture session. Future read calls will fall back to history. |
-| **HTTP** | |
-| `network_list` | Browse recent HTTP requests by metadata: host, method, status, time. Cursor-paged. |
-| `network_get` | Read full details of ONE request — headers + body + lifecycle events. Use after `network_list` or `network_search` finds the id. |
-| `network_body` | Fetch the rest of a truncated body. Call when `network_get` reports `truncated:true`. |
-| `network_clear` | Wipe the LIVE in-memory HTTP buffer (DB untouched). |
-| `network_diff` | Compare two requests side-by-side to spot what changed — for regression hunting or confirming two are identical. |
-| `network_replay` | Emit a runnable curl command to reproduce a captured request in your terminal. Auth headers redacted by default. |
-| **Sockets** | |
-| `socket_list` | List `dart:io` socket connections (TCP/UDP). Mostly for correlating with HTTP. |
-| `socket_get` | Read one socket's read/write byte stats by id. |
-| `socket_clear` | Wipe the live socket buffer (DB untouched). |
-| **Logs** | |
-| `logs_tail` | Read recent app logs: `print`, `developer.log`, stdout, stderr. Correlate with HTTP or chase an exception. |
-| `logs_clear` | Wipe the live log ring buffer (DB untouched). |
-| **Alerts** | |
-| `alerts_drain` | "What is wrong right now?" — returns pending alerts and marks them drained. Top of any investigation. |
-| `alerts_peek` | Same as drain but read-only (does NOT mark them drained). |
-| `alerts_config` | Toggle alert rules / change thresholds at runtime. |
-| `alerts_clear` | Bulk-delete alerts (drained-only by default). |
-| `alert_patterns` | Add / list / remove custom regex alert rules. |
-| **Search** | |
-| `network_search` | Find a request by text in URL or body (FTS5 ranked + highlighted). Use when you know WHAT was in the request but not the id. |
-| **Sessions** | |
-| `session_list` | See past capture sessions. Pick one to reopen tomorrow. |
-| `session_open` | Switch read tools to view a historical session. |
-| `session_close` | Switch read tools back to the live session. |
-| `session_export` | Write a session to a HAR 1.2 file (or NDJSON) for sharing. |
-| `session_note` | Annotate a session ("auth bug 2026-05-21") so future-you can find it. |
-| `session_delete` | Delete a session + every row attached to it (cascade). Requires confirm:true. |
-| **SQL** | |
-| `network_query` | Run custom SELECT against the DB when the typed tools can't express what you need — aggregates, joins, percentile timings. |
-| **Admin** | |
-| `ignored_hosts` | Manage the capture-time host denylist (drop analytics / Sentry / telemetry). |
-| `redacted_headers` | Manage the header denylist for `network_replay` curl emission. |
-| `db_stats` | Report DB size, per-table row counts, body bytes. Tells you when to vacuum. |
-| `db_vacuum` | WAL-checkpoint + VACUUM + optimize. Run after big deletes. |
-| `bodies_purge` | Drop request/response BLOBs (keep metadata). Reclaim disk without losing history. |
+**Scope:** ✅ = accepts optional `sessionId:int` and `appNameContains:string` for multi-attach disambiguation. When only one session is attached, both args are optional (auto-resolve). With 2+ attached and no scope hint, the tool errors with a structured `nextSteps` listing the attached sessions.
+
+| Tool | Scope | Use when |
+|---|---|---|
+| **Lifecycle** | | |
+| `network_status` | — | Always call first. Reports `attached:[]` list, DB path, active capabilities, known apps, pending alerts. Will auto-attach if exactly one app is reachable and nothing is attached yet. |
+| `network_attach` | — | Connect to a running Flutter/Dart app to start capturing HTTP, sockets, and logs into a new session. **0.6.0:** can be called multiple times for different apps; per-vmServiceUri duplicate guard prevents accidental same-app re-attach. |
+| `network_detach` | ✅ + `all:true` | End one capture session (sessionId / appNameContains), or `all:true` for every attached. DTD disconnects only when nothing remains attached. |
+| **HTTP** | | |
+| `network_list` | ✅ | Browse recent HTTP requests by metadata: host, method, status, time. Cursor-paged. |
+| `network_get` | ✅ | Read full details of ONE request — headers + body + lifecycle events. Use after `network_list` or `network_search` finds the id. |
+| `network_body` | ✅ | Fetch the rest of a truncated body. Call when `network_get` reports `truncated:true`. |
+| `network_clear` | ✅ | Wipe the LIVE in-memory HTTP buffer for one session (DB untouched). |
+| `network_diff` | ✅ | Compare two requests side-by-side to spot what changed — for regression hunting or confirming two are identical. |
+| `network_replay` | ✅ | Emit a runnable curl command to reproduce a captured request in your terminal. Auth headers redacted by default. |
+| **Sockets** | | |
+| `socket_list` | ✅ | List `dart:io` socket connections (TCP/UDP). Mostly for correlating with HTTP. |
+| `socket_get` | ✅ | Read one socket's read/write byte stats by id. |
+| `socket_clear` | ✅ | Wipe the live socket buffer for one session (DB untouched). |
+| **Logs** | | |
+| `logs_tail` | ✅ | Read recent app logs: `print`, `developer.log`, stdout, stderr. Correlate with HTTP or chase an exception. |
+| `logs_clear` | ✅ | Wipe one session's live log ring buffer (DB untouched). |
+| **Alerts** | | |
+| `alerts_drain` | ✅ | "What is wrong right now?" — returns pending alerts for the scoped session and marks them drained. Top of any investigation. |
+| `alerts_peek` | ✅ | Same as drain but read-only (does NOT mark them drained). |
+| `alerts_config` | — | Toggle alert rules / change thresholds at runtime (process-wide). |
+| `alerts_clear` | ✅ | Bulk-delete alerts (drained-only by default; per-session scope). |
+| `alert_patterns` | — | Add / list / remove custom regex alert rules (process-wide). |
+| **Search** | | |
+| `network_search` | ✅ | Find a request by text in URL or body (FTS5 ranked + highlighted). Use when you know WHAT was in the request but not the id. |
+| **Sessions** | | |
+| `session_list` | — | See past capture sessions. Pick one to reopen tomorrow. |
+| `session_open` | — | Switch read tools to view a historical session (single-pointer history view). |
+| `session_close` | — | Switch read tools back to the live session. |
+| `session_export` | — | Write a session to a HAR 1.2 file (or NDJSON) for sharing. |
+| `session_note` | — | Annotate a session ("auth bug 2026-05-21") so future-you can find it. |
+| `session_delete` | — | Delete a session + every row attached to it (cascade). Requires confirm:true. |
+| **SQL** | | |
+| `network_query` | — | Run custom SELECT against the DB when the typed tools can't express what you need — aggregates, joins, percentile timings, cross-session queries. |
+| **Admin** | | |
+| `ignored_hosts` | — | Manage the capture-time host denylist (drop analytics / Sentry / telemetry). |
+| `redacted_headers` | — | Manage the header denylist for `network_replay` curl emission. |
+| `db_stats` | — | Report DB size, per-table row counts, body bytes. Tells you when to vacuum. |
+| `db_vacuum` | — | WAL-checkpoint + VACUUM + optimize. Run after big deletes. |
+| `bodies_purge` | — | Drop request/response BLOBs (keep metadata). Reclaim disk without losing history. |
 
 **Per-tool docs live in [`docs/tools/`](docs/tools/) — every tool has its own page with a `## DO NOT USE THIS TOOL WHEN` section at the top.** Point your agent at these when you need deeper guidance than the one-liner above. The negative cases catch the bulk of misuse before it happens.
 

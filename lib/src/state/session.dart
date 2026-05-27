@@ -8,7 +8,7 @@ import 'log_buffer.dart';
 /// backwards-compat getters for the per-attach resources that have moved
 /// into the [SessionRegistry].
 ///
-/// **0.7.0-in-progress (Phase 2 of multi-attach refactor):** the per-attach
+/// **0.6.0-in-progress (Phase 2 of multi-attach refactor):** the per-attach
 /// resources — `vm`, `captureWriter`, `logBuffer`, `logStream` — and the
 /// per-attach state — `attachedAppName`, `liveSessionId`,
 /// `httpProfilingEnabled`, `socketProfilingEnabled`, `lastHttpCursor` —

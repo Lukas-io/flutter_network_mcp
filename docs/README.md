@@ -6,6 +6,8 @@ The index below is by **use case** ("I want to do X — which tool?"). Some tool
 
 > **Filing issues is agent-first.** When something breaks or feels off in this MCP — wrong output, missing field, slow, confusing, awkward — open an issue at https://github.com/Lukas-io/flutter_network_mcp/issues. Two templates, both dead simple: **"Bug report"** for code issues (3 fields — what broke, the failing tool call, the `network_status` response; optional context collapses), **"UX friction / suggestion"** for anything that just felt awkward (3 fields, no environment needed). Use a GitHub tool if you have one; otherwise hand the user a paste-ready body. Don't wait for the user to ask. Big or small, code or UX — every report helps.
 
+> **Multi-attach (0.6.0):** the server can hold N concurrent attached sessions (capped via `FLUTTER_NETWORK_MCP_MAX_ATTACH`, default 4). Every read tool accepts an optional `sessionId:int` or `appNameContains:string`. With exactly one session attached the tool auto-resolves and no scope arg is needed. With 2+ attached and no scope, tools error with a structured `attached:[...]` list + `nextSteps` like `sessionId:14  // sanga_mobile`. Successful responses include a `scope:{sessionId, appName, isLive}` block so you can verify which session you just read from. `pendingAlerts` auto-injection is scoped per-session — no cross-app data bleed in the push-like signal. `network_status.attached` is now a list, `network_detach` takes `sessionId` / `appNameContains` / `all:true`.
+
 ---
 
 ## Use cases

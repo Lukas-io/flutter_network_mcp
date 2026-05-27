@@ -19,7 +19,7 @@ final networkAttachTool = Tool(
       'this after `network_status` shows the app you want under '
       '`knownApps`. Enables HTTP + socket profiling, subscribes to log '
       'streams, and creates a new row in `sessions` so everything that '
-      'follows is persisted. **Multi-attach (0.7.0):** multiple apps can '
+      'follows is persisted. **Multi-attach (0.6.0):** multiple apps can '
       'be attached concurrently — each gets its own VM connection + '
       'capture writer + log buffer. Re-attaching to the SAME app '
       '(matched by vmServiceUri) is blocked; attach to a different one '

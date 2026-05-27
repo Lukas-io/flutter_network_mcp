@@ -15,7 +15,7 @@ final networkDetachTool = Tool(
       'session as ended — captured rows remain queryable via '
       'session_list / session_open. DTD is disconnected only when no '
       'sessions remain attached.\n\n'
-      '**Multi-attach (0.7.0):** zero-arg works only when exactly one '
+      '**Multi-attach (0.6.0):** zero-arg works only when exactly one '
       'session is attached. With 2+ attached, pass sessionId / '
       'appNameContains, or `all:true` to drop everything.',
   inputSchema: Schema.object(
