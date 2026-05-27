@@ -73,7 +73,7 @@ FutureOr<CallToolResult> socketClear(CallToolRequest request) async {
         'socket_list — confirm the live profile is empty',
         'Drive the app, then socket_list — fresh isolated socket capture',
       ],
-    });
+    }, scopeSessionId: scope.sessionId);
   } catch (e) {
     return errorResult('clearSocketProfile failed: $e', extra: const {
       'nextSteps': [

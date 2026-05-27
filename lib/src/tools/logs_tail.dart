@@ -105,7 +105,7 @@ FutureOr<CallToolResult> logsTail(CallToolRequest request) async {
         loggerContains: loggerContains,
         sourceFilter: source,
         caps: caps,
-      ));
+      ), scopeSessionId: scope.sessionId);
     } catch (e) {
       return errorResult('history query failed: $e', extra: {
         'sessionId': sid,
@@ -146,7 +146,7 @@ FutureOr<CallToolResult> logsTail(CallToolRequest request) async {
     loggerContains: loggerContains,
     sourceFilter: source,
     caps: caps,
-  ));
+  ), scopeSessionId: scope.sessionId);
 }
 
 Map<String, Object?> _historyEntry(Map<String, Object?> r) {

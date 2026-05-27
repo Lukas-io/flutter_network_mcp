@@ -108,7 +108,7 @@ FutureOr<CallToolResult> alertsClear(CallToolRequest request) async {
         if (remaining == 0) 'alerts_peek — confirm clean state',
         'db_stats — see DB size impact',
       ],
-    });
+    }, scopeSessionId: scope.sessionId);
   } catch (e) {
     return errorResult('alerts_clear failed: $e', extra: {
       'sessionId': sessionId,

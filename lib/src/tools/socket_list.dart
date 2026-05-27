@@ -67,7 +67,7 @@ FutureOr<CallToolResult> socketList(CallToolRequest request) async {
         if (warnings.isNotEmpty) 'warnings': warnings,
         'nextSteps': _nextSteps(caps, sockets: sockets, isLive: false),
         'sockets': sockets,
-      });
+      }, scopeSessionId: scope.sessionId);
     } catch (e) {
       return errorResult('history query failed: $e', extra: {
         'sessionId': scope.sessionId,
@@ -136,7 +136,7 @@ FutureOr<CallToolResult> socketList(CallToolRequest request) async {
       if (warnings.isNotEmpty) 'warnings': warnings,
       'nextSteps': _nextSteps(caps, sockets: sockets, isLive: true),
       'sockets': sockets,
-    });
+    }, scopeSessionId: scope.sessionId);
   } catch (e) {
     return errorResult('getSocketProfile failed: $e', extra: const {
       'nextSteps': [

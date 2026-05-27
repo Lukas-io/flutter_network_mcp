@@ -153,7 +153,7 @@ FutureOr<CallToolResult> networkBody(CallToolRequest request) async {
         'nextSteps': const [
           'network_get id:<id> — confirm the request exists and check headers',
         ],
-      });
+      }, scopeSessionId: scope.sessionId);
     }
 
     final total = bytes.length;
@@ -202,7 +202,7 @@ FutureOr<CallToolResult> networkBody(CallToolRequest request) async {
       },
       if (warnings.isNotEmpty) 'warnings': warnings,
       'nextSteps': nextSteps,
-    });
+    }, scopeSessionId: scope.sessionId);
   } catch (e) {
     return errorResult('body fetch failed: $e', extra: {
       'id': id,
