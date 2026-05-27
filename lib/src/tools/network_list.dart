@@ -8,6 +8,7 @@ import '../state/session.dart';
 import '../storage/captures_db.dart';
 import '../util/body_decoder.dart';
 import '../util/filters.dart';
+import '../util/scope.dart';
 import 'result.dart';
 
 final networkListTool = Tool(
@@ -20,6 +21,17 @@ final networkListTool = Tool(
       'is opened via session_open, reads from history instead of live VM.',
   inputSchema: Schema.object(
     properties: {
+      'sessionId': Schema.int(
+        description:
+            'Which session to read from. Omit to auto-resolve: explicit '
+            'view (session_open) → sole attached session → error if 2+ '
+            'attached.',
+      ),
+      'appNameContains': Schema.string(
+        description:
+            'Alternative to sessionId — case-insensitive substring match '
+            'against currently-attached app names. Must match exactly one.',
+      ),
       'since': Schema.int(
         description:
             'Microsecond cursor — epoch micros (live mode) or start_us '
@@ -48,9 +60,12 @@ final networkListTool = Tool(
 );
 
 FutureOr<CallToolResult> networkList(CallToolRequest request) async {
-  final session = Session.instance;
   final caps = CapabilityConfig.instance;
   final args = request.arguments ?? const <String, Object?>{};
+  final (scope, scopeErr) = resolveScope(args);
+  if (scopeErr != null) return scopeErr;
+  scope!;
+
   final sinceArg = args['since'] as int?;
   final methods = readStringList(args['method']);
   final hostContains = args['hostContains'] as String?;
@@ -58,9 +73,12 @@ FutureOr<CallToolResult> networkList(CallToolRequest request) async {
   final statusMax = args['statusMax'] as int?;
   final limit = clampLimit(args['limit'] as int?, fallback: 50, hardMax: 200);
 
-  if (session.isViewingHistory) {
+  // History mode: scope is non-live (explicit sessionId arg pointing at a
+  // historical session, or session_open's viewedSessionId resolves to one
+  // that isn't currently attached).
+  if (!scope.isLive) {
     return _historyList(
-      session.viewedSessionId!,
+      scope,
       caps,
       sinceArg,
       methods,
@@ -71,27 +89,15 @@ FutureOr<CallToolResult> networkList(CallToolRequest request) async {
     );
   }
 
-  // Live mode.
-  if (!session.isAttached) {
-    return errorResult(
-      'Not attached and no session opened — nothing to list.',
-      extra: const {
-        'nextSteps': [
-          'network_status — see DTD apps and pick what to attach to',
-          'network_attach — connect to a live app',
-          'session_open id:<n> — read a past session from the DB instead',
-        ],
-      },
-    );
-  }
-
+  // Live mode — scope points at an attached session; look up its resources.
+  final attached = SessionRegistry.instance.attachedById(scope.sessionId)!;
   final cursor = sinceArg == null
-      ? session.lastHttpCursor
+      ? attached.lastHttpCursor
       : (sinceArg <= 0 ? null : DateTime.fromMicrosecondsSinceEpoch(sinceArg));
 
   try {
-    final profile = await session.vm.getHttpProfile(updatedSince: cursor);
-    session.lastHttpCursor = profile.timestamp;
+    final profile = await attached.vm.getHttpProfile(updatedSince: cursor);
+    attached.lastHttpCursor = profile.timestamp;
 
     final filtered = <Map<String, Object?>>[];
     final sorted = profile.requests.toList()
@@ -106,7 +112,7 @@ FutureOr<CallToolResult> networkList(CallToolRequest request) async {
       if (filtered.length >= limit) break;
     }
 
-    final liveSid = session.liveSessionId;
+    final liveSid = scope.sessionId;
     final activeFilters =
         _activeFilters(methods, hostContains, statusMin, statusMax);
     final cursorWasIncremental = sinceArg == null && cursor != null;
@@ -114,9 +120,9 @@ FutureOr<CallToolResult> networkList(CallToolRequest request) async {
 
     final summary = filtered.isEmpty
         ? (scannedTotal == 0
-            ? 'No HTTP captured yet in session $liveSid (live).'
+            ? 'No HTTP captured yet in session $liveSid (live${scope.appName != null ? ", ${scope.appName}" : ""}).'
             : '$scannedTotal request(s) scanned, 0 matched filters.')
-        : '${filtered.length} request(s) from session $liveSid (live, newest-first)'
+        : '${filtered.length} request(s) from session $liveSid (live${scope.appName != null ? ", ${scope.appName}" : ""}, newest-first)'
             '${cursorWasIncremental ? " — incremental since last call" : ""}.';
 
     final warnings = <String>[];
@@ -161,6 +167,7 @@ FutureOr<CallToolResult> networkList(CallToolRequest request) async {
 
     return jsonResult({
       'source': 'live',
+      'scope': scope.toBlock(),
       'sessionId': liveSid,
       'summary': summary,
       'count': filtered.length,
@@ -181,7 +188,7 @@ FutureOr<CallToolResult> networkList(CallToolRequest request) async {
 }
 
 FutureOr<CallToolResult> _historyList(
-  int sid,
+  Scope scope,
   CapabilityConfig caps,
   int? sinceArg,
   List<String>? methods,
@@ -190,6 +197,7 @@ FutureOr<CallToolResult> _historyList(
   int? statusMax,
   int limit,
 ) {
+  final sid = scope.sessionId;
   try {
     final rows = CapturesDao().queryHttpRequests(
       sessionId: sid,
@@ -239,6 +247,7 @@ FutureOr<CallToolResult> _historyList(
 
     return jsonResult({
       'source': 'history',
+      'scope': scope.toBlock(),
       'sessionId': sid,
       'summary': summary,
       'count': out.length,

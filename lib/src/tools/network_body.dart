@@ -7,6 +7,7 @@ import '../config/capabilities.dart';
 import '../state/session.dart';
 import '../storage/captures_db.dart';
 import '../util/body_decoder.dart';
+import '../util/scope.dart';
 import 'result.dart';
 
 const int _kMaxBodyChunk = 262144;
@@ -26,6 +27,17 @@ final networkBodyTool = Tool(
     properties: {
       'id': Schema.string(description: 'Request id from network_list / network_search.'),
       'which': Schema.string(description: '"request" or "response".'),
+      'sessionId': Schema.int(
+        description:
+            'Which session the request belongs to. Omit to auto-resolve: '
+            'explicit view (session_open) → sole attached session → error '
+            'if 2+ attached.',
+      ),
+      'appNameContains': Schema.string(
+        description:
+            'Alternative to sessionId — case-insensitive substring on a '
+            'currently-attached app name.',
+      ),
       'offset': Schema.int(
         description:
             'Byte offset to start at. Default 0. Clamped to [0, totalSize].',
@@ -46,7 +58,6 @@ final networkBodyTool = Tool(
 );
 
 FutureOr<CallToolResult> networkBody(CallToolRequest request) async {
-  final session = Session.instance;
   final caps = CapabilityConfig.instance;
   final args = request.arguments ?? const <String, Object?>{};
   final id = args['id'] as String?;
@@ -71,6 +82,10 @@ FutureOr<CallToolResult> networkBody(CallToolRequest request) async {
     );
   }
   final which = whichArg!;
+  final (scope, scopeErr) = resolveScope(args);
+  if (scopeErr != null) return scopeErr;
+  scope!;
+
   final offset = (args['offset'] as int?) ?? 0;
   final lengthArg = (args['length'] as int?) ?? _kDefaultLen;
   final length = lengthArg <= 0
@@ -86,13 +101,12 @@ FutureOr<CallToolResult> networkBody(CallToolRequest request) async {
   Uint8List? bytes;
   String? mimeType;
   String source;
-  int? sessionIdForResp;
+  final int sessionIdForResp = scope.sessionId;
 
   try {
-    if (session.isViewingHistory) {
-      final sid = session.viewedSessionId!;
+    if (!scope.isLive) {
+      final sid = scope.sessionId;
       source = 'history';
-      sessionIdForResp = sid;
       final dao = CapturesDao();
       bytes = dao.getBody(sid, id, which);
       final row = dao.getHttpRequest(sid, id);
@@ -107,20 +121,9 @@ FutureOr<CallToolResult> networkBody(CallToolRequest request) async {
         });
       }
     } else {
-      if (!session.isAttached) {
-        return errorResult(
-          'Not attached and no session opened.',
-          extra: const {
-            'nextSteps': [
-              'network_attach — connect to a live app',
-              'session_open id:<n> — view a past session and try this id there',
-            ],
-          },
-        );
-      }
       source = 'live';
-      sessionIdForResp = session.liveSessionId;
-      final r = await session.vm.getHttpProfileRequest(id);
+      final attached = SessionRegistry.instance.attachedById(scope.sessionId)!;
+      final r = await attached.vm.getHttpProfileRequest(id);
       if (which == 'request') {
         bytes = r.requestBody;
         mimeType = firstHeader(r.request?.headers, 'content-type');
@@ -139,6 +142,7 @@ FutureOr<CallToolResult> networkBody(CallToolRequest request) async {
       }
       return jsonResult({
         'source': source,
+        'scope': scope.toBlock(),
         'sessionId': sessionIdForResp,
         'summary': 'No $which body for $id.',
         'id': id,
@@ -182,6 +186,7 @@ FutureOr<CallToolResult> networkBody(CallToolRequest request) async {
 
     return jsonResult({
       'source': source,
+      'scope': scope.toBlock(),
       'sessionId': sessionIdForResp,
       'summary': summary,
       'id': id,
