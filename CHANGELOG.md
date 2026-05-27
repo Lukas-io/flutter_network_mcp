@@ -4,6 +4,41 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.7.0] — 2026-05-27
+
+### Added — multi-attach
+
+The MCP server can now hold **N concurrent attached sessions** — debug `sanga_mobile` and `sanga_driver` in the same DB, the same agent conversation, without losing either side. Each attach owns its own VM connection + 2-second capture writer + 500-entry log ring. Cap via `FLUTTER_NETWORK_MCP_MAX_ATTACH` env var (default 4, clamped 1–32). DB schema unchanged — zero migrations needed; the schema was already keyed by `session_id`.
+
+Shipped across six commits (phases 1–6), summarized here:
+
+- **Architecture** — `SessionRegistry.instance` holds a `Map<String, AttachedSession>` keyed on vmServiceUri. Each `AttachedSession` owns its `VmClient`, `CaptureWriter`, `LogBuffer`, `LogStreamSubscriber`, and capture-time flags (httpProfilingEnabled, socketProfilingEnabled, lastHttpCursor). The DTD client and DB stay singletons.
+- **Scope resolver** (`lib/src/util/scope.dart`) — every read tool routes through `resolveScope(args)` at the top. Priority order: `sessionId` arg → `appNameContains` arg → history view (`session_open`) → `registry.soleAttached` (auto-resolve when exactly one is attached). With 2+ attached and no scope hint, returns a structured error listing every attached session + `nextSteps` like `sessionId:14  // sanga_mobile`. Successful responses carry a `scope:{sessionId, appName, isLive}` block so the agent can verify which session it just read from.
+- **Per-session alerts** — `jsonResult` gained an optional `scopeSessionId` parameter so the auto-injected `pendingAlerts` field is scoped to the calling tool's session, not process-wide. No cross-app alert bleed in the push-like signal.
+- **`network_attach`** — drops `force:true` arg entirely. Per-vmServiceUri duplicate guard (same app can't attach twice; different apps coexist). Returns `scope:{sessionId, appName, isLive:true}`. Catch block disconnects DTD only when this attempt brought DTD up AND no other sessions remain.
+- **`network_detach`** — three modes: `sessionId` / `appNameContains` for one session, `all:true` to drop everything, zero-arg works only when exactly one is attached. DTD disconnects only when nothing remains.
+- **`network_status`** — `attached` field is now a LIST of attached session records (sessionId, appName, vmServiceUri, isolateId, attachedAtMs, httpProfilingEnabled, socketProfilingEnabled). `attachedCount` top-level. `alerts.perAttached:[{sessionId, appName, pending}]` only when 2+ attached. `attachIfOne` still works, fires only when `attachedCount == 0`.
+
+15 read tools threaded through the scope resolver: `network_list`, `network_get`, `network_body`, `network_clear`, `network_search`, `network_diff`, `network_replay`, `socket_list`, `socket_get`, `socket_clear`, `logs_tail`, `logs_clear`, `alerts_drain`, `alerts_peek`, `alerts_clear`. Each gained optional `sessionId:int` and `appNameContains:string` args. In single-attach mode (the common case) behaviour is unchanged — auto-resolve handles it without extra args.
+
+### Added — env vars
+
+- `FLUTTER_NETWORK_MCP_MAX_ATTACH` (default 4, clamped 1–32) — caps concurrent attachments.
+
+### Changed
+
+- **README "32 tools" table** now has a **Scope** column marking which tools accept `sessionId` / `appNameContains`. New "Multi-attach (0.7.0)" section explains the workflow.
+- **`docs/README.md`** gained a multi-attach callout at the top.
+- **`alerts_clear`** — was previously "default scope = all sessions"; now scoped per-session like every other tool so multi-attach can't accidentally cross-delete drained alerts. Cross-session bulk clear stays possible via `network_query`.
+
+### Notes
+
+- DB schema unchanged — existing 0.5.x / 0.6.x DBs work without migration.
+- DTD client is shared across all attached sessions (one DTD knows about N apps; one connection per process).
+- Single-attach workflows are unaffected — every tool auto-resolves to the sole attached session, no extra args.
+- For cross-app correlation (e.g. finding matching request/response pairs across apps), use `network_query` SQL — explicit cross-session aggregation is out of the typed tool surface by design.
+- Lays groundwork for 0.8.0 auto-attach via DTD isolate-discovery events.
+
 ## [0.5.18] — 2026-05-24
 
 ### Changed
