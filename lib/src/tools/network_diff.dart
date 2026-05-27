@@ -4,9 +4,9 @@ import 'dart:convert';
 import 'package:dart_mcp/server.dart';
 
 import '../config/capabilities.dart';
-import '../state/session.dart';
 import '../storage/captures_db.dart';
 import '../util/body_decoder.dart';
+import '../util/scope.dart';
 import 'result.dart';
 
 final networkDiffTool = Tool(
@@ -24,7 +24,15 @@ final networkDiffTool = Tool(
       'idA': Schema.string(description: 'First request id.'),
       'idB': Schema.string(description: 'Second request id.'),
       'sessionId': Schema.int(
-        description: 'Session id (default: current live or viewed session).',
+        description:
+            'Which session both ids belong to. Omit to auto-resolve: '
+            'explicit view (session_open) → sole attached session → error '
+            'if 2+ attached.',
+      ),
+      'appNameContains': Schema.string(
+        description:
+            'Alternative to sessionId — case-insensitive substring on a '
+            'currently-attached app name.',
       ),
       'maxBodyLines': Schema.int(
         description: 'Max body lines to diff (default 200, hard cap 1000).',
@@ -52,16 +60,10 @@ FutureOr<CallToolResult> networkDiff(CallToolRequest request) async {
       ],
     });
   }
-  final session = Session.instance;
-  final sessionId = (args['sessionId'] as int?) ?? session.effectiveSessionId;
-  if (sessionId == null) {
-    return errorResult('No session — attach or open one first.', extra: const {
-      'nextSteps': [
-        'network_attach — connect to a live app',
-        'session_open id:<n> — open a past session',
-      ],
-    });
-  }
+  final (scope, scopeErr) = resolveScope(args);
+  if (scopeErr != null) return scopeErr;
+  scope!;
+  final sessionId = scope.sessionId;
   if (idA == idB) {
     return errorResult('idA and idB are the same — diffing a request with itself.', extra: {
       'nextSteps': const [
@@ -159,6 +161,7 @@ FutureOr<CallToolResult> networkDiff(CallToolRequest request) async {
     }
 
     return jsonResult({
+      'scope': scope.toBlock(),
       'sessionId': sessionId,
       'summary': summary,
       'a': _summary(a),

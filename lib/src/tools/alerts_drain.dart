@@ -3,21 +3,28 @@ import 'dart:async';
 import 'package:dart_mcp/server.dart';
 
 import '../config/capabilities.dart';
-import '../state/session.dart';
 import '../storage/captures_db.dart';
+import '../util/scope.dart';
 import 'result.dart';
 
 final alertsDrainTool = Tool(
   name: 'alerts_drain',
   description:
       'Returns pending alerts (newest-first) AND marks them as drained. The '
-      'classic "what is wrong?" first call of an investigation. Defaults to '
-      'the current session (live or viewed); pass `sessionId` to drain a '
-      'specific session.',
+      'classic "what is wrong?" first call of an investigation. Scope '
+      'auto-resolves to the sole attached session; pass sessionId / '
+      'appNameContains in multi-attach to disambiguate.',
   inputSchema: Schema.object(
     properties: {
       'sessionId': Schema.int(
-        description: 'Restrict to a session id. Default: current session (live or viewed).',
+        description:
+            'Which session to drain. Omit to auto-resolve: explicit view '
+            '(session_open) → sole attached session → error if 2+ attached.',
+      ),
+      'appNameContains': Schema.string(
+        description:
+            'Alternative to sessionId — case-insensitive substring on a '
+            'currently-attached app name.',
       ),
       'severityMin': Schema.string(
         description: '"info" | "warning" | "error" | "critical". Default: any.',
@@ -31,9 +38,11 @@ final alertsDrainTool = Tool(
 
 FutureOr<CallToolResult> alertsDrain(CallToolRequest request) async {
   final args = request.arguments ?? const <String, Object?>{};
-  final session = Session.instance;
   final caps = CapabilityConfig.instance;
-  final sessionId = (args['sessionId'] as int?) ?? session.effectiveSessionId;
+  final (scope, scopeErr) = resolveScope(args);
+  if (scopeErr != null) return scopeErr;
+  scope!;
+  final sessionId = scope.sessionId;
   final severityMin = args['severityMin'] as String?;
   final limitRaw = (args['limit'] as int?) ?? 50;
   final limit = limitRaw <= 0 ? 50 : (limitRaw > 200 ? 200 : limitRaw);
@@ -46,7 +55,7 @@ FutureOr<CallToolResult> alertsDrain(CallToolRequest request) async {
     );
     return jsonResult(buildAlertsResponse(
       action: 'drain',
-      sessionId: sessionId,
+      scope: scope,
       severityMin: severityMin,
       rows: rows,
       caps: caps,
@@ -65,11 +74,12 @@ FutureOr<CallToolResult> alertsDrain(CallToolRequest request) async {
 /// Shared builder for drain + peek responses so the shape stays consistent.
 Map<String, Object?> buildAlertsResponse({
   required String action, // 'drain' | 'peek'
-  required int? sessionId,
+  required Scope scope,
   required String? severityMin,
   required List<Map<String, Object?>> rows,
   required CapabilityConfig caps,
 }) {
+  final sessionId = scope.sessionId;
   // Per-severity counts.
   int crit = 0, err = 0, warn = 0, info = 0;
   for (final r in rows) {
@@ -96,7 +106,8 @@ Map<String, Object?> buildAlertsResponse({
 
   final actionVerb = action == 'drain' ? 'Drained' : 'Peeked at';
   final filterDesc = severityMin == null ? '' : ' (severityMin: $severityMin)';
-  final sessionDesc = sessionId == null ? '' : ' session $sessionId';
+  final sessionDesc = ' session $sessionId'
+      '${scope.appName != null ? " (${scope.appName})" : ""}';
   final summary = rows.isEmpty
       ? 'No pending alerts$sessionDesc$filterDesc.'
       : '$actionVerb ${rows.length} alert(s)$sessionDesc: ${breakdown.join(", ")}.';
@@ -151,6 +162,7 @@ Map<String, Object?> buildAlertsResponse({
   ];
 
   return {
+    'scope': scope.toBlock(),
     'sessionId': sessionId,
     'summary': summary,
     'count': rows.length,

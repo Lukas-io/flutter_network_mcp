@@ -8,6 +8,7 @@ import '../config/capabilities.dart';
 import '../state/session.dart';
 import '../storage/captures_db.dart';
 import '../util/body_decoder.dart';
+import '../util/scope.dart';
 import 'result.dart';
 
 final networkGetTool = Tool(
@@ -23,6 +24,17 @@ final networkGetTool = Tool(
       'id': Schema.string(
         description:
             'Request id from a prior network_list / network_search call.',
+      ),
+      'sessionId': Schema.int(
+        description:
+            'Which session the request belongs to. Omit to auto-resolve: '
+            'explicit view (session_open) → sole attached session → error '
+            'if 2+ attached.',
+      ),
+      'appNameContains': Schema.string(
+        description:
+            'Alternative to sessionId — case-insensitive substring on a '
+            'currently-attached app name.',
       ),
       'includeBodies': Schema.bool(
         description: 'Omit request + response bodies entirely. Default true.',
@@ -54,7 +66,6 @@ const _kHeaderHardCap = 4096;
 const _kMaxEvents = 50;
 
 FutureOr<CallToolResult> networkGet(CallToolRequest request) async {
-  final session = Session.instance;
   final caps = CapabilityConfig.instance;
   final args = request.arguments ?? const <String, Object?>{};
   final id = args['id'] as String?;
@@ -66,6 +77,10 @@ FutureOr<CallToolResult> networkGet(CallToolRequest request) async {
       ],
     });
   }
+  final (scope, scopeErr) = resolveScope(args);
+  if (scopeErr != null) return scopeErr;
+  scope!;
+
   final includeBodies = (args['includeBodies'] as bool?) ?? true;
   final includeEvents = (args['includeEvents'] as bool?) ?? false;
   final truncateRaw = args['bodyTruncateBytes'] as int?;
@@ -77,9 +92,10 @@ FutureOr<CallToolResult> networkGet(CallToolRequest request) async {
       ? 256
       : (headerTruncateRaw > _kHeaderHardCap ? _kHeaderHardCap : headerTruncateRaw);
 
-  if (session.isViewingHistory) {
+  // Non-live scope = historical session; read from DB.
+  if (!scope.isLive) {
     return _historyGet(
-      sid: session.viewedSessionId!,
+      scope: scope,
       id: id,
       includeBodies: includeBodies,
       includeEvents: includeEvents,
@@ -89,24 +105,12 @@ FutureOr<CallToolResult> networkGet(CallToolRequest request) async {
     );
   }
 
-  if (!session.isAttached) {
-    return errorResult(
-      'Not attached and no session opened — cannot fetch a request.',
-      extra: const {
-        'nextSteps': [
-          'network_status — see DTD apps',
-          'network_attach — connect to a live app',
-          'session_open id:<n> — view a past session and try this id there',
-        ],
-      },
-    );
-  }
-
+  final attached = SessionRegistry.instance.attachedById(scope.sessionId)!;
   try {
-    final r = await session.vm.getHttpProfileRequest(id);
+    final r = await attached.vm.getHttpProfileRequest(id);
     return _buildLiveResponse(
       r: r,
-      sessionId: session.liveSessionId,
+      scope: scope,
       includeBodies: includeBodies,
       includeEvents: includeEvents,
       maxBytes: maxBytes,
@@ -126,7 +130,7 @@ FutureOr<CallToolResult> networkGet(CallToolRequest request) async {
 
 CallToolResult _buildLiveResponse({
   required HttpProfileRequest r,
-  required int? sessionId,
+  required Scope scope,
   required bool includeBodies,
   required bool includeEvents,
   required int maxBytes,
@@ -191,7 +195,8 @@ CallToolResult _buildLiveResponse({
 
   return jsonResult({
     'source': 'live',
-    'sessionId': sessionId,
+    'scope': scope.toBlock(),
+    'sessionId': scope.sessionId,
     'summary': summary,
     'id': r.id,
     'method': r.method,
@@ -215,7 +220,7 @@ CallToolResult _buildLiveResponse({
 }
 
 FutureOr<CallToolResult> _historyGet({
-  required int sid,
+  required Scope scope,
   required String id,
   required bool includeBodies,
   required bool includeEvents,
@@ -223,6 +228,7 @@ FutureOr<CallToolResult> _historyGet({
   required int headerTruncateBytes,
   required CapabilityConfig caps,
 }) {
+  final sid = scope.sessionId;
   try {
     final dao = CapturesDao();
     final row = dao.getHttpRequest(sid, id);
@@ -294,6 +300,7 @@ FutureOr<CallToolResult> _historyGet({
 
     return jsonResult({
       'source': 'history',
+      'scope': scope.toBlock(),
       'sessionId': sid,
       'summary': summary,
       'id': id,

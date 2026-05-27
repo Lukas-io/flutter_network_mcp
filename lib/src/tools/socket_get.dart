@@ -5,6 +5,7 @@ import 'package:dart_mcp/server.dart';
 import '../config/capabilities.dart';
 import '../state/session.dart';
 import '../storage/captures_db.dart';
+import '../util/scope.dart';
 import 'result.dart';
 
 final socketGetTool = Tool(
@@ -15,13 +16,21 @@ final socketGetTool = Tool(
   inputSchema: Schema.object(
     properties: {
       'id': Schema.string(description: 'Socket id from socket_list.'),
+      'sessionId': Schema.int(
+        description:
+            'Which session the socket belongs to. Omit to auto-resolve.',
+      ),
+      'appNameContains': Schema.string(
+        description:
+            'Alternative to sessionId — case-insensitive substring on a '
+            'currently-attached app name.',
+      ),
     },
     required: ['id'],
   ),
 );
 
 FutureOr<CallToolResult> socketGet(CallToolRequest request) async {
-  final session = Session.instance;
   final caps = CapabilityConfig.instance;
   final args = request.arguments ?? const <String, Object?>{};
   final id = args['id'] as String?;
@@ -32,9 +41,12 @@ FutureOr<CallToolResult> socketGet(CallToolRequest request) async {
       ],
     });
   }
+  final (scope, scopeErr) = resolveScope(args);
+  if (scopeErr != null) return scopeErr;
+  scope!;
 
-  if (session.isViewingHistory) {
-    final sid = session.viewedSessionId!;
+  if (!scope.isLive) {
+    final sid = scope.sessionId;
     final row = CapturesDao().getSocket(sid, id);
     if (row == null) {
       return errorResult('Socket `$id` not found in session $sid.', extra: {
@@ -45,18 +57,11 @@ FutureOr<CallToolResult> socketGet(CallToolRequest request) async {
         ],
       });
     }
-    return _historySuccess(sid, row, caps);
+    return _historySuccess(scope, row, caps);
   }
 
-  if (!session.isAttached) {
-    return errorResult('Not attached and no session opened.', extra: const {
-      'nextSteps': [
-        'network_attach — connect to a live app',
-        'session_open id:<n> — view a past session',
-      ],
-    });
-  }
-  if (!session.socketProfilingEnabled) {
+  final attached = SessionRegistry.instance.attachedById(scope.sessionId)!;
+  if (!attached.socketProfilingEnabled) {
     return errorResult(
       'Socket profiling not enabled for this isolate.',
       extra: const {
@@ -68,7 +73,7 @@ FutureOr<CallToolResult> socketGet(CallToolRequest request) async {
     );
   }
   try {
-    final profile = await session.vm.getSocketProfile();
+    final profile = await attached.vm.getSocketProfile();
     final found = profile.sockets.where((s) => s.id == id).toList();
     if (found.isEmpty) {
       return errorResult('Socket id `$id` not found in current live profile.', extra: const {
@@ -89,7 +94,8 @@ FutureOr<CallToolResult> socketGet(CallToolRequest request) async {
     );
     return jsonResult({
       'source': 'live',
-      'sessionId': session.liveSessionId,
+      'scope': scope.toBlock(),
+      'sessionId': scope.sessionId,
       'summary': summary,
       'id': s.id,
       'socketType': s.socketType,
@@ -114,7 +120,8 @@ FutureOr<CallToolResult> socketGet(CallToolRequest request) async {
   }
 }
 
-CallToolResult _historySuccess(int sid, Map<String, Object?> row, CapabilityConfig caps) {
+CallToolResult _historySuccess(Scope scope, Map<String, Object?> row, CapabilityConfig caps) {
+  final sid = scope.sessionId;
   final isOpen = row['end_us'] == null;
   final summary = _summary(
     socketType: row['socket_type'] as String?,
@@ -126,6 +133,7 @@ CallToolResult _historySuccess(int sid, Map<String, Object?> row, CapabilityConf
   );
   return jsonResult({
     'source': 'history',
+    'scope': scope.toBlock(),
     'sessionId': sid,
     'summary': summary,
     'id': row['vm_id'],
