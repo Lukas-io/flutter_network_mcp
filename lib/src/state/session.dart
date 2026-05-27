@@ -94,21 +94,14 @@ class Session {
   /// else the (single) live session.
   int? get effectiveSessionId => viewedSessionId ?? liveSessionId;
 
-  /// Tears down the lone attached session's resources, unregisters it,
-  /// disconnects DTD, clears the view pointer. No-op when nothing is
-  /// attached. Used by network_detach and the force/failure paths of
-  /// performAttach.
+  /// Tears down every attached session and disconnects DTD. Used by the
+  /// failure path of performAttach when no other attachments exist, by
+  /// network_detach with `all:true`, and by tests/shutdown.
   ///
-  /// Phase 5 replaces this with a sessionId-aware detach so multi-attach
-  /// can drop individual sessions without touching DTD.
+  /// Per-session detach lives on [SessionRegistry.detachOne] now; this
+  /// remaining method is the "shut everything down" helper.
   Future<void> detach() async {
-    final stale = SessionRegistry.instance.soleAttached;
-    if (stale != null) {
-      stale.captureWriter.stop();
-      await stale.logStream.stop();
-      await stale.vm.disconnect();
-      SessionRegistry.instance.unregister(stale.vmServiceUri);
-    }
+    await SessionRegistry.instance.detachAll();
     await dtd.disconnect();
     viewedSessionId = null;
   }
@@ -228,9 +221,30 @@ class SessionRegistry {
   }
 
   /// Removes the session matching [vmServiceUri]. Caller tears down the
-  /// session's resources first (today that happens via [Session.detach]).
+  /// session's resources first (today that happens via [detachOne]).
   /// No-op when not present.
   void unregister(String vmServiceUri) {
     _attached.remove(vmServiceUri);
+  }
+
+  /// Tears down one attached session's resources (capture writer, log
+  /// stream, VM connection) and unregisters it. After this, [attached]
+  /// no longer contains the session. Does NOT touch DTD — caller decides
+  /// whether to disconnect DTD (typically only when [attachedCount] is
+  /// now zero).
+  Future<void> detachOne(AttachedSession s) async {
+    s.captureWriter.stop();
+    await s.logStream.stop();
+    await s.vm.disconnect();
+    unregister(s.vmServiceUri);
+  }
+
+  /// Detaches every attached session. Does NOT disconnect DTD — caller
+  /// (typically [Session.detach]) handles that.
+  Future<void> detachAll() async {
+    // Snapshot the values first since detachOne mutates _attached.
+    for (final s in List<AttachedSession>.from(_attached.values)) {
+      await detachOne(s);
+    }
   }
 }

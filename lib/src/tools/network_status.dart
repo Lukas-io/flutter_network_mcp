@@ -14,11 +14,13 @@ final networkStatusTool = Tool(
   description:
       'Call this FIRST, every session. Tells you: which apps are reachable '
       'to attach to (`knownApps` — pick one of these for network_attach), '
-      'whether you\'re already attached, what alerts are queued, what '
-      'capabilities are enabled, and which DB on disk you\'re writing to. '
-      'Auto-opens the DTD connection so `knownApps` populates without a '
-      'separate attach step — pass `connectDtd:false` to skip that probe. '
-      'Reads `nextSteps` from the response to know what to call next.',
+      'WHICH sessions are currently attached (`attached: []` list — '
+      'multi-attach in 0.7.0 allows N concurrent sessions), what alerts '
+      'are queued, what capabilities are enabled, and which DB on disk '
+      'you\'re writing to. Auto-opens the DTD connection so `knownApps` '
+      'populates without a separate attach step — pass `connectDtd:false` '
+      'to skip that probe. Reads `nextSteps` from the response to know '
+      'what to call next.',
   inputSchema: Schema.object(
     properties: {
       'connectDtd': Schema.bool(
@@ -28,9 +30,10 @@ final networkStatusTool = Tool(
       ),
       'attachIfOne': Schema.bool(
         description:
-            'When true AND not yet attached AND exactly one app is visible, '
-            'auto-attaches and includes the attach result under `autoAttached`. '
-            'Default false — status stays a read-only check.',
+            'When true AND zero sessions are currently attached AND exactly '
+            'one app is visible on DTD, auto-attaches and includes the '
+            'attach result under `autoAttached`. Default false — status '
+            'stays a read-only check.',
       ),
     },
   ),
@@ -45,11 +48,27 @@ FutureOr<CallToolResult> networkStatus(
   final attachIfOne = (args['attachIfOne'] as bool?) ?? false;
 
   final session = Session.instance;
+  final registry = SessionRegistry.instance;
   final caps = CapabilityConfig.instance;
   final allEnabled = caps.enabled.length == Category.values.length;
 
+  // Build the per-session attached list. Empty when nothing attached.
+  final attachedList = <Map<String, Object?>>[
+    for (final a in registry.attached.values)
+      {
+        'sessionId': a.id,
+        if (a.appName != null) 'appName': a.appName,
+        'vmServiceUri': a.vmServiceUri,
+        if (a.isolateId != null) 'isolateId': a.isolateId,
+        'attachedAtMs': a.attachedAt.millisecondsSinceEpoch,
+        'httpProfilingEnabled': a.httpProfilingEnabled,
+        if (a.socketProfilingEnabled) 'socketProfilingEnabled': true,
+      },
+  ];
+
   final out = <String, Object?>{
-    'attached': session.isAttached,
+    'attachedCount': registry.attachedCount,
+    'attached': attachedList,
     // Compact: emit "all" instead of the 8-element list in the common case.
     'capabilities': allEnabled ? 'all' : [for (final c in caps.enabled) c.key],
     'dtd': <String, Object?>{
@@ -57,14 +76,8 @@ FutureOr<CallToolResult> networkStatus(
       'uri': session.dtd.connectedUri?.toString(),
       'defaultUri': defaultDtdUri,
     },
-    'vmService': {
-      'connected': session.vm.isConnected,
-      'uri': session.vm.connectedUri?.toString(),
-      'isolateId': session.vm.isolateId,
-      'appName': session.attachedAppName,
-    },
-    'liveSessionId': session.liveSessionId,
-    'viewedSessionId': session.viewedSessionId,
+    if (session.viewedSessionId != null)
+      'viewedSessionId': session.viewedSessionId,
   };
 
   // Opportunistic DTD connect so knownApps lands on the first status call.
@@ -85,8 +98,8 @@ FutureOr<CallToolResult> networkStatus(
     (out['dtd'] as Map<String, Object?>)['connectError'] = connectError;
   }
 
-  // DB-level context: path, session count, and alert totals across all sessions
-  // PLUS the current scope.
+  // DB-level context: path, session count, and alert totals across all
+  // sessions PLUS per-attached-session breakdown when multi-attach.
   if (CapturesDatabase.isOpen) {
     out['dbPath'] = CapturesDatabase.instance.path;
     try {
@@ -95,13 +108,23 @@ FutureOr<CallToolResult> networkStatus(
           dao.rawSelect('SELECT COUNT(*) AS n FROM sessions').first['n'];
       out['sessionCount'] = sessions;
       if (caps.isEnabled(Category.alerts)) {
-        final scopeSid = session.effectiveSessionId;
-        out['alerts'] = {
-          'pendingCurrent':
-              scopeSid == null ? 0 : dao.pendingAlertCount(sessionId: scopeSid),
+        final alertsBlock = <String, Object?>{
           'pendingTotal': dao.pendingAlertCount(),
           'critical': dao.pendingAlertCount(severityMin: 'critical'),
         };
+        // Per-session breakdown only when 2+ attached (otherwise redundant
+        // with pendingTotal).
+        if (registry.attachedCount >= 2) {
+          alertsBlock['perAttached'] = [
+            for (final a in registry.attached.values)
+              {
+                'sessionId': a.id,
+                if (a.appName != null) 'appName': a.appName,
+                'pending': dao.pendingAlertCount(sessionId: a.id),
+              },
+          ];
+        }
+        out['alerts'] = alertsBlock;
       }
     } catch (_) {/* DB might be mid-migration on first run */}
   }
@@ -123,9 +146,9 @@ FutureOr<CallToolResult> networkStatus(
     }
   }
 
-  // Opt-in one-shot orient+attach: convenient for agents that want a single
-  // call when DTD has exactly one app.
-  if (attachIfOne && !session.isAttached) {
+  // Opt-in one-shot orient+attach: only fires when nothing is attached
+  // yet and exactly one app is visible.
+  if (attachIfOne && registry.attachedCount == 0) {
     final apps = out['knownApps'] as List?;
     if (apps != null && apps.length == 1 && defaultDtdUri != null) {
       final result = await attach_helper.performAttach(
@@ -133,43 +156,69 @@ FutureOr<CallToolResult> networkStatus(
       );
       out['autoAttached'] = result;
       if (result['attached'] == true) {
-        // Refresh top-level state from the now-attached session.
-        out['attached'] = true;
-        (out['vmService'] as Map<String, Object?>)['connected'] = true;
-        (out['vmService'] as Map<String, Object?>)['uri'] = result['vmServiceUri'];
-        (out['vmService'] as Map<String, Object?>)['isolateId'] = result['isolateId'];
-        (out['vmService'] as Map<String, Object?>)['appName'] = result['appName'];
-        out['liveSessionId'] = result['liveSessionId'];
+        // Refresh the attached list now that registration happened.
+        out['attachedCount'] = registry.attachedCount;
+        (out['attached'] as List).clear();
+        for (final a in registry.attached.values) {
+          (out['attached'] as List).add({
+            'sessionId': a.id,
+            if (a.appName != null) 'appName': a.appName,
+            'vmServiceUri': a.vmServiceUri,
+            if (a.isolateId != null) 'isolateId': a.isolateId,
+            'attachedAtMs': a.attachedAt.millisecondsSinceEpoch,
+            'httpProfilingEnabled': a.httpProfilingEnabled,
+            if (a.socketProfilingEnabled) 'socketProfilingEnabled': true,
+          });
+        }
       }
     }
   }
 
-  out['nextSteps'] = _suggestNextSteps(session, out);
+  out['nextSteps'] = _suggestNextSteps(registry, session, out);
 
   return jsonResult(out);
 }
 
 /// Returns 1–2 short hints telling the agent what to do given the current
-/// state. Empty when fully attached and idle.
-List<String> _suggestNextSteps(Session session, Map<String, Object?> out) {
+/// state.
+List<String> _suggestNextSteps(
+  SessionRegistry registry,
+  Session session,
+  Map<String, Object?> out,
+) {
   final steps = <String>[];
   final alertsBlock = out['alerts'] as Map<String, Object?>?;
-  final pendingCurrent = (alertsBlock?['pendingCurrent'] as int?) ?? 0;
   final pendingTotal = (alertsBlock?['pendingTotal'] as int?) ?? 0;
   final critical = (alertsBlock?['critical'] as int?) ?? 0;
   final knownApps = out['knownApps'] as List?;
+  final attachedCount = registry.attachedCount;
 
-  if (session.isAttached) {
+  // Attached path.
+  if (attachedCount > 0) {
     if (critical > 0) {
       steps.add('alerts_drain severityMin:"critical" — $critical critical alert(s) pending');
-    } else if (pendingCurrent > 0) {
-      steps.add('alerts_drain — $pendingCurrent pending alert(s) in this session');
+    } else if (pendingTotal > 0) {
+      steps.add(
+        attachedCount > 1
+            ? 'alerts_drain sessionId:<N> — $pendingTotal pending alert(s) across attached sessions (see alerts.perAttached for breakdown)'
+            : 'alerts_drain — $pendingTotal pending alert(s) in the attached session',
+      );
     }
     if (session.viewedSessionId != null) {
       steps.add('session_close to revert read pointer to live (currently viewing session ${session.viewedSessionId})');
     }
+    if (attachedCount > 1) {
+      steps.add(
+        'Reads must pass sessionId or appNameContains to disambiguate '
+        '($attachedCount sessions attached)',
+      );
+    }
     if (steps.isEmpty) {
-      steps.add('Drive the app, then call network_list (returns nextCursor for incremental polling)');
+      steps.add(
+        attachedCount > 1
+            ? 'Drive the apps; reads to a specific app need sessionId:<N> from the attached[] list'
+            : 'Drive the app, then call network_list (returns nextCursor for incremental polling)',
+      );
     }
     return steps;
   }
@@ -195,12 +244,14 @@ List<String> _suggestNextSteps(Session session, Map<String, Object?> out) {
     steps.add('Call network_attach (one app available — will be auto-picked)');
   } else {
     steps.add(
-      'Multiple apps visible (${knownApps.length}); call network_attach with explicit vmServiceUri from knownApps',
+      'Multiple apps visible (${knownApps.length}); call network_attach with explicit '
+      'appNameContains / vmServiceUri. Multi-attach lets you attach to several '
+      'at once — repeat the call for each app you want.',
     );
   }
   if (pendingTotal > 0) {
     steps.add(
-      '$pendingTotal pending alert(s) across history — alerts_drain after attach or pass sessionId to scope to a past session',
+      '$pendingTotal pending alert(s) across history — alerts_drain sessionId:<N> after attach',
     );
   }
   return steps;
