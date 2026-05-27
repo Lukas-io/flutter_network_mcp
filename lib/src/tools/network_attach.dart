@@ -197,6 +197,24 @@ Future<Map<String, Object?>> performAttach({
 
     session.attachedAppName = appName;
 
+    // Phase 1 of multi-attach refactor: shadow this attach in the registry
+    // so the Phase 3 scope resolver can route reads correctly once it
+    // lands. In Phase 1 the AttachedSession references the shared
+    // [Session.instance] resources; Phase 2 makes them owned per-attach.
+    SessionRegistry.instance.register(
+      AttachedSession(
+        id: sid,
+        appName: appName,
+        vmServiceUri: resolvedVmServiceUri,
+        isolateId: isolateId,
+        vm: session.vm,
+        captureWriter: session.captureWriter,
+        logBuffer: session.logBuffer,
+        logStream: session.logStream,
+        attachedAt: DateTime.now(),
+      ),
+    );
+
     // Synthesize warnings for partial degradation.
     final warnings = <String>[];
     if (!httpState.enabled) {
