@@ -15,7 +15,7 @@ final networkStatusTool = Tool(
       'Call this FIRST, every session. Tells you: which apps are reachable '
       'to attach to (`knownApps` — pick one of these for network_attach), '
       'WHICH sessions are currently attached (`attached: []` list — '
-      'multi-attach in 0.7.0 allows N concurrent sessions), what alerts '
+      'multi-attach in 0.6.0 allows N concurrent sessions), what alerts '
       'are queued, what capabilities are enabled, and which DB on disk '
       'you\'re writing to. Auto-opens the DTD connection so `knownApps` '
       'populates without a separate attach step — pass `connectDtd:false` '
