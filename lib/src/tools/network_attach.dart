@@ -19,11 +19,13 @@ final networkAttachTool = Tool(
       'this after `network_status` shows the app you want under '
       '`knownApps`. Enables HTTP + socket profiling, subscribes to log '
       'streams, and creates a new row in `sessions` so everything that '
-      'follows is persisted. Zero-arg works when exactly one app is '
-      'reachable and a default DTD URI is set; pass `appNameContains` to '
-      'disambiguate when multiple apps are visible. Re-attaching to a '
-      'different target requires `force:true` so live state is never '
-      'silently lost.',
+      'follows is persisted. **Multi-attach (0.7.0):** multiple apps can '
+      'be attached concurrently — each gets its own VM connection + '
+      'capture writer + log buffer. Re-attaching to the SAME app '
+      '(matched by vmServiceUri) is blocked; attach to a different one '
+      'is allowed up to FLUTTER_NETWORK_MCP_MAX_ATTACH (default 4). The '
+      'response carries `scope:{sessionId, appName}` — use that sessionId '
+      'to route subsequent read tools.',
   inputSchema: Schema.object(
     properties: {
       'dtdUri': Schema.string(
@@ -39,14 +41,19 @@ final networkAttachTool = Tool(
             'Case-insensitive substring match on the DTD app name (from '
             'network_status.knownApps[].name). Use when DTD has multiple apps.',
       ),
-      'force': Schema.bool(
-        description:
-            'Required (true) if currently attached — otherwise the call '
-            'errors so live capture state is not accidentally discarded.',
-      ),
     },
   ),
 );
+
+/// Reads `FLUTTER_NETWORK_MCP_MAX_ATTACH` env var (1–32). Default 4.
+int _maxAttachFromEnv() {
+  final raw = io.Platform.environment['FLUTTER_NETWORK_MCP_MAX_ATTACH'];
+  final parsed = raw == null ? null : int.tryParse(raw);
+  if (parsed == null) return 4;
+  if (parsed < 1) return 1;
+  if (parsed > 32) return 32;
+  return parsed;
+}
 
 FutureOr<CallToolResult> networkAttach(
   CallToolRequest request,
@@ -57,7 +64,6 @@ FutureOr<CallToolResult> networkAttach(
     dtdUri: args['dtdUri'] as String?,
     vmServiceUri: args['vmServiceUri'] as String?,
     appNameContains: args['appNameContains'] as String?,
-    force: (args['force'] as bool?) ?? false,
     defaultDtdUri: defaultDtdUri,
   );
   return jsonResult(result, isError: result['error'] != null);
@@ -66,42 +72,51 @@ FutureOr<CallToolResult> networkAttach(
 /// Shared attach implementation. Returns a Map suitable for [jsonResult].
 /// If `error` is set, the caller should mark the result as an error.
 ///
-/// This is exported so [networkStatus] can reuse it for `attachIfOne:true`.
+/// **Multi-attach (Phase 5):** the old "any attach blocks attach" rule +
+/// force:true escape hatch is replaced by a per-vmServiceUri duplicate
+/// guard. Multiple distinct apps can attach concurrently up to
+/// FLUTTER_NETWORK_MCP_MAX_ATTACH (default 4).
+///
+/// Exported so [networkStatus] can reuse it for `attachIfOne:true`.
 Future<Map<String, Object?>> performAttach({
   String? dtdUri,
   String? vmServiceUri,
   String? appNameContains,
-  bool force = false,
   String? defaultDtdUri,
 }) async {
   final session = Session.instance;
+  final registry = SessionRegistry.instance;
 
-  if (session.isAttached && !force) {
+  // Cap check first — cheap and rejects without any IO.
+  final maxAttach = _maxAttachFromEnv();
+  if (registry.attachedCount >= maxAttach) {
     return {
       'error':
-          'Already attached to "${session.attachedAppName ?? '(unknown app)'}" '
-          '(session ${session.liveSessionId}). Pass `force:true` to detach '
-          'and re-attach, or call network_detach first.',
-      'currentApp': session.attachedAppName,
-      'liveSessionId': session.liveSessionId,
+          'Reached max attached sessions ($maxAttach). Detach one first or '
+          'raise FLUTTER_NETWORK_MCP_MAX_ATTACH.',
+      'attached': [
+        for (final a in registry.attached.values)
+          {'sessionId': a.id, 'appName': a.appName},
+      ],
+      'maxAttach': maxAttach,
       'nextSteps': [
-        'network_detach (graceful, keeps existing session data)',
-        'network_attach force:true (silently detaches first)',
+        for (final a in registry.attached.values)
+          'network_detach sessionId:${a.id}  // ${a.appName ?? "(no name)"}',
+        'network_detach all:true — drop everything',
       ],
     };
   }
 
-  // Phase 2: per-attach resources are constructed locally and only become
-  // visible to other tools after the AttachedSession is registered. If
-  // anything fails mid-setup, the catch block tears down the local refs
-  // directly so nothing leaks into the registry.
+  // Per-attach resources are constructed locally and only become visible
+  // to other tools after the AttachedSession is registered. If anything
+  // fails mid-setup, the catch block tears them down directly so nothing
+  // leaks into the registry.
   VmClient? localVm;
   CaptureWriter? localCaptureWriter;
   LogStreamSubscriber? localLogStream;
+  bool dtdWasConnectedBefore = registry.dtd.isConnected;
 
   try {
-    if (session.isAttached) await session.detach();
-
     String resolvedVmServiceUri;
     String? appName;
 
@@ -173,9 +188,25 @@ Future<Map<String, Object?>> performAttach({
       appName = filtered.single.name;
     }
 
-    // Per-attach resources. Phase 2: each attach gets fresh instances so
-    // multiple sessions can poll independently once Phase 5 lifts the
-    // single-attach guard.
+    // Per-URI duplicate guard — replaces the old force:true gate. Same
+    // app can't be attached twice; different apps can coexist.
+    final existing = registry.attachedByUri(resolvedVmServiceUri);
+    if (existing != null) {
+      return {
+        'error':
+            'Already attached to "${existing.appName ?? "(unknown app)"}" '
+            'at $resolvedVmServiceUri (session ${existing.id}).',
+        'attachedSessionId': existing.id,
+        'attachedAppName': existing.appName,
+        'nextSteps': [
+          'network_detach sessionId:${existing.id} — drop this attachment first',
+          'Read from the existing session: network_list sessionId:${existing.id}',
+        ],
+      };
+    }
+
+    // Per-attach resources. Each attach gets fresh instances so multiple
+    // sessions can poll independently.
     final vm = localVm = VmClient();
     final captureWriter = localCaptureWriter = CaptureWriter();
     final logBuffer = LogBuffer();
@@ -269,32 +300,42 @@ Future<Map<String, Object?>> performAttach({
     if (logStream.isActive) captured.add('logs');
     final what =
         captured.isEmpty ? 'no streams (degraded)' : captured.join('+');
-    final summary =
-        'Attached to ${appName ?? "app"} — capturing $what into session $sid.';
+    final summary = registry.attachedCount > 1
+        ? 'Attached to ${appName ?? "app"} — capturing $what into session $sid. ${registry.attachedCount} sessions now attached.'
+        : 'Attached to ${appName ?? "app"} — capturing $what into session $sid.';
 
     return {
       'attached': true,
       'summary': summary,
+      'scope': {'sessionId': sid, if (appName != null) 'appName': appName, 'isLive': true},
       'appName': appName,
       'vmServiceUri': resolvedVmServiceUri,
       'isolateId': isolateId,
       'liveSessionId': sid,
       'socketProfilingEnabled': socketEnabled,
+      'attachedCount': registry.attachedCount,
       if (warnings.isNotEmpty) 'warnings': warnings,
       'nextSteps': [
         'Drive the app to generate traffic',
-        secondStep,
+        if (registry.attachedCount > 1)
+          'Subsequent reads need sessionId:$sid (or appNameContains) to disambiguate'
+        else
+          secondStep,
       ],
     };
   } catch (e, st) {
     // Stack trace goes to stderr only — never into the LLM context.
     io.stderr.writeln('network_attach failed: $e\n$st');
     // Tear down any partially-built local resources directly (we never
-    // registered, so Session.detach() wouldn't see them via soleAttached).
+    // registered, so the registry doesn't see them).
     localCaptureWriter?.stop();
     if (localLogStream != null) await localLogStream.stop();
     if (localVm != null) await localVm.disconnect();
-    await session.detach();
+    // Only disconnect DTD if THIS attempt brought it up and nothing else
+    // is using it. If other sessions are still attached, leave DTD alone.
+    if (!dtdWasConnectedBefore && registry.attachedCount == 0) {
+      await session.dtd.disconnect();
+    }
     final msg = e.toString();
     final isZombie = msg.contains('did not respond to getVersion');
     return {
