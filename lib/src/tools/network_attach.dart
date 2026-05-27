@@ -4,8 +4,12 @@ import 'dart:io' as io;
 import 'package:dart_mcp/server.dart';
 
 import '../config/capabilities.dart';
+import '../state/log_buffer.dart';
 import '../state/session.dart';
+import '../storage/capture_writer.dart';
 import '../storage/captures_db.dart';
+import '../vm/log_stream.dart';
+import '../vm/vm_client.dart';
 import 'result.dart';
 
 final networkAttachTool = Tool(
@@ -87,6 +91,14 @@ Future<Map<String, Object?>> performAttach({
     };
   }
 
+  // Phase 2: per-attach resources are constructed locally and only become
+  // visible to other tools after the AttachedSession is registered. If
+  // anything fails mid-setup, the catch block tears down the local refs
+  // directly so nothing leaks into the registry.
+  VmClient? localVm;
+  CaptureWriter? localCaptureWriter;
+  LogStreamSubscriber? localLogStream;
+
   try {
     if (session.isAttached) await session.detach();
 
@@ -161,20 +173,26 @@ Future<Map<String, Object?>> performAttach({
       appName = filtered.single.name;
     }
 
-    await session.vm.connect(Uri.parse(resolvedVmServiceUri));
-    final isolateId = await session.vm.pickHttpProfilingIsolate();
+    // Per-attach resources. Phase 2: each attach gets fresh instances so
+    // multiple sessions can poll independently once Phase 5 lifts the
+    // single-attach guard.
+    final vm = localVm = VmClient();
+    final captureWriter = localCaptureWriter = CaptureWriter();
+    final logBuffer = LogBuffer();
+    final logStream = localLogStream = LogStreamSubscriber();
 
-    final httpState = await session.vm.enableHttpLogging();
-    session.httpProfilingEnabled = httpState.enabled;
+    await vm.connect(Uri.parse(resolvedVmServiceUri));
+    final isolateId = await vm.pickHttpProfilingIsolate();
+
+    final httpState = await vm.enableHttpLogging();
 
     final caps = CapabilityConfig.instance;
     final bool socketEnabled;
     if (caps.isEnabled(Category.sockets)) {
-      socketEnabled = await session.vm.enableSocketProfiling();
+      socketEnabled = await vm.enableSocketProfiling();
     } else {
       socketEnabled = false;
     }
-    session.socketProfilingEnabled = socketEnabled;
 
     final dao = CapturesDao();
     final sid = dao.createSession(
@@ -183,35 +201,35 @@ Future<Map<String, Object?>> performAttach({
       isolateId: isolateId,
       projectPath: io.Directory.current.path,
     );
-    session.liveSessionId = sid;
 
     if (caps.isEnabled(Category.logs)) {
-      await session.logStream.start(
-        session.vm.service,
-        session.logBuffer,
-        sessionIdProvider: () => session.liveSessionId,
+      await logStream.start(
+        vm.service,
+        logBuffer,
+        // Closure-capture the just-created session id rather than re-reading
+        // Session.instance.liveSessionId — supports the multi-attach case
+        // where there is no single "current" session.
+        sessionIdProvider: () => sid,
       );
     }
 
-    session.captureWriter.start(session.vm, sid);
+    captureWriter.start(vm, sid);
 
-    session.attachedAppName = appName;
-
-    // Phase 1 of multi-attach refactor: shadow this attach in the registry
-    // so the Phase 3 scope resolver can route reads correctly once it
-    // lands. In Phase 1 the AttachedSession references the shared
-    // [Session.instance] resources; Phase 2 makes them owned per-attach.
+    // Publish the fully-built session to the registry. After this point,
+    // Session.instance's delegated getters reflect this attach.
     SessionRegistry.instance.register(
       AttachedSession(
         id: sid,
         appName: appName,
         vmServiceUri: resolvedVmServiceUri,
         isolateId: isolateId,
-        vm: session.vm,
-        captureWriter: session.captureWriter,
-        logBuffer: session.logBuffer,
-        logStream: session.logStream,
+        vm: vm,
+        captureWriter: captureWriter,
+        logBuffer: logBuffer,
+        logStream: logStream,
         attachedAt: DateTime.now(),
+        httpProfilingEnabled: httpState.enabled,
+        socketProfilingEnabled: socketEnabled,
       ),
     );
 
@@ -227,7 +245,7 @@ Future<Map<String, Object?>> performAttach({
         'socket profiling unavailable on this isolate — socket_* tools will return empty.',
       );
     }
-    if (caps.isEnabled(Category.logs) && !session.logStream.isActive) {
+    if (caps.isEnabled(Category.logs) && !logStream.isActive) {
       warnings.add(
         'log stream subscription did not start — logs_tail will be empty.',
       );
@@ -236,7 +254,7 @@ Future<Map<String, Object?>> performAttach({
     // Capability-aware nextSteps for the post-attach read tools.
     final readTools = <String>[];
     if (caps.isEnabled(Category.http)) readTools.add('network_list');
-    if (caps.isEnabled(Category.logs) && session.logStream.isActive) {
+    if (caps.isEnabled(Category.logs) && logStream.isActive) {
       readTools.add('logs_tail');
     }
     if (caps.isEnabled(Category.alerts)) readTools.add('alerts_drain');
@@ -248,7 +266,7 @@ Future<Map<String, Object?>> performAttach({
     final captured = <String>[];
     if (httpState.enabled) captured.add('HTTP');
     if (socketEnabled) captured.add('sockets');
-    if (session.logStream.isActive) captured.add('logs');
+    if (logStream.isActive) captured.add('logs');
     final what =
         captured.isEmpty ? 'no streams (degraded)' : captured.join('+');
     final summary =
@@ -271,6 +289,11 @@ Future<Map<String, Object?>> performAttach({
   } catch (e, st) {
     // Stack trace goes to stderr only — never into the LLM context.
     io.stderr.writeln('network_attach failed: $e\n$st');
+    // Tear down any partially-built local resources directly (we never
+    // registered, so Session.detach() wouldn't see them via soleAttached).
+    localCaptureWriter?.stop();
+    if (localLogStream != null) await localLogStream.stop();
+    if (localVm != null) await localVm.disconnect();
     await session.detach();
     final msg = e.toString();
     final isZombie = msg.contains('did not respond to getVersion');

@@ -4,83 +4,123 @@ import '../vm/log_stream.dart';
 import '../vm/vm_client.dart';
 import 'log_buffer.dart';
 
-/// Process-lifetime singleton owning the active DTD + VM service connections,
-/// the live capture session, and the "viewing" pointer used by query tools.
+/// Process-lifetime singleton owning the DTD connection and exposing
+/// backwards-compat getters for the per-attach resources that have moved
+/// into the [SessionRegistry].
 ///
-/// **0.7.0-in-progress (Phase 1 of multi-attach refactor):** [SessionRegistry]
-/// is being introduced alongside this class. Today the registry is a shadow
-/// of [Session.instance] state with at most one entry; Phase 2 moves the
-/// per-attach resources (VmClient / CaptureWriter / LogBuffer /
-/// LogStreamSubscriber) out of here and into per-session [AttachedSession]
-/// objects owned by the registry. Until then [Session.instance] remains the
-/// source of truth for everything except the registry's keyed map.
+/// **0.7.0-in-progress (Phase 2 of multi-attach refactor):** the per-attach
+/// resources — `vm`, `captureWriter`, `logBuffer`, `logStream` — and the
+/// per-attach state — `attachedAppName`, `liveSessionId`,
+/// `httpProfilingEnabled`, `socketProfilingEnabled`, `lastHttpCursor` —
+/// now live on individual [AttachedSession] objects owned by the registry.
+/// This class's accessors delegate to `SessionRegistry.instance.soleAttached`
+/// so existing tool call sites keep working without modification. Phase 3
+/// migrates tools to read the registry directly; Phase 6 deletes this
+/// facade entirely.
+///
+/// DTD client and the history-mode `viewedSessionId` stay here (shared
+/// across all attached sessions).
 class Session {
   Session._();
   static final Session instance = Session._();
 
+  // === Shared singletons (Phase 2: unchanged) ===
+
   final DtdClient dtd = DtdClient();
-  final VmClient vm = VmClient();
-  final LogBuffer logBuffer = LogBuffer();
-  final LogStreamSubscriber logStream = LogStreamSubscriber();
-  final CaptureWriter captureWriter = CaptureWriter();
-
-  /// Human-readable app name from DTD (e.g. `Flutter - iPhone 17`).
-  String? attachedAppName;
-
-  /// Cursor used by live `network_list` when caller omits `since`.
-  DateTime? lastHttpCursor;
-
-  bool httpProfilingEnabled = false;
-  bool socketProfilingEnabled = false;
-
-  /// Live capture session id (set by network_attach).
-  int? liveSessionId;
 
   /// When non-null, query tools (network_list/get/body, socket_list/get,
   /// logs_tail) read from the captures DB for this session instead of the
-  /// live VM service. Capture writer continues to write to [liveSessionId]
-  /// regardless.
+  /// live VM service. History view is single-pointer by design — opening
+  /// 2 history sessions at once is not useful (you're reading the past).
   int? viewedSessionId;
 
+  // === Per-attach resources — delegated to the registry's soleAttached ===
+  //
+  // When nothing is attached, the getters fall back to never-connected
+  // stubs so tools that bare-read (without a prior `isAttached` check)
+  // see a graceful "not connected" rather than NPE. After Phase 3 tools
+  // route via the registry directly and these getters become unreachable
+  // for the live path.
+
+  VmClient get vm =>
+      SessionRegistry.instance.soleAttached?.vm ?? _stubVm;
+  CaptureWriter get captureWriter =>
+      SessionRegistry.instance.soleAttached?.captureWriter ?? _stubCaptureWriter;
+  LogBuffer get logBuffer =>
+      SessionRegistry.instance.soleAttached?.logBuffer ?? _stubLogBuffer;
+  LogStreamSubscriber get logStream =>
+      SessionRegistry.instance.soleAttached?.logStream ?? _stubLogStream;
+
+  final VmClient _stubVm = VmClient();
+  final CaptureWriter _stubCaptureWriter = CaptureWriter();
+  final LogBuffer _stubLogBuffer = LogBuffer();
+  final LogStreamSubscriber _stubLogStream = LogStreamSubscriber();
+
+  // === Per-attach state — delegated to the registry's soleAttached ===
+
+  /// Human-readable app name from DTD (e.g. `Flutter - iPhone 17`).
+  String? get attachedAppName =>
+      SessionRegistry.instance.soleAttached?.appName;
+
+  /// Live capture session id. Returns null when nothing is attached or when
+  /// 2+ are attached (the multi-attach case Phase 5 enables — tools should
+  /// route via the registry to disambiguate).
+  int? get liveSessionId => SessionRegistry.instance.soleAttached?.id;
+
+  bool get httpProfilingEnabled =>
+      SessionRegistry.instance.soleAttached?.httpProfilingEnabled ?? false;
+  bool get socketProfilingEnabled =>
+      SessionRegistry.instance.soleAttached?.socketProfilingEnabled ?? false;
+
+  /// Cursor used by live `network_list` when caller omits `since`. Mutated
+  /// by network_list; null when nothing is attached.
+  DateTime? get lastHttpCursor =>
+      SessionRegistry.instance.soleAttached?.lastHttpCursor;
+  set lastHttpCursor(DateTime? v) {
+    final s = SessionRegistry.instance.soleAttached;
+    if (s != null) s.lastHttpCursor = v;
+  }
+
+  // === Derived state ===
+
+  /// True when exactly one session is attached AND its VM is connected
+  /// with a resolved isolate. Equivalent to today's semantics for the
+  /// single-attach case; Phase 5 reworks for multi-attach.
   bool get isAttached =>
       dtd.isConnected && vm.isConnected && vm.isolateId != null;
   bool get isViewingHistory => viewedSessionId != null;
 
-  /// The session id to read FROM in query tools. Prefers explicit view, else
-  /// the live session.
+  /// The session id to read FROM in query tools. Prefers explicit view,
+  /// else the (single) live session.
   int? get effectiveSessionId => viewedSessionId ?? liveSessionId;
 
+  /// Tears down the lone attached session's resources, unregisters it,
+  /// disconnects DTD, clears the view pointer. No-op when nothing is
+  /// attached. Used by network_detach and the force/failure paths of
+  /// performAttach.
+  ///
+  /// Phase 5 replaces this with a sessionId-aware detach so multi-attach
+  /// can drop individual sessions without touching DTD.
   Future<void> detach() async {
-    // Phase 1: keep [SessionRegistry] consistent. Any caller of detach()
-    // — graceful network_detach, force-replace re-attach, or the catch block
-    // in performAttach — runs through here, so unregister centrally.
     final stale = SessionRegistry.instance.soleAttached;
     if (stale != null) {
+      stale.captureWriter.stop();
+      await stale.logStream.stop();
+      await stale.vm.disconnect();
       SessionRegistry.instance.unregister(stale.vmServiceUri);
     }
-
-    captureWriter.stop();
-    await logStream.stop();
-    await vm.disconnect();
     await dtd.disconnect();
-    attachedAppName = null;
-    lastHttpCursor = null;
-    httpProfilingEnabled = false;
-    socketProfilingEnabled = false;
-    liveSessionId = null;
     viewedSessionId = null;
   }
 }
 
-/// Per-attach record describing one live capture session. Populated by
-/// network_attach on success; removed by network_detach (or by
-/// [Session.detach] for force-replace / failure cleanup).
+/// Per-attach record describing one live capture session — owns the VM
+/// connection, capture writer (2s polling), log buffer (500-entry ring),
+/// and log stream subscriber for that session.
 ///
-/// **Phase 1 note:** the per-session resources (vm, captureWriter, logBuffer,
-/// logStream) reference the shared instances on [Session.instance] today.
-/// Phase 2 of the multi-attach refactor will make each AttachedSession own
-/// its own resources so multiple can coexist with independent VM
-/// connections + 2-second writer timers.
+/// **Phase 2 status:** the resources are now per-attach (constructed fresh
+/// by `network_attach`). Multiple AttachedSessions can coexist in the
+/// registry once Phase 5 lifts the single-attach guard.
 class AttachedSession {
   AttachedSession({
     required this.id,
@@ -92,6 +132,8 @@ class AttachedSession {
     required this.logBuffer,
     required this.logStream,
     required this.attachedAt,
+    required this.httpProfilingEnabled,
+    required this.socketProfilingEnabled,
   });
 
   /// DB row id in `sessions` table — the canonical anchor for routing.
@@ -106,33 +148,40 @@ class AttachedSession {
 
   final String? isolateId;
 
-  /// References shared instances on [Session.instance] in Phase 1;
-  /// Phase 2 makes them owned per-session.
+  /// Per-session resources. Owned: each attach gets its own instances so
+  /// multiple sessions can poll independently.
   final VmClient vm;
   final CaptureWriter captureWriter;
   final LogBuffer logBuffer;
   final LogStreamSubscriber logStream;
 
   final DateTime attachedAt;
+
+  /// Capture state captured at attach-time. Immutable for the lifetime of
+  /// the session (the streams either enabled cleanly or they didn't).
+  final bool httpProfilingEnabled;
+  final bool socketProfilingEnabled;
+
+  /// Mutable: updated by network_list when caller omits `since`.
+  DateTime? lastHttpCursor;
 }
 
 /// Process-lifetime singleton tracking every attached session, keyed by
 /// vmServiceUri (the unique attach identifier — appName can collide).
 ///
-/// **Phase 1 status:** wired up by network_attach / network_detach but
-/// not yet consulted by read tools. The Phase 3 scope resolver routes every
-/// read tool through this registry so multi-attach can disambiguate.
+/// **Phase 2 status:** the registry now owns per-attach resources. Tools
+/// still read via [Session.instance]'s delegated getters; Phase 3 introduces
+/// a scope resolver that routes read tools through this registry directly.
 ///
-/// The DTD client is shared across all sessions (one DTD can know about
-/// N apps). VmClient / CaptureWriter / LogBuffer / LogStreamSubscriber
-/// move to per-attach ownership in Phase 2.
+/// The DTD client is shared across all sessions (one DTD knows about
+/// N apps).
 class SessionRegistry {
   SessionRegistry._();
   static final SessionRegistry instance = SessionRegistry._();
 
-  /// Shared across all attached sessions (one DTD knows about N apps). In
-  /// Phase 1 this is the same instance as `Session.instance.dtd`; Phase 6
-  /// removes the duplicate accessor on Session.
+  /// Shared across all attached sessions (one DTD knows about N apps). Same
+  /// instance as `Session.instance.dtd` — Phase 6 removes the duplicate
+  /// accessor on Session.
   DtdClient get dtd => Session.instance.dtd;
 
   final Map<String, AttachedSession> _attached = {};
