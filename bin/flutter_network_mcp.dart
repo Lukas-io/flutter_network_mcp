@@ -106,6 +106,19 @@ Future<void> main(List<String> args) async {
     io.stderr.writeln('flutter_network_mcp: ${e.message}');
     io.exitCode = 73;
     return;
+  } catch (e, st) {
+    // Defense-in-depth: schema migration failures throw SqliteException;
+    // sqlite3 native errors throw their own types; corrupt DB throws on
+    // first PRAGMA. Whatever the source, surface a clean error + exit
+    // code 70 (EX_SOFTWARE) instead of crashing with a raw Dart stack.
+    io.stderr.writeln(
+      'flutter_network_mcp: database open failed ($e). The DB may be '
+      'corrupted or running a migration this binary version doesn\'t '
+      'support. Try --data-dir <fresh path> to bypass.',
+    );
+    io.stderr.writeln(st);
+    io.exitCode = 70;
+    return;
   }
 
   // Hydrate user-defined alert patterns from the DB so they fire from the
