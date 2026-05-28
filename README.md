@@ -67,7 +67,7 @@ Beyond capability gating, these env vars tune runtime behavior:
 
 ## Capability gating (control your context budget)
 
-Thirty-two tools is a lot of schema for the agent to load. Disable the categories you don't use:
+Thirty-three tools is a lot of schema for the agent to load. Disable the categories you don't use:
 
 ```json
 {
@@ -150,6 +150,22 @@ Single-attach is unchanged — when only one session is attached, every tool aut
 
 Cap: `FLUTTER_NETWORK_MCP_MAX_ATTACH` env var, default 4 (clamped 1–32). Each attach costs ~100 KB of memory (log buffer) + one 2s polling timer + 3 VM stream subscriptions.
 
+### Multi-isolate within one app (0.6.0)
+
+A single Flutter app can have multiple isolates (main + worker + spawned compute isolates). Previously the server captured HTTP from **only the first isolate** — worker traffic was silently invisible. **0.6.0 captures from every isolate** that exposes `ext.dart.io.getHttpProfile`, tags each captured row with its source isolate, and re-discovers newly-spawned isolates on a 10-tick (~20s) cadence so hot-reloads and runtime-spawned workers come into capture automatically.
+
+Schema migration v3 → v4 adds nullable `isolate_id` columns. Pre-v4 rows keep `NULL` (treated as "VM-level" — still queryable, never excluded).
+
+Every read tool that takes `sessionId:` also accepts an optional **`isolateId:`** to scope to one isolate within the session. Get the id from `network_status.attached[].isolates[].id`. Omit and the tool merges every isolate — same UX as single-isolate apps.
+
+Per-row responses include `isolateId` when known so an agent can see which isolate produced each request, log, or socket.
+
+### Cross-app correlate (0.6.0)
+
+`network_correlate` is the typed companion to `network_query` SQL for the **webhook originator + receiver** pattern. When sanga_mobile sends `POST /webhook/order` with body containing `txn-abc-123` and sanga_driver receives `POST /handlers/order` a few hundred ms later with the same id, `network_correlate sessionIds:[14,15] pattern:"txn-abc-123" timeWindowMs:5000` returns both halves paired by time delta. See [`docs/tools/power/network_correlate.md`](docs/tools/power/network_correlate.md) for the full shape.
+
+`sessionIds` is **required** — cross-session aggregation is intentional, so the agent must pick which apps to compare (preventing accidental cross-app data bleed). Hard caps: 8 sessions per call, 100 pair results, 500 raw matches per session.
+
 ### Auto-attach (`--auto-attach`)
 
 Pass `--auto-attach` (or set `FLUTTER_NETWORK_MCP_AUTO_ATTACH=true`) to have the server watch DTD for new apps and attach to them automatically. The watcher polls every 5 seconds (`FLUTTER_NETWORK_MCP_AUTO_ATTACH_POLL_MS` to tune, clamped 1000–60000).
@@ -160,7 +176,7 @@ Key behaviour:
 - **Cap is respected** — over-cap discoveries are logged and skipped without retrying.
 - **Off by default** — no surprise grabbing of app state.
 
-## The 32 tools
+## The 33 tools
 
 Each tool's MCP `description` (loaded into every agent at handshake) tells the agent WHEN to reach for it. This table is the same information at a glance — useful when you want to remind an agent that a tool exists, or when picking the right one yourself.
 
@@ -194,6 +210,7 @@ Each tool's MCP `description` (loaded into every agent at handshake) tells the a
 | `alert_patterns` | — | Add / list / remove custom regex alert rules (process-wide). |
 | **Search** | | |
 | `network_search` | ✅ | Find a request by text in URL or body (FTS5 ranked + highlighted). Use when you know WHAT was in the request but not the id. |
+| `network_correlate` | sessionIds + pattern (both required) | Find matching requests **across 2+ sessions** by a shared substring (correlation id, webhook URL). Returns pairs sorted by smallest time delta. Caps: 8 sessions, 100 pairs, 500 matches/session. |
 | **Sessions** | | |
 | `session_list` | — | See past capture sessions. Pick one to reopen tomorrow. |
 | `session_open` | — | Switch read tools to view a historical session (single-pointer history view). |

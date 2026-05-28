@@ -8,6 +8,10 @@ The index below is by **use case** ("I want to do X — which tool?"). Some tool
 
 > **Multi-attach (0.6.0):** the server can hold N concurrent attached sessions (capped via `FLUTTER_NETWORK_MCP_MAX_ATTACH`, default 4). Every read tool accepts an optional `sessionId:int` or `appNameContains:string`. With exactly one session attached the tool auto-resolves and no scope arg is needed. With 2+ attached and no scope, tools error with a structured `attached:[...]` list + `nextSteps` like `sessionId:14  // sanga_mobile`. Successful responses include a `scope:{sessionId, appName, isLive}` block so you can verify which session you just read from. `pendingAlerts` auto-injection is scoped per-session — no cross-app data bleed in the push-like signal. `network_status.attached` is now a list, `network_detach` takes `sessionId` / `appNameContains` / `all:true`.
 
+> **Multi-isolate within one app (0.6.0):** captures HTTP/socket/log traffic from EVERY isolate in the attached app (was: only the first). Per-row `isolate_id` tagging via schema v4. The 11 read tools that take `sessionId:` also accept an optional **`isolateId:`** filter (omit to merge every isolate — single-isolate UX preserved). `network_status.attached[].isolates` lists what's being captured. Newly-spawned isolates get picked up automatically on a ~20s re-scan.
+
+> **Cross-app correlate (0.6.0):** the new `network_correlate` tool finds matching requests across 2+ attached sessions by a shared substring (webhook id, correlation token, URL fragment). Requires explicit `sessionIds:[int]` — cross-session aggregation is intentional. Use case: sanga_mobile sends a webhook, sanga_driver receives it; this returns both halves paired by smallest time delta.
+
 ---
 
 ## Use cases
@@ -64,6 +68,7 @@ The index below is by **use case** ("I want to do X — which tool?"). Some tool
 
 ### [Power user / ad-hoc queries](tools/power/)
 - [`network_query`](tools/power/network_query.md) — read-only SQL escape hatch (BLOB-safe, cell-capped, 500-row cap).
+- [`network_correlate`](tools/power/network_correlate.md) — find matching requests across 2+ sessions (webhook originator + receiver pattern). Requires explicit `sessionIds:[int]`.
 
 ### Wrapping up (in `lifecycle/`)
 - [`network_detach`](tools/lifecycle/network_detach.md) — close the live session. Captured data stays queryable.

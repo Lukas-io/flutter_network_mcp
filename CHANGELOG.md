@@ -32,6 +32,29 @@ Optional background watcher (off by default) that polls DTD and attaches automat
 - **Respects `FLUTTER_NETWORK_MCP_MAX_ATTACH`:** over-cap discoveries log a one-line stderr note and stay in the known set (no retry storm).
 - Implementation: `lib/src/auto_attach.dart` (`AutoAttacher` class); wired in `bin/flutter_network_mcp.dart`.
 
+### Added — multi-isolate within one app
+
+A single Flutter app can have multiple isolates (main + worker + spawned compute isolates). Previously the server captured HTTP from **only the first isolate** that exposed `ext.dart.io.getHttpProfile` — worker traffic was silently invisible. 0.6.0 captures from every qualifying isolate and tags each captured row with its source isolate id.
+
+- **Schema v3 → v4** — adds nullable `isolate_id` columns to `http_requests`, `socket_events`, `log_records`, and `http_search_map`. Pre-v4 rows keep `NULL` (treated as "VM-level"; still queryable, never excluded). Covering indexes on `(session_id, isolate_id)` for the per-session-per-isolate query pattern.
+- **`VmClient` multi-isolate refactor** — replaced single `_isolateId` with `Map<String, IsolateInfo>`. New `discoverHttpProfilingIsolates()` returns the full list. Per-isolate RPC variants (`getHttpProfileForIsolate`, `enableHttpLoggingForIsolate`, etc.) take an explicit isolate id; the back-compat single-isolate facades stay for the transitional period.
+- **Capture writer per-isolate poll** — `_pollHttp` / `_pollSockets` iterate every known isolate each tick with a per-isolate cursor map (so isolates running at different request cadences don't drop each other's data). Periodic 10-tick (~20s) re-scan picks up newly-spawned isolates automatically; new isolates get HTTP/socket profiling enabled before the next poll iterates them. Per-isolate try/catch so one flaky isolate doesn't stop the others.
+- **Log stream isolate tagging** — `LogStreamSubscriber._persist` extracts `event.isolate?.id` from VM service events and tags both the in-memory ring buffer and the DB row.
+- **`isolateId:` filter on 11 read tools** — `network_list`, `network_get`, `network_body`, `network_clear`, `network_search`, `socket_list`, `socket_get`, `socket_clear`, `logs_tail`. Optional; omit and the tool merges every isolate (single-isolate UX preserved). Per-row responses include `isolateId` when known.
+- **Single-id live lookups** (`network_get` / `network_body` / `socket_get`) resolve the right isolate via: explicit `isolateId:` arg → DB-recorded `isolate_id` (writer tags within ~2s) → try each known isolate until one returns the id. Failure reports `triedIsolates: [...]` for disambiguation.
+- **`AttachedSession.isolates`** getter delegates to `vm.httpProfilingIsolates` so `network_status.attached[].isolates: [{id, name, number}]` reflects the live set as the writer's re-scan picks up new isolates.
+- **`network_attach`** enables HTTP/socket profiling on every discovered isolate (not just the first). Throws when no isolate qualifies (same error message as the old single-isolate path).
+
+### Added — `network_correlate` tool
+
+Typed companion to `network_query` SQL for the **webhook originator + receiver** pattern. When sanga_mobile sends a webhook that sanga_driver receives, `network_correlate sessionIds:[14,15] pattern:"txn-abc-123" timeWindowMs:5000` returns both halves paired by smallest time delta.
+
+- `sessionIds:[int]` is **required** — cross-session aggregation is intentional, so the agent must pick which apps to compare (preventing accidental cross-app data bleed). Hard cap: 8 sessions per call.
+- `pattern:string` is **required** — substring searched via FTS5 in URLs and/or bodies. Phrase-quoted automatically so hyphens / colons / special chars work.
+- Optional `which: url | request | response | any` (default `any`), `timeWindowMs:int` (only return pairs within this delta — useful for tight request → webhook pairs), `limit:int` (default 20, hard cap 100), `perSessionLimit:int` (default 100, hard cap 500 — bounds raw matches per session BEFORE pairing).
+- Pairs are sorted tightest-first (smallest `spanMs`). Output includes `matchesPerSession`, `sessions:[{matches}]`, and `pairs:[{spanMs, requests:[…]}]`. Capability: routes under `search` (reuses FTS5).
+- Implementation: new `lib/src/tools/network_correlate.dart` + `CapturesDao.correlateAcrossSessions` (per-session FTS5 query with per-session cap BEFORE union). New `docs/tools/power/network_correlate.md` with DO NOT USE section.
+
 ### Added — env vars
 
 - `FLUTTER_NETWORK_MCP_MAX_ATTACH` (default 4, clamped 1–32) — caps concurrent attachments.
@@ -40,8 +63,8 @@ Optional background watcher (off by default) that polls DTD and attaches automat
 
 ### Changed
 
-- **README "32 tools" table** now has a **Scope** column marking which tools accept `sessionId` / `appNameContains`. New "Multi-attach (0.6.0)" section explains the workflow.
-- **`docs/README.md`** gained a multi-attach callout at the top.
+- **README "32 tools" table** → **33 tools** (`network_correlate` added). New **Scope** column marking which tools accept `sessionId` / `appNameContains` / `isolateId`. New "Multi-attach (0.6.0)", "Multi-isolate within one app", and "Cross-app correlate" sections explain the workflows.
+- **`docs/README.md`** gained multi-attach + multi-isolate + correlate callouts at the top; `network_correlate` added to the "Power user / ad-hoc queries" use-case section.
 - **`alerts_clear`** — was previously "default scope = all sessions"; now scoped per-session like every other tool so multi-attach can't accidentally cross-delete drained alerts. Cross-session bulk clear stays possible via `network_query`.
 
 ### Notes
