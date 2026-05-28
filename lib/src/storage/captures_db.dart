@@ -87,7 +87,17 @@ class CapturesDao {
   // ----- http -----
 
   /// Upserts a request summary. Returns true if a new row was inserted.
-  bool upsertHttpRequest(int sessionId, HttpProfileRequest r) {
+  ///
+  /// [isolateId] (Phase 8 / v4) tags the row with the isolate that produced
+  /// the request. NULL is preserved for back-compat with pre-v4 rows.
+  /// On UPDATE the isolate_id is `COALESCE(excluded.isolate_id, isolate_id)`
+  /// — once tagged, a row keeps its isolate even if a follow-up upsert
+  /// arrives without the tag.
+  bool upsertHttpRequest(
+    int sessionId,
+    HttpProfileRequest r, {
+    String? isolateId,
+  }) {
     final headersReq = r.request != null && !r.request!.hasError
         ? jsonEncode(r.request!.headers ?? {})
         : null;
@@ -107,9 +117,10 @@ class CapturesDao {
     final isNew = before.isEmpty;
 
     _db.execute(
-      'INSERT INTO http_requests(session_id, vm_id, method, url, host, path, status_code, reason_phrase, start_us, end_us, duration_us, request_size, response_size, content_type, request_headers_json, response_headers_json, has_error) '
-      'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) '
+      'INSERT INTO http_requests(session_id, vm_id, isolate_id, method, url, host, path, status_code, reason_phrase, start_us, end_us, duration_us, request_size, response_size, content_type, request_headers_json, response_headers_json, has_error) '
+      'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) '
       'ON CONFLICT(session_id, vm_id) DO UPDATE SET '
+      '  isolate_id=COALESCE(excluded.isolate_id, isolate_id), '
       '  method=excluded.method, url=excluded.url, host=excluded.host, path=excluded.path, '
       '  status_code=excluded.status_code, reason_phrase=excluded.reason_phrase, '
       '  end_us=excluded.end_us, duration_us=excluded.duration_us, '
@@ -121,6 +132,7 @@ class CapturesDao {
       [
         sessionId,
         r.id,
+        isolateId,
         r.method,
         r.uri.toString(),
         r.uri.host,
@@ -234,16 +246,22 @@ class CapturesDao {
 
   // ----- sockets -----
 
-  void upsertSocket(int sessionId, SocketStatistic s) {
+  void upsertSocket(
+    int sessionId,
+    SocketStatistic s, {
+    String? isolateId,
+  }) {
     _db.execute(
-      'INSERT INTO socket_events(session_id, vm_id, socket_type, address, port, start_us, end_us, last_read_us, last_write_us, read_bytes, write_bytes) '
-      'VALUES (?,?,?,?,?,?,?,?,?,?,?) '
+      'INSERT INTO socket_events(session_id, vm_id, isolate_id, socket_type, address, port, start_us, end_us, last_read_us, last_write_us, read_bytes, write_bytes) '
+      'VALUES (?,?,?,?,?,?,?,?,?,?,?,?) '
       'ON CONFLICT(session_id, vm_id) DO UPDATE SET '
+      '  isolate_id=COALESCE(excluded.isolate_id, isolate_id), '
       '  end_us=excluded.end_us, last_read_us=excluded.last_read_us, last_write_us=excluded.last_write_us, '
       '  read_bytes=excluded.read_bytes, write_bytes=excluded.write_bytes',
       [
         sessionId,
         s.id,
+        isolateId,
         s.socketType,
         s.address,
         s.port,
@@ -288,10 +306,11 @@ class CapturesDao {
     required String message,
     String? error,
     String? stackTrace,
+    String? isolateId,
   }) {
     _db.execute(
-      'INSERT INTO log_records(session_id, timestamp_ms, source, level, logger, message, error, stack_trace) VALUES (?,?,?,?,?,?,?,?)',
-      [sessionId, timestampMs, source, level, logger, message, error, stackTrace],
+      'INSERT INTO log_records(session_id, isolate_id, timestamp_ms, source, level, logger, message, error, stack_trace) VALUES (?,?,?,?,?,?,?,?,?)',
+      [sessionId, isolateId, timestampMs, source, level, logger, message, error, stackTrace],
     );
     return _db.lastInsertRowId;
   }
