@@ -650,6 +650,72 @@ class CapturesDao {
     return rows.map(_rowToMap).toList();
   }
 
+  /// Cross-session FTS5 search used by `network_correlate` (Phase 12).
+  ///
+  /// For each [sessionIds] entry, runs the same FTS5 match used by
+  /// [searchRequests] but capped per-session BEFORE we union the results.
+  /// That way one noisy session can't drown the others' matches when the
+  /// caller is looking for cross-app correlations (e.g. an originator +
+  /// receiver pair). Returns rows grouped by session in the order
+  /// [sessionIds] lists them — the tool layer pairs them up.
+  ///
+  /// [pattern] is phrase-quoted automatically (same convention as
+  /// [searchRequests]). [which] picks the FTS column to match against.
+  /// [perSessionLimit] is a hard ceiling on rows returned per session.
+  List<Map<String, Object?>> correlateAcrossSessions({
+    required List<int> sessionIds,
+    required String pattern,
+    String which = 'any',
+    int perSessionLimit = 100,
+  }) {
+    if (sessionIds.isEmpty) return const [];
+    final phrase = '"${pattern.replaceAll('"', '""')}"';
+    final String matchExpr;
+    switch (which) {
+      case 'request':
+        matchExpr = 'content_request:$phrase';
+        break;
+      case 'response':
+        matchExpr = 'content_response:$phrase';
+        break;
+      case 'url':
+        matchExpr = 'url:$phrase';
+        break;
+      case 'any':
+      default:
+        matchExpr = phrase;
+    }
+    final out = <Map<String, Object?>>[];
+    for (final sid in sessionIds) {
+      final rows = _db.select(
+        '''
+        SELECT
+          m.session_id AS session_id,
+          m.vm_id      AS vm_id,
+          m.isolate_id AS isolate_id,
+          r.method     AS method,
+          r.url        AS url,
+          r.host       AS host,
+          r.path       AS path,
+          r.status_code AS status_code,
+          r.start_us   AS start_us,
+          r.end_us     AS end_us,
+          snippet(http_search, -1, '«', '»', '…', 12) AS snippet,
+          bm25(http_search) AS rank
+        FROM http_search
+        JOIN http_search_map m ON m.rowid = http_search.rowid
+        LEFT JOIN http_requests r
+          ON r.session_id = m.session_id AND r.vm_id = m.vm_id
+        WHERE http_search MATCH ? AND m.session_id = ?
+        ORDER BY r.start_us ASC LIMIT ?
+        ''',
+        [matchExpr, sid, perSessionLimit],
+      );
+      out.addAll(rows.map(_rowToMap));
+    }
+    return out;
+  }
+
   // ----- session maintenance -----
 
   /// Deletes a session and (via CASCADE) all its requests, bodies, sockets,
