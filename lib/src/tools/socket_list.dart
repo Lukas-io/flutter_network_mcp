@@ -29,6 +29,12 @@ final socketListTool = Tool(
             'Alternative to sessionId — case-insensitive substring on a '
             'currently-attached app name.',
       ),
+      'isolateId': Schema.string(
+        description:
+            'Optional: restrict to one isolate within the session. Get the id '
+            'from network_status.attached[].isolates[]. Omit to merge every '
+            'isolate (the default).',
+      ),
       'limit': Schema.int(description: 'Max sockets returned (default 50, hard cap 200). Newest-first by startTimeUs.'),
     },
   ),
@@ -41,12 +47,17 @@ FutureOr<CallToolResult> socketList(CallToolRequest request) async {
   if (scopeErr != null) return scopeErr;
   scope!;
 
+  final isolateFilter = args['isolateId'] as String?;
   final limit = clampLimit(args['limit'] as int?, fallback: 50, hardMax: 200);
 
   if (!scope.isLive) {
     try {
       final sid = scope.sessionId;
-      final rows = CapturesDao().querySockets(sessionId: sid, limit: limit);
+      final rows = CapturesDao().querySockets(
+        sessionId: sid,
+        isolateId: isolateFilter,
+        limit: limit,
+      );
       final sockets = [for (final r in rows) _historySocket(r)];
       final openCount = sockets.where((s) => s['open'] == true).length;
       final summary = sockets.isEmpty
@@ -92,17 +103,34 @@ FutureOr<CallToolResult> socketList(CallToolRequest request) async {
     );
   }
   try {
-    final profile = await attached.vm.getSocketProfile();
-    final sorted = profile.sockets.toList()
-      ..sort((a, b) => b.startTime.compareTo(a.startTime));
-    final clipped = sorted.take(limit).toList();
+    // Multi-isolate live read: iterate every HTTP-profiling isolate (each
+    // has its own socket profile), or the one named by [isolateFilter].
+    final isolateIds = isolateFilter == null
+        ? [for (final iso in attached.vm.httpProfilingIsolates) iso.id]
+        : [isolateFilter];
+    final perIsolate = <(dynamic, String)>[];
+    int scannedTotal = 0;
+    for (final isoId in isolateIds) {
+      try {
+        final profile = await attached.vm.getSocketProfileForIsolate(isoId);
+        scannedTotal += profile.sockets.length;
+        for (final s in profile.sockets) {
+          perIsolate.add((s, isoId));
+        }
+      } catch (_) {/* per-isolate skip */}
+    }
+    perIsolate.sort(
+      (a, b) => (b.$1.startTime as int).compareTo(a.$1.startTime as int),
+    );
+    final clipped = perIsolate.take(limit).toList();
     final sockets = [
-      for (final s in clipped)
+      for (final (s, isoId) in clipped)
         {
           'id': s.id,
           'socketType': s.socketType,
           'address': s.address,
           'port': s.port,
+          'isolateId': isoId,
           'startTimeUs': s.startTime,
           if (s.endTime != null) 'endTimeUs': s.endTime,
           if (s.lastReadTime != null) 'lastReadTimeUs': s.lastReadTime,
@@ -113,7 +141,6 @@ FutureOr<CallToolResult> socketList(CallToolRequest request) async {
         },
     ];
     final openCount = sockets.where((s) => s['open'] == true).length;
-    final scannedTotal = profile.sockets.length;
     final summary = sockets.isEmpty
         ? 'No sockets in session ${scope.sessionId} (live).'
         : '${sockets.length} socket(s) ($openCount open) in session ${scope.sessionId} (live, newest-first)'
@@ -153,6 +180,7 @@ Map<String, Object?> _historySocket(Map<String, Object?> r) {
     'socketType': r['socket_type'],
     'address': r['address'],
     'port': r['port'],
+    if (r['isolate_id'] != null) 'isolateId': r['isolate_id'],
     if (r['start_us'] != null) 'startTimeUs': r['start_us'],
     if (r['end_us'] != null) 'endTimeUs': r['end_us'],
     if (r['last_read_us'] != null) 'lastReadTimeUs': r['last_read_us'],

@@ -36,6 +36,13 @@ final networkSearchTool = Tool(
             'Alternative to sessionId — case-insensitive substring on a '
             'currently-attached app name.',
       ),
+      'isolateId': Schema.string(
+        description:
+            'Optional: restrict to one isolate within the session (e.g. '
+            'a worker isolate). Get the id from network_status.attached[].'
+            'isolates[]. Omit to search across every isolate in the session '
+            '(the default).',
+      ),
       'which': Schema.string(
         description:
             'Column to match: "url" | "request" | "response" | "any" (default).',
@@ -70,6 +77,7 @@ FutureOr<CallToolResult> networkSearch(CallToolRequest request) async {
   if (scopeErr != null) return scopeErr;
   scope!;
   final sessionId = scope.sessionId;
+  final isolateId = args['isolateId'] as String?;
   final limit = clampLimit(args['limit'] as int?, fallback: 20, hardMax: 100);
 
   try {
@@ -77,6 +85,7 @@ FutureOr<CallToolResult> networkSearch(CallToolRequest request) async {
       query: query,
       sessionId: sessionId,
       which: whichArg,
+      isolateId: isolateId,
       limit: limit,
     );
 

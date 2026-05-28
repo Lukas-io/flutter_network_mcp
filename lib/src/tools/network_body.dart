@@ -38,6 +38,13 @@ final networkBodyTool = Tool(
             'Alternative to sessionId — case-insensitive substring on a '
             'currently-attached app name.',
       ),
+      'isolateId': Schema.string(
+        description:
+            'Optional: tells the live VM lookup which isolate to ask. Omit '
+            'and the tool resolves from the DB row (the capture writer tags '
+            'every request with its isolate) or tries each known isolate. '
+            'Set explicitly to skip resolution.',
+      ),
       'offset': Schema.int(
         description:
             'Byte offset to start at. Default 0. Clamped to [0, totalSize].',
@@ -123,13 +130,58 @@ FutureOr<CallToolResult> networkBody(CallToolRequest request) async {
     } else {
       source = 'live';
       final attached = SessionRegistry.instance.attachedById(scope.sessionId)!;
-      final r = await attached.vm.getHttpProfileRequest(id);
-      if (which == 'request') {
-        bytes = r.requestBody;
-        mimeType = firstHeader(r.request?.headers, 'content-type');
-      } else {
-        bytes = r.responseBody;
-        mimeType = firstHeader(r.response?.headers, 'content-type');
+      final isolateFilter = args['isolateId'] as String?;
+      // Same isolate-resolution priority as network_get: explicit arg →
+      // DB-recorded isolate_id → try each known isolate.
+      String? resolvedIsolateId = isolateFilter;
+      if (resolvedIsolateId == null) {
+        final dbRow = CapturesDao().getHttpRequest(scope.sessionId, id);
+        resolvedIsolateId = dbRow?['isolate_id'] as String?;
+      }
+      final candidateIsolates = resolvedIsolateId != null
+          ? [resolvedIsolateId]
+          : [for (final iso in attached.vm.httpProfilingIsolates) iso.id];
+      if (candidateIsolates.isEmpty) {
+        return errorResult(
+          'No HTTP-profiling isolates known for this session.',
+          extra: const {
+            'nextSteps': [
+              'network_status — verify the session\'s isolates list',
+              'network_attach — re-attach to refresh isolate discovery',
+            ],
+          },
+        );
+      }
+      Object? lastError;
+      bool fetched = false;
+      for (final isoId in candidateIsolates) {
+        try {
+          final r = await attached.vm.getHttpProfileRequestForIsolate(isoId, id);
+          if (which == 'request') {
+            bytes = r.requestBody;
+            mimeType = firstHeader(r.request?.headers, 'content-type');
+          } else {
+            bytes = r.responseBody;
+            mimeType = firstHeader(r.response?.headers, 'content-type');
+          }
+          fetched = true;
+          break;
+        } catch (e) {
+          lastError = e;
+        }
+      }
+      if (!fetched) {
+        return errorResult(
+          'body fetch failed: ${lastError ?? "no isolate had id $id"}',
+          extra: {
+            'id': id,
+            'triedIsolates': candidateIsolates,
+            'nextSteps': const [
+              'network_get id:<id> — confirm the request still exists',
+              'Pass isolateId explicitly if you know which isolate produced this',
+            ],
+          },
+        );
       }
     }
 

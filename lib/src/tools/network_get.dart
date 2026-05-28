@@ -36,6 +36,13 @@ final networkGetTool = Tool(
             'Alternative to sessionId — case-insensitive substring on a '
             'currently-attached app name.',
       ),
+      'isolateId': Schema.string(
+        description:
+            'Optional: tells the live VM lookup which isolate to ask. Omit '
+            'and the tool will resolve from the DB row (the capture writer '
+            'tags every request with its source isolate) or try each known '
+            'isolate in turn. Set explicitly to skip resolution.',
+      ),
       'includeBodies': Schema.bool(
         description: 'Omit request + response bodies entirely. Default true.',
       ),
@@ -106,31 +113,72 @@ FutureOr<CallToolResult> networkGet(CallToolRequest request) async {
   }
 
   final attached = SessionRegistry.instance.attachedById(scope.sessionId)!;
-  try {
-    final r = await attached.vm.getHttpProfileRequest(id);
-    return _buildLiveResponse(
-      r: r,
-      scope: scope,
-      includeBodies: includeBodies,
-      includeEvents: includeEvents,
-      maxBytes: maxBytes,
-      headerTruncateBytes: headerTruncateBytes,
-      caps: caps,
-    );
-  } catch (e) {
-    return errorResult('getHttpProfileRequest failed: $e', extra: {
-      'id': id,
-      'nextSteps': const [
-        'Verify the id exists via network_list',
-        'network_status — check VM service / zombie-DTD state',
-      ],
-    });
+  final isolateFilter = args['isolateId'] as String?;
+  // Resolve which isolate to query in priority order:
+  //   1. explicit isolateId arg
+  //   2. DB row's captured isolate_id (writer tags within ~2s)
+  //   3. try every known isolate, take the first that returns the id
+  String? resolvedIsolateId = isolateFilter;
+  if (resolvedIsolateId == null) {
+    final row = CapturesDao().getHttpRequest(scope.sessionId, id);
+    resolvedIsolateId = row?['isolate_id'] as String?;
   }
+  final candidateIsolates = resolvedIsolateId != null
+      ? [resolvedIsolateId]
+      : [for (final iso in attached.vm.httpProfilingIsolates) iso.id];
+  if (candidateIsolates.isEmpty) {
+    return errorResult(
+      'No HTTP-profiling isolates known for this session.',
+      extra: const {
+        'nextSteps': [
+          'network_status — verify the session\'s isolates list',
+          'network_attach — re-attach to refresh isolate discovery',
+        ],
+      },
+    );
+  }
+  HttpProfileRequest? found;
+  String? foundIsolateId;
+  Object? lastError;
+  for (final isoId in candidateIsolates) {
+    try {
+      found = await attached.vm.getHttpProfileRequestForIsolate(isoId, id);
+      foundIsolateId = isoId;
+      break;
+    } catch (e) {
+      lastError = e;
+    }
+  }
+  if (found == null) {
+    return errorResult(
+      'getHttpProfileRequest failed: ${lastError ?? "no isolate had id $id"}',
+      extra: {
+        'id': id,
+        'triedIsolates': candidateIsolates,
+        'nextSteps': const [
+          'Verify the id exists via network_list',
+          'network_status — check VM service / zombie-DTD state',
+          'Pass isolateId explicitly if you know which isolate produced this request',
+        ],
+      },
+    );
+  }
+  return _buildLiveResponse(
+    r: found,
+    scope: scope,
+    isolateId: foundIsolateId,
+    includeBodies: includeBodies,
+    includeEvents: includeEvents,
+    maxBytes: maxBytes,
+    headerTruncateBytes: headerTruncateBytes,
+    caps: caps,
+  );
 }
 
 CallToolResult _buildLiveResponse({
   required HttpProfileRequest r,
   required Scope scope,
+  required String? isolateId,
   required bool includeBodies,
   required bool includeEvents,
   required int maxBytes,
@@ -197,6 +245,7 @@ CallToolResult _buildLiveResponse({
     'source': 'live',
     'scope': scope.toBlock(),
     'sessionId': scope.sessionId,
+    if (isolateId != null) 'isolateId': isolateId,
     'summary': summary,
     'id': r.id,
     'method': r.method,
@@ -302,6 +351,7 @@ FutureOr<CallToolResult> _historyGet({
       'source': 'history',
       'scope': scope.toBlock(),
       'sessionId': sid,
+      if (row['isolate_id'] != null) 'isolateId': row['isolate_id'],
       'summary': summary,
       'id': id,
       'method': row['method'],

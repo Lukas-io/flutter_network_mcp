@@ -206,6 +206,7 @@ class CapturesDao {
     String? hostContains,
     int? statusMin,
     int? statusMax,
+    String? isolateId,
     int limit = 50,
   }) {
     final clauses = <String>['session_id = ?'];
@@ -230,6 +231,10 @@ class CapturesDao {
     if (statusMax != null) {
       clauses.add('status_code <= ?');
       params.add(statusMax);
+    }
+    if (isolateId != null && isolateId.isNotEmpty) {
+      clauses.add('isolate_id = ?');
+      params.add(isolateId);
     }
     final rows = _db.select(
       'SELECT * FROM http_requests WHERE ${clauses.join(' AND ')} ORDER BY start_us DESC LIMIT ?',
@@ -292,11 +297,18 @@ class CapturesDao {
 
   List<Map<String, Object?>> querySockets({
     required int sessionId,
+    String? isolateId,
     int limit = 50,
   }) {
+    final clauses = <String>['session_id = ?'];
+    final params = <Object?>[sessionId];
+    if (isolateId != null && isolateId.isNotEmpty) {
+      clauses.add('isolate_id = ?');
+      params.add(isolateId);
+    }
     final rows = _db.select(
-      'SELECT * FROM socket_events WHERE session_id=? ORDER BY start_us DESC LIMIT ?',
-      [sessionId, limit],
+      'SELECT * FROM socket_events WHERE ${clauses.join(' AND ')} ORDER BY start_us DESC LIMIT ?',
+      [...params, limit],
     );
     return rows.map(_rowToMap).toList();
   }
@@ -336,6 +348,7 @@ class CapturesDao {
     int? levelMin,
     String? loggerContains,
     String? source,
+    String? isolateId,
     int limit = 100,
   }) {
     final clauses = <String>['session_id = ?'];
@@ -355,6 +368,10 @@ class CapturesDao {
     if (source != null && source.isNotEmpty) {
       clauses.add('source = ?');
       params.add(source);
+    }
+    if (isolateId != null && isolateId.isNotEmpty) {
+      clauses.add('isolate_id = ?');
+      params.add(isolateId);
     }
     final rows = _db.select(
       'SELECT * FROM log_records WHERE ${clauses.join(' AND ')} ORDER BY id DESC LIMIT ?',
@@ -575,6 +592,7 @@ class CapturesDao {
     required String query,
     int? sessionId,
     String which = 'any',
+    String? isolateId,
     int limit = 20,
   }) {
     // Wrap the user query as an FTS5 phrase so characters like '-', ':', '('
@@ -604,6 +622,11 @@ class CapturesDao {
       sessionFilter = ' AND m.session_id = ?';
       params.add(sessionId);
     }
+    String isolateFilter = '';
+    if (isolateId != null && isolateId.isNotEmpty) {
+      isolateFilter = ' AND m.isolate_id = ?';
+      params.add(isolateId);
+    }
     params.add(limit);
     final rows = _db.select(
       '''
@@ -619,7 +642,7 @@ class CapturesDao {
       JOIN http_search_map m ON m.rowid = http_search.rowid
       LEFT JOIN http_requests r
         ON r.session_id = m.session_id AND r.vm_id = m.vm_id
-      WHERE $matchClause$sessionFilter
+      WHERE $matchClause$sessionFilter$isolateFilter
       ORDER BY rank LIMIT ?
       ''',
       params,

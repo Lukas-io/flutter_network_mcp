@@ -25,6 +25,12 @@ final networkClearTool = Tool(
             'Alternative to sessionId — case-insensitive substring on a '
             'currently-attached app name.',
       ),
+      'isolateId': Schema.string(
+        description:
+            'Optional: clear only this isolate\'s HTTP profile. Get the id '
+            'from network_status.attached[].isolates[]. Omit to clear every '
+            'isolate in the session (the default).',
+      ),
     },
   ),
 );
@@ -49,30 +55,52 @@ FutureOr<CallToolResult> networkClear(CallToolRequest request) async {
     );
   }
   final attached = SessionRegistry.instance.attachedById(scope.sessionId)!;
-  try {
-    await attached.vm.clearHttpProfile();
-    attached.lastHttpCursor = null;
-    final liveSid = scope.sessionId;
-    return jsonResult({
-      'cleared': true,
-      'scope': scope.toBlock(),
-      'summary':
-          'Live VM HTTP profile cleared for session $liveSid${scope.appName != null ? " (${scope.appName})" : ""}. Persistent DB is untouched (captured rows remain queryable).',
-      'liveSessionId': liveSid,
-      'warnings': const [
-        'The persistent DB is NOT cleared. Use session_delete or bodies_purge to remove historical rows.',
-      ],
-      'nextSteps': const [
-        'network_list — confirm the live profile is empty',
-        'Drive the app, then network_list — fresh isolated capture',
-      ],
-    }, scopeSessionId: scope.sessionId);
-  } catch (e) {
-    return errorResult('clearHttpProfile failed: $e', extra: const {
-      'nextSteps': [
-        'network_status — check zombie-DTD state',
-        'network_detach then network_attach — full reset',
-      ],
-    });
+  final isolateFilter = args['isolateId'] as String?;
+  // Multi-isolate: clear every isolate's profile by default; with the
+  // filter, clear just the one. Per-isolate try/catch so one VM hiccup
+  // doesn't stop the rest.
+  final isolates = isolateFilter == null
+      ? [for (final iso in attached.vm.httpProfilingIsolates) iso.id]
+      : [isolateFilter];
+  if (isolates.isEmpty) {
+    return errorResult(
+      'No HTTP-profiling isolates known for this session.',
+      extra: const {
+        'nextSteps': [
+          'network_status — verify the session\'s isolates list',
+          'network_detach then network_attach — full reset',
+        ],
+      },
+    );
   }
+  final cleared = <String>[];
+  final failed = <Map<String, Object?>>[];
+  for (final isoId in isolates) {
+    try {
+      await attached.vm.clearHttpProfileForIsolate(isoId);
+      cleared.add(isoId);
+    } catch (e) {
+      failed.add({'isolateId': isoId, 'error': e.toString()});
+    }
+  }
+  attached.lastHttpCursor = null;
+  final liveSid = scope.sessionId;
+  return jsonResult({
+    'cleared': true,
+    'scope': scope.toBlock(),
+    'summary':
+        'Live VM HTTP profile cleared for session $liveSid${scope.appName != null ? " (${scope.appName})" : ""}: ${cleared.length} isolate(s). Persistent DB is untouched (captured rows remain queryable).',
+    'liveSessionId': liveSid,
+    'clearedIsolates': cleared,
+    if (failed.isNotEmpty) 'failed': failed,
+    'warnings': [
+      'The persistent DB is NOT cleared. Use session_delete or bodies_purge to remove historical rows.',
+      if (failed.isNotEmpty)
+        '${failed.length} isolate(s) failed to clear — see `failed` field.',
+    ],
+    'nextSteps': const [
+      'network_list — confirm the live profile is empty',
+      'Drive the app, then network_list — fresh isolated capture',
+    ],
+  }, scopeSessionId: scope.sessionId);
 }

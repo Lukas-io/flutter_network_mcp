@@ -52,6 +52,13 @@ final logsTailTool = Tool(
       'source': Schema.string(
         description: '"logging" | "stdout" | "stderr". Omit for all sources.',
       ),
+      'isolateId': Schema.string(
+        description:
+            'Optional: restrict to one isolate within the session. Get the id '
+            'from network_status.attached[].isolates[]. Omit to merge every '
+            'isolate (the default). VM-level events with no isolate context '
+            '(rare on these streams) are EXCLUDED when this filter is set.',
+      ),
       'limit': Schema.int(
         description: 'Max records returned (default 100, hard cap 500). Newest-first.',
       ),
@@ -70,6 +77,7 @@ FutureOr<CallToolResult> logsTail(CallToolRequest request) async {
   final levelMin = args['levelMin'] as int?;
   final loggerContains = args['loggerContains'] as String?;
   final source = args['source'] as String?;
+  final isolateFilter = args['isolateId'] as String?;
   final limit = clampLimit(args['limit'] as int?, fallback: 100, hardMax: 500);
 
   if (!scope.isLive) {
@@ -81,6 +89,7 @@ FutureOr<CallToolResult> logsTail(CallToolRequest request) async {
         levelMin: levelMin,
         loggerContains: loggerContains,
         source: source,
+        isolateId: isolateFilter,
         limit: limit,
       );
       final out = <Map<String, Object?>>[];
@@ -124,6 +133,7 @@ FutureOr<CallToolResult> logsTail(CallToolRequest request) async {
     levelMin: levelMin,
     loggerContains: loggerContains,
     sourceContains: source,
+    isolateId: isolateFilter,
     limit: limit,
   );
   final out = <Map<String, Object?>>[];
@@ -155,6 +165,7 @@ Map<String, Object?> _historyEntry(Map<String, Object?> r) {
   return {
     'id': r['id'],
     'source': r['source'],
+    if (r['isolate_id'] != null) 'isolateId': r['isolate_id'],
     if (r['timestamp_ms'] != null) 'timestampMs': r['timestamp_ms'],
     if (r['level'] != null) 'level': r['level'],
     if (r['logger'] != null) 'loggerName': r['logger'],
@@ -172,6 +183,7 @@ Map<String, Object?> _liveEntry(dynamic e) {
   return {
     'id': e.id,
     'source': e.source,
+    if (e.isolateId != null) 'isolateId': e.isolateId,
     if (e.timestampMs != null) 'timestampMs': e.timestampMs,
     if (e.level != null) 'level': e.level,
     if (e.loggerName != null) 'loggerName': e.loggerName,
