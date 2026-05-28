@@ -1,17 +1,59 @@
 import 'package:vm_service/vm_service.dart';
 import 'package:vm_service/vm_service_io.dart';
 
+/// One isolate worth tracking for HTTP/socket profiling. Captured when
+/// [VmClient.discoverHttpProfilingIsolates] runs.
+class IsolateInfo {
+  IsolateInfo({required this.id, this.name, this.number});
+
+  /// Stable VM service isolate id (e.g. `isolates/1234567890`).
+  final String id;
+
+  /// Human-readable name (e.g. `main`, `Isolate-1`, `_worker`).
+  final String? name;
+
+  /// VM-assigned isolate number (string in the VM service spec).
+  final String? number;
+
+  Map<String, Object?> toJson() => {
+        'id': id,
+        if (name != null) 'name': name,
+        if (number != null) 'number': number,
+      };
+}
+
 /// Thin wrapper around `package:vm_service`. Connects to a VM service WS URI
 /// and provides typed helpers for the `ext.dart.io.*` HTTP + socket profile
 /// RPCs.
+///
+/// **Multi-isolate (Phase 9 / 0.6.0):** the client tracks every isolate in
+/// the connected VM that exposes `ext.dart.io.getHttpProfile` — not just
+/// the first. Per-isolate RPC variants (`*ForIsolate`) take an explicit
+/// isolate id; the back-compat single-isolate methods (`getHttpProfile`,
+/// `enableHttpLogging`, etc.) delegate to the first known isolate so
+/// callers that haven't been migrated keep working.
 class VmClient {
   VmService? _service;
-  String? _isolateId;
   Uri? _connectedUri;
+
+  /// All known HTTP-profiling isolates, keyed by isolate id. Populated by
+  /// [discoverHttpProfilingIsolates] and refreshed by the capture writer's
+  /// periodic re-scan (Phase 10).
+  final Map<String, IsolateInfo> _isolates = {};
 
   bool get isConnected => _service != null;
   Uri? get connectedUri => _connectedUri;
-  String? get isolateId => _isolateId;
+
+  /// Back-compat: first known HTTP-profiling isolate id, or null if no
+  /// discovery has run yet (or the connected VM has none). Prefer
+  /// [httpProfilingIsolates] in new code.
+  String? get isolateId =>
+      _isolates.isEmpty ? null : _isolates.keys.first;
+
+  /// Snapshot of every currently-tracked HTTP-profiling isolate.
+  List<IsolateInfo> get httpProfilingIsolates =>
+      List.unmodifiable(_isolates.values);
+
   VmService get service =>
       _service ?? (throw StateError('VM service is not connected.'));
 
@@ -34,77 +76,144 @@ class VmClient {
     _connectedUri = vmServiceUri;
   }
 
-  /// Picks the first running isolate that exposes `ext.dart.io.getHttpProfile`.
-  Future<String> pickHttpProfilingIsolate() async {
+  /// Scans the connected VM and returns every isolate that exposes
+  /// `ext.dart.io.getHttpProfile`. Caches the result in [_isolates] so
+  /// subsequent calls to [httpProfilingIsolates] / [isolateId] / the
+  /// back-compat methods see the fresh set. Safe to re-run mid-session
+  /// to pick up newly-spawned isolates.
+  Future<List<IsolateInfo>> discoverHttpProfilingIsolates() async {
     final vm = service;
     final info = await vm.getVM();
+    final found = <String, IsolateInfo>{};
     for (final ref in info.isolates ?? const <IsolateRef>[]) {
       final id = ref.id;
       if (id == null) continue;
       final isolate = await vm.getIsolate(id);
       final rpcs = isolate.extensionRPCs ?? const <String>[];
       if (rpcs.contains('ext.dart.io.getHttpProfile')) {
-        _isolateId = id;
-        return id;
+        found[id] = IsolateInfo(
+          id: id,
+          name: isolate.name ?? ref.name,
+          number: isolate.number ?? ref.number,
+        );
       }
     }
-    throw StateError(
-      'No running isolate exposes dart:io HTTP profiling. '
-      'Is the target a Flutter/Dart app that uses HttpClient or package:http?',
-    );
+    _isolates
+      ..clear()
+      ..addAll(found);
+    return httpProfilingIsolates;
   }
 
-  Future<HttpTimelineLoggingState> enableHttpLogging() {
-    final id = _requireIsolate();
-    return service.httpEnableTimelineLogging(id, true);
+  /// Back-compat: returns the first HTTP-profiling isolate id. Runs
+  /// [discoverHttpProfilingIsolates] when the cache is empty. Throws
+  /// [StateError] when no isolate qualifies.
+  Future<String> pickHttpProfilingIsolate() async {
+    if (_isolates.isEmpty) {
+      await discoverHttpProfilingIsolates();
+    }
+    if (_isolates.isEmpty) {
+      throw StateError(
+        'No running isolate exposes dart:io HTTP profiling. '
+        'Is the target a Flutter/Dart app that uses HttpClient or package:http?',
+      );
+    }
+    return _isolates.keys.first;
   }
 
-  Future<HttpProfile> getHttpProfile({DateTime? updatedSince}) {
-    final id = _requireIsolate();
-    return service.getHttpProfile(id, updatedSince: updatedSince);
+  // ===== Per-isolate RPC variants (Phase 9 — explicit isolate id) =====
+
+  Future<HttpTimelineLoggingState> enableHttpLoggingForIsolate(
+    String isolateId,
+  ) {
+    return service.httpEnableTimelineLogging(isolateId, true);
   }
 
-  Future<HttpProfileRequest> getHttpProfileRequest(String requestId) {
-    final id = _requireIsolate();
-    return service.getHttpProfileRequest(id, requestId);
+  Future<HttpProfile> getHttpProfileForIsolate(
+    String isolateId, {
+    DateTime? updatedSince,
+  }) {
+    return service.getHttpProfile(isolateId, updatedSince: updatedSince);
   }
 
-  Future<Success> clearHttpProfile() {
-    final id = _requireIsolate();
-    return service.clearHttpProfile(id);
+  Future<HttpProfileRequest> getHttpProfileRequestForIsolate(
+    String isolateId,
+    String requestId,
+  ) {
+    return service.getHttpProfileRequest(isolateId, requestId);
   }
 
-  /// Returns true if socket profiling is available + enabled (best effort).
-  Future<bool> enableSocketProfiling() async {
-    final id = _requireIsolate();
-    final available = await service.isSocketProfilingAvailable(id);
+  Future<Success> clearHttpProfileForIsolate(String isolateId) {
+    return service.clearHttpProfile(isolateId);
+  }
+
+  /// Returns true if socket profiling is available + enabled (best effort)
+  /// for [isolateId].
+  Future<bool> enableSocketProfilingForIsolate(String isolateId) async {
+    final available = await service.isSocketProfilingAvailable(isolateId);
     if (!available) return false;
-    final state = await service.socketProfilingEnabled(id, true);
+    final state = await service.socketProfilingEnabled(isolateId, true);
     return state.enabled;
   }
 
+  Future<SocketProfile> getSocketProfileForIsolate(String isolateId) {
+    return service.getSocketProfile(isolateId);
+  }
+
+  Future<Success> clearSocketProfileForIsolate(String isolateId) {
+    return service.clearSocketProfile(isolateId);
+  }
+
+  // ===== Back-compat single-isolate facades =====
+  //
+  // These delegate to the per-isolate variants using the first known
+  // HTTP-profiling isolate. Existing callers (capture writer Phase 2,
+  // single-isolate tests) keep working until Phase 10 wires the writer
+  // through the per-isolate path.
+
+  Future<HttpTimelineLoggingState> enableHttpLogging() {
+    return enableHttpLoggingForIsolate(_requireIsolate());
+  }
+
+  Future<HttpProfile> getHttpProfile({DateTime? updatedSince}) {
+    return getHttpProfileForIsolate(
+      _requireIsolate(),
+      updatedSince: updatedSince,
+    );
+  }
+
+  Future<HttpProfileRequest> getHttpProfileRequest(String requestId) {
+    return getHttpProfileRequestForIsolate(_requireIsolate(), requestId);
+  }
+
+  Future<Success> clearHttpProfile() {
+    return clearHttpProfileForIsolate(_requireIsolate());
+  }
+
+  Future<bool> enableSocketProfiling() {
+    return enableSocketProfilingForIsolate(_requireIsolate());
+  }
+
   Future<SocketProfile> getSocketProfile() {
-    final id = _requireIsolate();
-    return service.getSocketProfile(id);
+    return getSocketProfileForIsolate(_requireIsolate());
   }
 
   Future<Success> clearSocketProfile() {
-    final id = _requireIsolate();
-    return service.clearSocketProfile(id);
+    return clearSocketProfileForIsolate(_requireIsolate());
   }
 
   Future<void> disconnect() async {
     final svc = _service;
     _service = null;
-    _isolateId = null;
+    _isolates.clear();
     _connectedUri = null;
     if (svc != null) await svc.dispose();
   }
 
   String _requireIsolate() {
-    final id = _isolateId;
-    if (id == null) throw StateError('No isolate selected. Call attach first.');
-    return id;
+    if (_isolates.isEmpty) {
+      throw StateError('No isolate selected. Call attach first.');
+    }
+    return _isolates.keys.first;
   }
 
   /// Normalizes a VM service URI to a ws:// path ending in `/ws`.
