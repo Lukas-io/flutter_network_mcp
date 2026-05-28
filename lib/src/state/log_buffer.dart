@@ -12,6 +12,7 @@ class LogEntry {
     required this.message,
     this.error,
     this.stackTrace,
+    this.isolateId,
   });
 
   /// Monotonically increasing local id (the cursor used by `logs_tail`).
@@ -31,6 +32,11 @@ class LogEntry {
   final String message;
   final String? error;
   final String? stackTrace;
+
+  /// VM service isolate id (e.g. `isolates/1234567890`) when the event
+  /// carried one. Null when the event was VM-level (no isolate context).
+  /// Added in Phase 10 for multi-isolate filtering.
+  final String? isolateId;
 }
 
 /// Bounded FIFO log buffer.
@@ -61,6 +67,7 @@ class LogBuffer {
     required String message,
     String? error,
     String? stackTrace,
+    String? isolateId,
   }) {
     final entry = LogEntry(
       id: _nextId++,
@@ -71,6 +78,7 @@ class LogBuffer {
       message: message,
       error: error,
       stackTrace: stackTrace,
+      isolateId: isolateId,
     );
     _entries.addLast(entry);
     while (_entries.length > capacity) {
@@ -85,10 +93,12 @@ class LogBuffer {
     int? levelMin,
     String? loggerContains,
     String? sourceContains,
+    String? isolateId,
     int limit = 100,
   }) {
     final lc = loggerContains?.toLowerCase();
     final sc = sourceContains?.toLowerCase();
+    final iso = isolateId;
     final result = <LogEntry>[];
     // Reverse iterate so newest-first; stop once we hit `limit`.
     final descending = _entries.toList(growable: false).reversed;
@@ -99,6 +109,7 @@ class LogBuffer {
         continue;
       }
       if (sc != null && !e.source.toLowerCase().contains(sc)) continue;
+      if (iso != null && iso.isNotEmpty && e.isolateId != iso) continue;
       result.add(e);
       if (result.length >= limit) break;
     }

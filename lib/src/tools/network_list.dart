@@ -52,6 +52,13 @@ final networkListTool = Tool(
       'statusMax': Schema.int(
         description: 'Inclusive upper bound on response status code.',
       ),
+      'isolateId': Schema.string(
+        description:
+            'Optional: restrict to one isolate within the session (e.g. a '
+            'worker isolate). Get the id from network_status.attached[].'
+            'isolates[]. Omit to merge every isolate in the session (the '
+            'default — same UX as single-isolate apps).',
+      ),
       'limit': Schema.int(
         description: 'Max requests returned (default 50, hard cap 200). Newest-first.',
       ),
@@ -71,6 +78,7 @@ FutureOr<CallToolResult> networkList(CallToolRequest request) async {
   final hostContains = args['hostContains'] as String?;
   final statusMin = args['statusMin'] as int?;
   final statusMax = args['statusMax'] as int?;
+  final isolateFilter = args['isolateId'] as String?;
   final limit = clampLimit(args['limit'] as int?, fallback: 50, hardMax: 200);
 
   // History mode: scope is non-live (explicit sessionId arg pointing at a
@@ -85,6 +93,7 @@ FutureOr<CallToolResult> networkList(CallToolRequest request) async {
       hostContains,
       statusMin,
       statusMax,
+      isolateFilter,
       limit,
     );
   }
@@ -95,20 +104,51 @@ FutureOr<CallToolResult> networkList(CallToolRequest request) async {
       ? attached.lastHttpCursor
       : (sinceArg <= 0 ? null : DateTime.fromMicrosecondsSinceEpoch(sinceArg));
 
+  // Multi-isolate live read: iterate every HTTP-profiling isolate (or the
+  // one named by [isolateFilter]) and merge. Each isolate has its own VM-
+  // side profile; the per-isolate try/catch keeps a flaky isolate from
+  // breaking the others.
+  final isolateIds = isolateFilter == null
+      ? [for (final iso in attached.vm.httpProfilingIsolates) iso.id]
+      : [isolateFilter];
+
   try {
-    final profile = await attached.vm.getHttpProfile(updatedSince: cursor);
-    attached.lastHttpCursor = profile.timestamp;
+    final perIsolateRequests = <(HttpProfileRequest, String)>[];
+    DateTime? latestCursor;
+    int scannedTotal = 0;
+    for (final isoId in isolateIds) {
+      try {
+        final profile = await attached.vm.getHttpProfileForIsolate(
+          isoId,
+          updatedSince: cursor,
+        );
+        if (latestCursor == null || profile.timestamp.isAfter(latestCursor)) {
+          latestCursor = profile.timestamp;
+        }
+        scannedTotal += profile.requests.length;
+        for (final req in profile.requests) {
+          perIsolateRequests.add((req, isoId));
+        }
+      } catch (_) {/* per-isolate skip */}
+    }
+    if (latestCursor != null) {
+      attached.lastHttpCursor = latestCursor;
+    }
+
+    // Sort by start time across all isolates (newest first).
+    perIsolateRequests
+        .sort((a, b) => b.$1.startTime.compareTo(a.$1.startTime));
 
     final filtered = <Map<String, Object?>>[];
-    final sorted = profile.requests.toList()
-      ..sort((a, b) => b.startTime.compareTo(a.startTime));
-
-    for (final r in sorted) {
-      if (!methodMatches(r.method, methods)) continue;
-      if (!hostMatches(r.uri.toString(), hostContains)) continue;
-      final code = r.response?.statusCode;
-      if (!statusInRange(code, statusMin, statusMax)) continue;
-      filtered.add(_liveSummary(r));
+    for (final (req, isoId) in perIsolateRequests) {
+      if (!methodMatches(req.method, methods)) continue;
+      if (!hostMatches(req.uri.toString(), hostContains)) continue;
+      if (!statusInRange(req.response?.statusCode, statusMin, statusMax)) {
+        continue;
+      }
+      final summary = _liveSummary(req);
+      summary['isolateId'] = isoId;
+      filtered.add(summary);
       if (filtered.length >= limit) break;
     }
 
@@ -116,7 +156,6 @@ FutureOr<CallToolResult> networkList(CallToolRequest request) async {
     final activeFilters =
         _activeFilters(methods, hostContains, statusMin, statusMax);
     final cursorWasIncremental = sinceArg == null && cursor != null;
-    final scannedTotal = profile.requests.length;
 
     final summary = filtered.isEmpty
         ? (scannedTotal == 0
@@ -172,7 +211,8 @@ FutureOr<CallToolResult> networkList(CallToolRequest request) async {
       'summary': summary,
       'count': filtered.length,
       'totalScanned': scannedTotal,
-      'nextCursor': profile.timestamp.microsecondsSinceEpoch,
+      if (latestCursor != null)
+        'nextCursor': latestCursor.microsecondsSinceEpoch,
       if (warnings.isNotEmpty) 'warnings': warnings,
       'nextSteps': nextSteps,
       'requests': filtered,
@@ -195,6 +235,7 @@ FutureOr<CallToolResult> _historyList(
   String? hostContains,
   int? statusMin,
   int? statusMax,
+  String? isolateFilter,
   int limit,
 ) {
   final sid = scope.sessionId;
@@ -206,6 +247,7 @@ FutureOr<CallToolResult> _historyList(
       hostContains: hostContains,
       statusMin: statusMin,
       statusMax: statusMax,
+      isolateId: isolateFilter,
       limit: limit,
     );
     int? maxStart;
@@ -307,6 +349,7 @@ Map<String, Object?> _historySummary(Map<String, Object?> r) {
     if (r['request_size'] != null) 'requestContentLength': r['request_size'],
     if (r['response_size'] != null) 'responseContentLength': r['response_size'],
     if (r['content_type'] != null) 'responseContentType': r['content_type'],
+    if (r['isolate_id'] != null) 'isolateId': r['isolate_id'],
     if ((r['has_error'] as int? ?? 0) != 0) 'hasError': true,
   };
 }

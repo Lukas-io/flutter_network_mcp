@@ -24,6 +24,12 @@ final socketClearTool = Tool(
             'Alternative to sessionId — case-insensitive substring on a '
             'currently-attached app name.',
       ),
+      'isolateId': Schema.string(
+        description:
+            'Optional: clear only this isolate\'s socket profile. Get the id '
+            'from network_status.attached[].isolates[]. Omit to clear every '
+            'isolate in the session (the default).',
+      ),
     },
   ),
 );
@@ -49,7 +55,7 @@ FutureOr<CallToolResult> socketClear(CallToolRequest request) async {
   final attached = SessionRegistry.instance.attachedById(scope.sessionId)!;
   if (!attached.socketProfilingEnabled) {
     return errorResult(
-      'Socket profiling is not enabled for this isolate.',
+      'Socket profiling is not enabled for any of this session\'s isolates.',
       extra: const {
         'nextSteps': [
           'network_status — confirm socketProfilingEnabled',
@@ -58,28 +64,38 @@ FutureOr<CallToolResult> socketClear(CallToolRequest request) async {
       },
     );
   }
-  try {
-    await attached.vm.clearSocketProfile();
-    return jsonResult({
-      'cleared': true,
-      'scope': scope.toBlock(),
-      'summary':
-          'Live VM socket profile cleared for session ${scope.sessionId}${scope.appName != null ? " (${scope.appName})" : ""}. Persistent DB is untouched (socket_events rows remain queryable).',
-      'liveSessionId': scope.sessionId,
-      'warnings': const [
-        'The persistent DB is NOT cleared. Use session_delete for DB-side removal.',
-      ],
-      'nextSteps': const [
-        'socket_list — confirm the live profile is empty',
-        'Drive the app, then socket_list — fresh isolated socket capture',
-      ],
-    }, scopeSessionId: scope.sessionId);
-  } catch (e) {
-    return errorResult('clearSocketProfile failed: $e', extra: const {
-      'nextSteps': [
-        'network_status — check zombie-DTD state',
-        'network_detach then network_attach — full reset',
-      ],
-    });
+  final isolateFilter = args['isolateId'] as String?;
+  final isolates = isolateFilter == null
+      ? [for (final iso in attached.vm.httpProfilingIsolates) iso.id]
+      : [isolateFilter];
+  final cleared = <String>[];
+  final failed = <Map<String, Object?>>[];
+  for (final isoId in isolates) {
+    try {
+      await attached.vm.clearSocketProfileForIsolate(isoId);
+      cleared.add(isoId);
+    } catch (e) {
+      // Socket profiling might be enabled on only some isolates — ignore
+      // misses on isolates that don't support it.
+      failed.add({'isolateId': isoId, 'error': e.toString()});
+    }
   }
+  return jsonResult({
+    'cleared': true,
+    'scope': scope.toBlock(),
+    'summary':
+        'Live VM socket profile cleared for session ${scope.sessionId}${scope.appName != null ? " (${scope.appName})" : ""}: ${cleared.length} isolate(s). Persistent DB is untouched (socket_events rows remain queryable).',
+    'liveSessionId': scope.sessionId,
+    'clearedIsolates': cleared,
+    if (failed.isNotEmpty) 'failed': failed,
+    'warnings': [
+      'The persistent DB is NOT cleared. Use session_delete for DB-side removal.',
+      if (failed.isNotEmpty)
+        '${failed.length} isolate(s) failed to clear — see `failed` field.',
+    ],
+    'nextSteps': const [
+      'socket_list — confirm the live profile is empty',
+      'Drive the app, then socket_list — fresh isolated socket capture',
+    ],
+  }, scopeSessionId: scope.sessionId);
 }

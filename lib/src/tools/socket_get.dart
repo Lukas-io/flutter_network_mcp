@@ -25,6 +25,12 @@ final socketGetTool = Tool(
             'Alternative to sessionId — case-insensitive substring on a '
             'currently-attached app name.',
       ),
+      'isolateId': Schema.string(
+        description:
+            'Optional: tells the live VM lookup which isolate to ask. Omit '
+            'and the tool resolves from the DB row, or tries each known '
+            'isolate.',
+      ),
     },
     required: ['id'],
   ),
@@ -63,7 +69,7 @@ FutureOr<CallToolResult> socketGet(CallToolRequest request) async {
   final attached = SessionRegistry.instance.attachedById(scope.sessionId)!;
   if (!attached.socketProfilingEnabled) {
     return errorResult(
-      'Socket profiling not enabled for this isolate.',
+      'Socket profiling not enabled for any of this session\'s isolates.',
       extra: const {
         'nextSteps': [
           'network_status — confirm socketProfilingEnabled',
@@ -72,30 +78,59 @@ FutureOr<CallToolResult> socketGet(CallToolRequest request) async {
       },
     );
   }
+  // Resolve which isolate to query — explicit arg, DB-recorded id, or
+  // iterate. Each isolate has its own socket profile.
+  final isolateFilter = args['isolateId'] as String?;
+  String? resolvedIsolateId = isolateFilter;
+  if (resolvedIsolateId == null) {
+    final dbRow = CapturesDao().getSocket(scope.sessionId, id);
+    resolvedIsolateId = dbRow?['isolate_id'] as String?;
+  }
+  final candidateIsolates = resolvedIsolateId != null
+      ? [resolvedIsolateId]
+      : [for (final iso in attached.vm.httpProfilingIsolates) iso.id];
   try {
-    final profile = await attached.vm.getSocketProfile();
-    final found = profile.sockets.where((s) => s.id == id).toList();
-    if (found.isEmpty) {
-      return errorResult('Socket id `$id` not found in current live profile.', extra: const {
-        'nextSteps': [
-          'socket_list — list currently-captured ids',
-          'session_open id:<n> — try a past session if this id is from history',
-        ],
-      });
+    dynamic foundSocket;
+    String? foundIsolateId;
+    for (final isoId in candidateIsolates) {
+      try {
+        final profile = await attached.vm.getSocketProfileForIsolate(isoId);
+        for (final s in profile.sockets) {
+          if (s.id == id) {
+            foundSocket = s;
+            foundIsolateId = isoId;
+            break;
+          }
+        }
+        if (foundSocket != null) break;
+      } catch (_) {/* per-isolate skip */}
     }
-    final s = found.first;
+    if (foundSocket == null) {
+      return errorResult(
+        'Socket id `$id` not found in current live profile.',
+        extra: {
+          'triedIsolates': candidateIsolates,
+          'nextSteps': const [
+            'socket_list — list currently-captured ids',
+            'session_open id:<n> — try a past session if this id is from history',
+          ],
+        },
+      );
+    }
+    final s = foundSocket;
     final summary = _summary(
-      socketType: s.socketType,
-      address: s.address,
-      port: s.port,
-      readBytes: s.readBytes,
-      writeBytes: s.writeBytes,
+      socketType: s.socketType as String?,
+      address: s.address as String?,
+      port: s.port as int?,
+      readBytes: s.readBytes as int?,
+      writeBytes: s.writeBytes as int?,
       isOpen: s.endTime == null,
     );
     return jsonResult({
       'source': 'live',
       'scope': scope.toBlock(),
       'sessionId': scope.sessionId,
+      if (foundIsolateId != null) 'isolateId': foundIsolateId,
       'summary': summary,
       'id': s.id,
       'socketType': s.socketType,
@@ -108,7 +143,7 @@ FutureOr<CallToolResult> socketGet(CallToolRequest request) async {
       'readBytes': s.readBytes,
       'writeBytes': s.writeBytes,
       'open': s.endTime == null,
-      'nextSteps': _nextSteps(caps, isOpen: s.endTime == null, address: s.address),
+      'nextSteps': _nextSteps(caps, isOpen: s.endTime == null, address: s.address as String?),
     }, scopeSessionId: scope.sessionId);
   } catch (e) {
     return errorResult('getSocketProfile failed: $e', extra: const {
@@ -135,6 +170,7 @@ CallToolResult _historySuccess(Scope scope, Map<String, Object?> row, Capability
     'source': 'history',
     'scope': scope.toBlock(),
     'sessionId': sid,
+    if (row['isolate_id'] != null) 'isolateId': row['isolate_id'],
     'summary': summary,
     'id': row['vm_id'],
     'socketType': row['socket_type'],
