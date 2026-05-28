@@ -3,9 +3,9 @@ import 'dart:async';
 import 'package:dart_mcp/server.dart';
 
 import '../config/capabilities.dart';
-import '../state/session.dart';
 import '../storage/captures_db.dart';
 import '../util/filters.dart';
+import '../util/scope.dart';
 import 'result.dart';
 
 final networkSearchTool = Tool(
@@ -26,7 +26,22 @@ final networkSearchTool = Tool(
             'syntax pre-escaped if you want AND/OR/NEAR semantics.',
       ),
       'sessionId': Schema.int(
-        description: 'Restrict to a session id (default: current session).',
+        description:
+            'Which session to search. Omit to auto-resolve: explicit '
+            'view (session_open) → sole attached session → error if 2+ '
+            'attached.',
+      ),
+      'appNameContains': Schema.string(
+        description:
+            'Alternative to sessionId — case-insensitive substring on a '
+            'currently-attached app name.',
+      ),
+      'isolateId': Schema.string(
+        description:
+            'Optional: restrict to one isolate within the session (e.g. '
+            'a worker isolate). Get the id from network_status.attached[].'
+            'isolates[]. Omit to search across every isolate in the session '
+            '(the default).',
       ),
       'which': Schema.string(
         description:
@@ -58,28 +73,19 @@ FutureOr<CallToolResult> networkSearch(CallToolRequest request) async {
       'nextSteps': ['Retry with which:"any" (default)'],
     });
   }
-  final session = Session.instance;
-  final sessionId = (args['sessionId'] as int?) ?? session.effectiveSessionId;
+  final (scope, scopeErr) = resolveScope(args);
+  if (scopeErr != null) return scopeErr;
+  scope!;
+  final sessionId = scope.sessionId;
+  final isolateId = args['isolateId'] as String?;
   final limit = clampLimit(args['limit'] as int?, fallback: 20, hardMax: 100);
-
-  if (sessionId == null) {
-    return errorResult(
-      'No session — attach or open one first.',
-      extra: const {
-        'nextSteps': [
-          'network_attach — connect to a live app',
-          'session_open id:<n> — view a past session',
-          'session_list — see what past sessions exist',
-        ],
-      },
-    );
-  }
 
   try {
     final rows = CapturesDao().searchRequests(
       query: query,
       sessionId: sessionId,
       which: whichArg,
+      isolateId: isolateId,
       limit: limit,
     );
 
@@ -119,6 +125,7 @@ FutureOr<CallToolResult> networkSearch(CallToolRequest request) async {
     }
 
     return jsonResult({
+      'scope': scope.toBlock(),
       'sessionId': sessionId,
       'summary': summary,
       'query': query,
@@ -127,7 +134,7 @@ FutureOr<CallToolResult> networkSearch(CallToolRequest request) async {
       'matches': matches,
       if (warnings.isNotEmpty) 'warnings': warnings,
       'nextSteps': nextSteps,
-    });
+    }, scopeSessionId: scope.sessionId);
   } catch (e) {
     return errorResult('network_search failed: $e', extra: {
       'sessionId': sessionId,

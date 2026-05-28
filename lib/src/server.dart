@@ -18,6 +18,7 @@ import 'tools/logs_tail.dart';
 import 'tools/network_attach.dart';
 import 'tools/network_body.dart';
 import 'tools/network_clear.dart';
+import 'tools/network_correlate.dart';
 import 'tools/network_detach.dart';
 import 'tools/network_diff.dart';
 import 'tools/network_get.dart';
@@ -47,7 +48,7 @@ base class FlutterNetworkMcpServer extends MCPServer with ToolsSupport {
   }) : super.fromStreamChannel(
           implementation: Implementation(
             name: 'flutter_network_mcp',
-            version: '0.5.18',
+            version: '0.6.0',
           ),
           instructions:
               'Read HTTP, sockets, and logs from a running Flutter/Dart app, '
@@ -105,6 +106,7 @@ base class FlutterNetworkMcpServer extends MCPServer with ToolsSupport {
 
     if (caps.isEnabled(Category.search)) {
       registerTool(networkSearchTool, networkSearch);
+      registerTool(networkCorrelateTool, networkCorrelate);
     }
 
     if (caps.isEnabled(Category.sessions)) {

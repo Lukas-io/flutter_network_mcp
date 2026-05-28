@@ -87,7 +87,17 @@ class CapturesDao {
   // ----- http -----
 
   /// Upserts a request summary. Returns true if a new row was inserted.
-  bool upsertHttpRequest(int sessionId, HttpProfileRequest r) {
+  ///
+  /// [isolateId] (Phase 8 / v4) tags the row with the isolate that produced
+  /// the request. NULL is preserved for back-compat with pre-v4 rows.
+  /// On UPDATE the isolate_id is `COALESCE(excluded.isolate_id, isolate_id)`
+  /// — once tagged, a row keeps its isolate even if a follow-up upsert
+  /// arrives without the tag.
+  bool upsertHttpRequest(
+    int sessionId,
+    HttpProfileRequest r, {
+    String? isolateId,
+  }) {
     final headersReq = r.request != null && !r.request!.hasError
         ? jsonEncode(r.request!.headers ?? {})
         : null;
@@ -107,9 +117,10 @@ class CapturesDao {
     final isNew = before.isEmpty;
 
     _db.execute(
-      'INSERT INTO http_requests(session_id, vm_id, method, url, host, path, status_code, reason_phrase, start_us, end_us, duration_us, request_size, response_size, content_type, request_headers_json, response_headers_json, has_error) '
-      'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) '
+      'INSERT INTO http_requests(session_id, vm_id, isolate_id, method, url, host, path, status_code, reason_phrase, start_us, end_us, duration_us, request_size, response_size, content_type, request_headers_json, response_headers_json, has_error) '
+      'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) '
       'ON CONFLICT(session_id, vm_id) DO UPDATE SET '
+      '  isolate_id=COALESCE(excluded.isolate_id, isolate_id), '
       '  method=excluded.method, url=excluded.url, host=excluded.host, path=excluded.path, '
       '  status_code=excluded.status_code, reason_phrase=excluded.reason_phrase, '
       '  end_us=excluded.end_us, duration_us=excluded.duration_us, '
@@ -121,6 +132,7 @@ class CapturesDao {
       [
         sessionId,
         r.id,
+        isolateId,
         r.method,
         r.uri.toString(),
         r.uri.host,
@@ -163,13 +175,28 @@ class CapturesDao {
     );
   }
 
-  /// Returns ids of requests in the session that are complete but have no bodies stored yet.
-  List<String> pendingBodyFetches(int sessionId, {int limit = 50}) {
+  /// One entry returned by [pendingBodyFetches] — carries the vm_id plus the
+  /// isolate_id the request was originally captured from so the writer can
+  /// route the body backfill RPC to the right isolate (v4+).
+  ///
+  /// `isolateId` is nullable: pre-v4 rows and rows captured before isolate
+  /// tagging stay NULL. The writer falls back to the first known isolate.
+  /// (Record-typed alias so the public DAO surface stays explicit.)
+  // ignore: library_private_types_in_public_api
+  List<({String vmId, String? isolateId})> pendingBodyFetches(
+    int sessionId, {
+    int limit = 50,
+  }) {
     final rows = _db.select(
-      'SELECT vm_id FROM http_requests WHERE session_id=? AND bodies_fetched=0 AND end_us IS NOT NULL ORDER BY end_us ASC LIMIT ?',
+      'SELECT vm_id, isolate_id FROM http_requests '
+      'WHERE session_id=? AND bodies_fetched=0 AND end_us IS NOT NULL '
+      'ORDER BY end_us ASC LIMIT ?',
       [sessionId, limit],
     );
-    return rows.map((r) => r['vm_id'] as String).toList();
+    return [
+      for (final r in rows)
+        (vmId: r['vm_id'] as String, isolateId: r['isolate_id'] as String?),
+    ];
   }
 
   List<Map<String, Object?>> queryHttpRequests({
@@ -179,6 +206,7 @@ class CapturesDao {
     String? hostContains,
     int? statusMin,
     int? statusMax,
+    String? isolateId,
     int limit = 50,
   }) {
     final clauses = <String>['session_id = ?'];
@@ -203,6 +231,10 @@ class CapturesDao {
     if (statusMax != null) {
       clauses.add('status_code <= ?');
       params.add(statusMax);
+    }
+    if (isolateId != null && isolateId.isNotEmpty) {
+      clauses.add('isolate_id = ?');
+      params.add(isolateId);
     }
     final rows = _db.select(
       'SELECT * FROM http_requests WHERE ${clauses.join(' AND ')} ORDER BY start_us DESC LIMIT ?',
@@ -234,16 +266,22 @@ class CapturesDao {
 
   // ----- sockets -----
 
-  void upsertSocket(int sessionId, SocketStatistic s) {
+  void upsertSocket(
+    int sessionId,
+    SocketStatistic s, {
+    String? isolateId,
+  }) {
     _db.execute(
-      'INSERT INTO socket_events(session_id, vm_id, socket_type, address, port, start_us, end_us, last_read_us, last_write_us, read_bytes, write_bytes) '
-      'VALUES (?,?,?,?,?,?,?,?,?,?,?) '
+      'INSERT INTO socket_events(session_id, vm_id, isolate_id, socket_type, address, port, start_us, end_us, last_read_us, last_write_us, read_bytes, write_bytes) '
+      'VALUES (?,?,?,?,?,?,?,?,?,?,?,?) '
       'ON CONFLICT(session_id, vm_id) DO UPDATE SET '
+      '  isolate_id=COALESCE(excluded.isolate_id, isolate_id), '
       '  end_us=excluded.end_us, last_read_us=excluded.last_read_us, last_write_us=excluded.last_write_us, '
       '  read_bytes=excluded.read_bytes, write_bytes=excluded.write_bytes',
       [
         sessionId,
         s.id,
+        isolateId,
         s.socketType,
         s.address,
         s.port,
@@ -259,11 +297,18 @@ class CapturesDao {
 
   List<Map<String, Object?>> querySockets({
     required int sessionId,
+    String? isolateId,
     int limit = 50,
   }) {
+    final clauses = <String>['session_id = ?'];
+    final params = <Object?>[sessionId];
+    if (isolateId != null && isolateId.isNotEmpty) {
+      clauses.add('isolate_id = ?');
+      params.add(isolateId);
+    }
     final rows = _db.select(
-      'SELECT * FROM socket_events WHERE session_id=? ORDER BY start_us DESC LIMIT ?',
-      [sessionId, limit],
+      'SELECT * FROM socket_events WHERE ${clauses.join(' AND ')} ORDER BY start_us DESC LIMIT ?',
+      [...params, limit],
     );
     return rows.map(_rowToMap).toList();
   }
@@ -288,10 +333,11 @@ class CapturesDao {
     required String message,
     String? error,
     String? stackTrace,
+    String? isolateId,
   }) {
     _db.execute(
-      'INSERT INTO log_records(session_id, timestamp_ms, source, level, logger, message, error, stack_trace) VALUES (?,?,?,?,?,?,?,?)',
-      [sessionId, timestampMs, source, level, logger, message, error, stackTrace],
+      'INSERT INTO log_records(session_id, isolate_id, timestamp_ms, source, level, logger, message, error, stack_trace) VALUES (?,?,?,?,?,?,?,?,?)',
+      [sessionId, isolateId, timestampMs, source, level, logger, message, error, stackTrace],
     );
     return _db.lastInsertRowId;
   }
@@ -302,6 +348,7 @@ class CapturesDao {
     int? levelMin,
     String? loggerContains,
     String? source,
+    String? isolateId,
     int limit = 100,
   }) {
     final clauses = <String>['session_id = ?'];
@@ -321,6 +368,10 @@ class CapturesDao {
     if (source != null && source.isNotEmpty) {
       clauses.add('source = ?');
       params.add(source);
+    }
+    if (isolateId != null && isolateId.isNotEmpty) {
+      clauses.add('isolate_id = ?');
+      params.add(isolateId);
     }
     final rows = _db.select(
       'SELECT * FROM log_records WHERE ${clauses.join(' AND ')} ORDER BY id DESC LIMIT ?',
@@ -503,6 +554,7 @@ class CapturesDao {
     required String url,
     String? requestText,
     String? responseText,
+    String? isolateId,
   }) {
     final existing = _db.select(
       'SELECT rowid FROM http_search_map WHERE session_id=? AND vm_id=?',
@@ -515,6 +567,14 @@ class CapturesDao {
         'INSERT INTO http_search(rowid, url, content_request, content_response) VALUES (?,?,?,?)',
         [rowid, url, requestText ?? '', responseText ?? ''],
       );
+      // Update isolate_id if the row was missing it (e.g. first indexed
+      // before isolate tagging arrived) — COALESCE preserves an existing
+      // tag rather than overwriting with NULL.
+      _db.execute(
+        'UPDATE http_search_map SET isolate_id = COALESCE(?, isolate_id) '
+        'WHERE session_id=? AND vm_id=?',
+        [isolateId, sessionId, vmId],
+      );
       return;
     }
     _db.execute(
@@ -523,8 +583,8 @@ class CapturesDao {
     );
     final rowid = _db.lastInsertRowId;
     _db.execute(
-      'INSERT INTO http_search_map(rowid, session_id, vm_id) VALUES (?,?,?)',
-      [rowid, sessionId, vmId],
+      'INSERT INTO http_search_map(rowid, session_id, vm_id, isolate_id) VALUES (?,?,?,?)',
+      [rowid, sessionId, vmId, isolateId],
     );
   }
 
@@ -532,6 +592,7 @@ class CapturesDao {
     required String query,
     int? sessionId,
     String which = 'any',
+    String? isolateId,
     int limit = 20,
   }) {
     // Wrap the user query as an FTS5 phrase so characters like '-', ':', '('
@@ -561,6 +622,11 @@ class CapturesDao {
       sessionFilter = ' AND m.session_id = ?';
       params.add(sessionId);
     }
+    String isolateFilter = '';
+    if (isolateId != null && isolateId.isNotEmpty) {
+      isolateFilter = ' AND m.isolate_id = ?';
+      params.add(isolateId);
+    }
     params.add(limit);
     final rows = _db.select(
       '''
@@ -576,12 +642,78 @@ class CapturesDao {
       JOIN http_search_map m ON m.rowid = http_search.rowid
       LEFT JOIN http_requests r
         ON r.session_id = m.session_id AND r.vm_id = m.vm_id
-      WHERE $matchClause$sessionFilter
+      WHERE $matchClause$sessionFilter$isolateFilter
       ORDER BY rank LIMIT ?
       ''',
       params,
     );
     return rows.map(_rowToMap).toList();
+  }
+
+  /// Cross-session FTS5 search used by `network_correlate` (Phase 12).
+  ///
+  /// For each [sessionIds] entry, runs the same FTS5 match used by
+  /// [searchRequests] but capped per-session BEFORE we union the results.
+  /// That way one noisy session can't drown the others' matches when the
+  /// caller is looking for cross-app correlations (e.g. an originator +
+  /// receiver pair). Returns rows grouped by session in the order
+  /// [sessionIds] lists them — the tool layer pairs them up.
+  ///
+  /// [pattern] is phrase-quoted automatically (same convention as
+  /// [searchRequests]). [which] picks the FTS column to match against.
+  /// [perSessionLimit] is a hard ceiling on rows returned per session.
+  List<Map<String, Object?>> correlateAcrossSessions({
+    required List<int> sessionIds,
+    required String pattern,
+    String which = 'any',
+    int perSessionLimit = 100,
+  }) {
+    if (sessionIds.isEmpty) return const [];
+    final phrase = '"${pattern.replaceAll('"', '""')}"';
+    final String matchExpr;
+    switch (which) {
+      case 'request':
+        matchExpr = 'content_request:$phrase';
+        break;
+      case 'response':
+        matchExpr = 'content_response:$phrase';
+        break;
+      case 'url':
+        matchExpr = 'url:$phrase';
+        break;
+      case 'any':
+      default:
+        matchExpr = phrase;
+    }
+    final out = <Map<String, Object?>>[];
+    for (final sid in sessionIds) {
+      final rows = _db.select(
+        '''
+        SELECT
+          m.session_id AS session_id,
+          m.vm_id      AS vm_id,
+          m.isolate_id AS isolate_id,
+          r.method     AS method,
+          r.url        AS url,
+          r.host       AS host,
+          r.path       AS path,
+          r.status_code AS status_code,
+          r.start_us   AS start_us,
+          r.end_us     AS end_us,
+          snippet(http_search, -1, '«', '»', '…', 12) AS snippet,
+          bm25(http_search) AS rank
+        FROM http_search
+        JOIN http_search_map m ON m.rowid = http_search.rowid
+        LEFT JOIN http_requests r
+          ON r.session_id = m.session_id AND r.vm_id = m.vm_id
+        WHERE http_search MATCH ? AND m.session_id = ?
+        ORDER BY r.start_us ASC LIMIT ?
+        ''',
+        [matchExpr, sid, perSessionLimit],
+      );
+      out.addAll(rows.map(_rowToMap));
+    }
+    return out;
   }
 
   // ----- session maintenance -----

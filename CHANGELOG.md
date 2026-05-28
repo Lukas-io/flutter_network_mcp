@@ -4,6 +4,77 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6.0] — 2026-05-28
+
+### Added — multi-attach
+
+The MCP server can now hold **N concurrent attached sessions** — debug `sanga_mobile` and `sanga_driver` in the same DB, the same agent conversation, without losing either side. Each attach owns its own VM connection + 2-second capture writer + 500-entry log ring. Cap via `FLUTTER_NETWORK_MCP_MAX_ATTACH` env var (default 4, clamped 1–32). DB schema unchanged — zero migrations needed; the schema was already keyed by `session_id`.
+
+Shipped across six commits (phases 1–6), summarized here:
+
+- **Architecture** — `SessionRegistry.instance` holds a `Map<String, AttachedSession>` keyed on vmServiceUri. Each `AttachedSession` owns its `VmClient`, `CaptureWriter`, `LogBuffer`, `LogStreamSubscriber`, and capture-time flags (httpProfilingEnabled, socketProfilingEnabled, lastHttpCursor). The DTD client and DB stay singletons.
+- **Scope resolver** (`lib/src/util/scope.dart`) — every read tool routes through `resolveScope(args)` at the top. Priority order: `sessionId` arg → `appNameContains` arg → history view (`session_open`) → `registry.soleAttached` (auto-resolve when exactly one is attached). With 2+ attached and no scope hint, returns a structured error listing every attached session + `nextSteps` like `sessionId:14  // sanga_mobile`. Successful responses carry a `scope:{sessionId, appName, isLive}` block so the agent can verify which session it just read from.
+- **Per-session alerts** — `jsonResult` gained an optional `scopeSessionId` parameter so the auto-injected `pendingAlerts` field is scoped to the calling tool's session, not process-wide. No cross-app alert bleed in the push-like signal.
+- **`network_attach`** — drops `force:true` arg entirely. Per-vmServiceUri duplicate guard (same app can't attach twice; different apps coexist). Returns `scope:{sessionId, appName, isLive:true}`. Catch block disconnects DTD only when this attempt brought DTD up AND no other sessions remain.
+- **`network_detach`** — three modes: `sessionId` / `appNameContains` for one session, `all:true` to drop everything, zero-arg works only when exactly one is attached. DTD disconnects only when nothing remains.
+- **`network_status`** — `attached` field is now a LIST of attached session records (sessionId, appName, vmServiceUri, isolateId, attachedAtMs, httpProfilingEnabled, socketProfilingEnabled). `attachedCount` top-level. `alerts.perAttached:[{sessionId, appName, pending}]` only when 2+ attached. `attachIfOne` still works, fires only when `attachedCount == 0`.
+
+15 read tools threaded through the scope resolver: `network_list`, `network_get`, `network_body`, `network_clear`, `network_search`, `network_diff`, `network_replay`, `socket_list`, `socket_get`, `socket_clear`, `logs_tail`, `logs_clear`, `alerts_drain`, `alerts_peek`, `alerts_clear`. Each gained optional `sessionId:int` and `appNameContains:string` args. In single-attach mode (the common case) behaviour is unchanged — auto-resolve handles it without extra args.
+
+### Added — auto-attach (`--auto-attach`)
+
+Optional background watcher (off by default) that polls DTD and attaches automatically to apps that appear AFTER the server starts. Naturally builds on multi-attach — apps come and go, the server keeps up without the agent needing to call `network_attach` manually each time.
+
+- New CLI flag `--auto-attach` and env-var fallback `FLUTTER_NETWORK_MCP_AUTO_ATTACH=true|1`.
+- Poll interval via `FLUTTER_NETWORK_MCP_AUTO_ATTACH_POLL_MS` (default 5000, clamped 1000–60000).
+- **Seed-and-skip on first tick:** apps already running at server startup are NOT auto-attached. The watcher seeds its known set on first poll, then only attaches to URIs that appear in subsequent ticks (a fresh `flutter run` or a hot-restart that spawns a new DDS).
+- **Respects manual `network_detach`:** a detached URI stays in the known set, so the next poll tick won't re-attach it. Restart the app or detach + re-attach manually to bring it back.
+- **Respects `FLUTTER_NETWORK_MCP_MAX_ATTACH`:** over-cap discoveries log a one-line stderr note and stay in the known set (no retry storm).
+- Implementation: `lib/src/auto_attach.dart` (`AutoAttacher` class); wired in `bin/flutter_network_mcp.dart`.
+
+### Added — multi-isolate within one app
+
+A single Flutter app can have multiple isolates (main + worker + spawned compute isolates). Previously the server captured HTTP from **only the first isolate** that exposed `ext.dart.io.getHttpProfile` — worker traffic was silently invisible. 0.6.0 captures from every qualifying isolate and tags each captured row with its source isolate id.
+
+- **Schema v3 → v4** — adds nullable `isolate_id` columns to `http_requests`, `socket_events`, `log_records`, and `http_search_map`. Pre-v4 rows keep `NULL` (treated as "VM-level"; still queryable, never excluded). Covering indexes on `(session_id, isolate_id)` for the per-session-per-isolate query pattern.
+- **`VmClient` multi-isolate refactor** — replaced single `_isolateId` with `Map<String, IsolateInfo>`. New `discoverHttpProfilingIsolates()` returns the full list. Per-isolate RPC variants (`getHttpProfileForIsolate`, `enableHttpLoggingForIsolate`, etc.) take an explicit isolate id; the back-compat single-isolate facades stay for the transitional period.
+- **Capture writer per-isolate poll** — `_pollHttp` / `_pollSockets` iterate every known isolate each tick with a per-isolate cursor map (so isolates running at different request cadences don't drop each other's data). Periodic 10-tick (~20s) re-scan picks up newly-spawned isolates automatically; new isolates get HTTP/socket profiling enabled before the next poll iterates them. Per-isolate try/catch so one flaky isolate doesn't stop the others.
+- **Log stream isolate tagging** — `LogStreamSubscriber._persist` extracts `event.isolate?.id` from VM service events and tags both the in-memory ring buffer and the DB row.
+- **`isolateId:` filter on 11 read tools** — `network_list`, `network_get`, `network_body`, `network_clear`, `network_search`, `socket_list`, `socket_get`, `socket_clear`, `logs_tail`. Optional; omit and the tool merges every isolate (single-isolate UX preserved). Per-row responses include `isolateId` when known.
+- **Single-id live lookups** (`network_get` / `network_body` / `socket_get`) resolve the right isolate via: explicit `isolateId:` arg → DB-recorded `isolate_id` (writer tags within ~2s) → try each known isolate until one returns the id. Failure reports `triedIsolates: [...]` for disambiguation.
+- **`AttachedSession.isolates`** getter delegates to `vm.httpProfilingIsolates` so `network_status.attached[].isolates: [{id, name, number}]` reflects the live set as the writer's re-scan picks up new isolates.
+- **`network_attach`** enables HTTP/socket profiling on every discovered isolate (not just the first). Throws when no isolate qualifies (same error message as the old single-isolate path).
+
+### Added — `network_correlate` tool
+
+Typed companion to `network_query` SQL for the **webhook originator + receiver** pattern. When sanga_mobile sends a webhook that sanga_driver receives, `network_correlate sessionIds:[14,15] pattern:"txn-abc-123" timeWindowMs:5000` returns both halves paired by smallest time delta.
+
+- `sessionIds:[int]` is **required** — cross-session aggregation is intentional, so the agent must pick which apps to compare (preventing accidental cross-app data bleed). Hard cap: 8 sessions per call.
+- `pattern:string` is **required** — substring searched via FTS5 in URLs and/or bodies. Phrase-quoted automatically so hyphens / colons / special chars work.
+- Optional `which: url | request | response | any` (default `any`), `timeWindowMs:int` (only return pairs within this delta — useful for tight request → webhook pairs), `limit:int` (default 20, hard cap 100), `perSessionLimit:int` (default 100, hard cap 500 — bounds raw matches per session BEFORE pairing).
+- Pairs are sorted tightest-first (smallest `spanMs`). Output includes `matchesPerSession`, `sessions:[{matches}]`, and `pairs:[{spanMs, requests:[…]}]`. Capability: routes under `search` (reuses FTS5).
+- Implementation: new `lib/src/tools/network_correlate.dart` + `CapturesDao.correlateAcrossSessions` (per-session FTS5 query with per-session cap BEFORE union). New `docs/tools/power/network_correlate.md` with DO NOT USE section.
+
+### Added — env vars
+
+- `FLUTTER_NETWORK_MCP_MAX_ATTACH` (default 4, clamped 1–32) — caps concurrent attachments.
+- `FLUTTER_NETWORK_MCP_AUTO_ATTACH` (`true`/`1`) — equivalent to `--auto-attach`.
+- `FLUTTER_NETWORK_MCP_AUTO_ATTACH_POLL_MS` (default 5000, clamped 1000–60000) — auto-attach poll interval.
+
+### Changed
+
+- **README "32 tools" table** → **33 tools** (`network_correlate` added). New **Scope** column marking which tools accept `sessionId` / `appNameContains` / `isolateId`. New "Multi-attach (0.6.0)", "Multi-isolate within one app", and "Cross-app correlate" sections explain the workflows.
+- **`docs/README.md`** gained multi-attach + multi-isolate + correlate callouts at the top; `network_correlate` added to the "Power user / ad-hoc queries" use-case section.
+- **`alerts_clear`** — was previously "default scope = all sessions"; now scoped per-session like every other tool so multi-attach can't accidentally cross-delete drained alerts. Cross-session bulk clear stays possible via `network_query`.
+
+### Notes
+
+- DB schema unchanged — existing 0.5.x / 0.6.x DBs work without migration.
+- DTD client is shared across all attached sessions (one DTD knows about N apps; one connection per process).
+- Single-attach workflows are unaffected — every tool auto-resolves to the sole attached session, no extra args.
+- For cross-app correlation (e.g. finding matching request/response pairs across apps), use `network_query` SQL — explicit cross-session aggregation is out of the typed tool surface by design.
+- Lays groundwork for 0.8.0 auto-attach via DTD isolate-discovery events.
+
 ## [0.5.18] — 2026-05-24
 
 ### Changed

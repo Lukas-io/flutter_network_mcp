@@ -6,6 +6,7 @@ import '../config/capabilities.dart';
 import '../state/session.dart';
 import '../storage/captures_db.dart';
 import '../util/filters.dart';
+import '../util/scope.dart';
 import 'result.dart';
 
 final socketListTool = Tool(
@@ -17,21 +18,46 @@ final socketListTool = Tool(
       'capture them).',
   inputSchema: Schema.object(
     properties: {
+      'sessionId': Schema.int(
+        description:
+            'Which session to read from. Omit to auto-resolve: explicit '
+            'view (session_open) → sole attached session → error if 2+ '
+            'attached.',
+      ),
+      'appNameContains': Schema.string(
+        description:
+            'Alternative to sessionId — case-insensitive substring on a '
+            'currently-attached app name.',
+      ),
+      'isolateId': Schema.string(
+        description:
+            'Optional: restrict to one isolate within the session. Get the id '
+            'from network_status.attached[].isolates[]. Omit to merge every '
+            'isolate (the default).',
+      ),
       'limit': Schema.int(description: 'Max sockets returned (default 50, hard cap 200). Newest-first by startTimeUs.'),
     },
   ),
 );
 
 FutureOr<CallToolResult> socketList(CallToolRequest request) async {
-  final session = Session.instance;
   final caps = CapabilityConfig.instance;
   final args = request.arguments ?? const <String, Object?>{};
+  final (scope, scopeErr) = resolveScope(args);
+  if (scopeErr != null) return scopeErr;
+  scope!;
+
+  final isolateFilter = args['isolateId'] as String?;
   final limit = clampLimit(args['limit'] as int?, fallback: 50, hardMax: 200);
 
-  if (session.isViewingHistory) {
+  if (!scope.isLive) {
     try {
-      final sid = session.viewedSessionId!;
-      final rows = CapturesDao().querySockets(sessionId: sid, limit: limit);
+      final sid = scope.sessionId;
+      final rows = CapturesDao().querySockets(
+        sessionId: sid,
+        isolateId: isolateFilter,
+        limit: limit,
+      );
       final sockets = [for (final r in rows) _historySocket(r)];
       final openCount = sockets.where((s) => s['open'] == true).length;
       final summary = sockets.isEmpty
@@ -45,16 +71,17 @@ FutureOr<CallToolResult> socketList(CallToolRequest request) async {
       }
       return jsonResult({
         'source': 'history',
+        'scope': scope.toBlock(),
         'sessionId': sid,
         'summary': summary,
         'count': sockets.length,
         if (warnings.isNotEmpty) 'warnings': warnings,
         'nextSteps': _nextSteps(caps, sockets: sockets, isLive: false),
         'sockets': sockets,
-      });
+      }, scopeSessionId: scope.sessionId);
     } catch (e) {
       return errorResult('history query failed: $e', extra: {
-        'sessionId': session.viewedSessionId,
+        'sessionId': scope.sessionId,
         'nextSteps': const [
           'session_close to return to live mode',
           'session_list to confirm the viewed session exists',
@@ -63,15 +90,8 @@ FutureOr<CallToolResult> socketList(CallToolRequest request) async {
     }
   }
 
-  if (!session.isAttached) {
-    return errorResult('Not attached and no session opened.', extra: const {
-      'nextSteps': [
-        'network_attach — connect to a live app',
-        'session_open id:<n> — view a past session',
-      ],
-    });
-  }
-  if (!session.socketProfilingEnabled) {
+  final attached = SessionRegistry.instance.attachedById(scope.sessionId)!;
+  if (!attached.socketProfilingEnabled) {
     return errorResult(
       'Socket profiling is not enabled for this isolate (platform may not support it).',
       extra: const {
@@ -83,17 +103,34 @@ FutureOr<CallToolResult> socketList(CallToolRequest request) async {
     );
   }
   try {
-    final profile = await session.vm.getSocketProfile();
-    final sorted = profile.sockets.toList()
-      ..sort((a, b) => b.startTime.compareTo(a.startTime));
-    final clipped = sorted.take(limit).toList();
+    // Multi-isolate live read: iterate every HTTP-profiling isolate (each
+    // has its own socket profile), or the one named by [isolateFilter].
+    final isolateIds = isolateFilter == null
+        ? [for (final iso in attached.vm.httpProfilingIsolates) iso.id]
+        : [isolateFilter];
+    final perIsolate = <(dynamic, String)>[];
+    int scannedTotal = 0;
+    for (final isoId in isolateIds) {
+      try {
+        final profile = await attached.vm.getSocketProfileForIsolate(isoId);
+        scannedTotal += profile.sockets.length;
+        for (final s in profile.sockets) {
+          perIsolate.add((s, isoId));
+        }
+      } catch (_) {/* per-isolate skip */}
+    }
+    perIsolate.sort(
+      (a, b) => (b.$1.startTime as int).compareTo(a.$1.startTime as int),
+    );
+    final clipped = perIsolate.take(limit).toList();
     final sockets = [
-      for (final s in clipped)
+      for (final (s, isoId) in clipped)
         {
           'id': s.id,
           'socketType': s.socketType,
           'address': s.address,
           'port': s.port,
+          'isolateId': isoId,
           'startTimeUs': s.startTime,
           if (s.endTime != null) 'endTimeUs': s.endTime,
           if (s.lastReadTime != null) 'lastReadTimeUs': s.lastReadTime,
@@ -104,10 +141,9 @@ FutureOr<CallToolResult> socketList(CallToolRequest request) async {
         },
     ];
     final openCount = sockets.where((s) => s['open'] == true).length;
-    final scannedTotal = profile.sockets.length;
     final summary = sockets.isEmpty
-        ? 'No sockets in session ${session.liveSessionId} (live).'
-        : '${sockets.length} socket(s) ($openCount open) in session ${session.liveSessionId} (live, newest-first)'
+        ? 'No sockets in session ${scope.sessionId} (live).'
+        : '${sockets.length} socket(s) ($openCount open) in session ${scope.sessionId} (live, newest-first)'
             '${scannedTotal > sockets.length ? "; ${scannedTotal - sockets.length} more capped by limit" : ""}.';
 
     final warnings = <String>[];
@@ -119,14 +155,15 @@ FutureOr<CallToolResult> socketList(CallToolRequest request) async {
 
     return jsonResult({
       'source': 'live',
-      'sessionId': session.liveSessionId,
+      'scope': scope.toBlock(),
+      'sessionId': scope.sessionId,
       'summary': summary,
       'count': sockets.length,
       'totalCaptured': scannedTotal,
       if (warnings.isNotEmpty) 'warnings': warnings,
       'nextSteps': _nextSteps(caps, sockets: sockets, isLive: true),
       'sockets': sockets,
-    });
+    }, scopeSessionId: scope.sessionId);
   } catch (e) {
     return errorResult('getSocketProfile failed: $e', extra: const {
       'nextSteps': [
@@ -143,6 +180,7 @@ Map<String, Object?> _historySocket(Map<String, Object?> r) {
     'socketType': r['socket_type'],
     'address': r['address'],
     'port': r['port'],
+    if (r['isolate_id'] != null) 'isolateId': r['isolate_id'],
     if (r['start_us'] != null) 'startTimeUs': r['start_us'],
     if (r['end_us'] != null) 'endTimeUs': r['end_us'],
     if (r['last_read_us'] != null) 'lastReadTimeUs': r['last_read_us'],
