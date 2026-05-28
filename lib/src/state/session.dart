@@ -157,6 +157,12 @@ class AttachedSession {
 
   /// Mutable: updated by network_list when caller omits `since`.
   DateTime? lastHttpCursor;
+
+  /// Live snapshot of every HTTP-profiling isolate the capture writer is
+  /// polling for this session. Delegates to the VmClient so the list stays
+  /// fresh as the writer discovers newly-spawned isolates (Phase 10).
+  /// Returns an empty list when nothing has been discovered yet.
+  List<IsolateInfo> get isolates => vm.httpProfilingIsolates;
 }
 
 /// Process-lifetime singleton tracking every attached session, keyed by

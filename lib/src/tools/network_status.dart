@@ -53,6 +53,10 @@ FutureOr<CallToolResult> networkStatus(
   final allEnabled = caps.enabled.length == Category.values.length;
 
   // Build the per-session attached list. Empty when nothing attached.
+  // Phase 10: each entry's `isolates: [...]` lists every HTTP-profiling
+  // isolate the capture writer is currently polling. Single-isolate apps
+  // see a one-element list; apps spawning workers see more (and grow as
+  // the writer's periodic re-scan picks up new isolates).
   final attachedList = <Map<String, Object?>>[
     for (final a in registry.attached.values)
       {
@@ -60,6 +64,7 @@ FutureOr<CallToolResult> networkStatus(
         if (a.appName != null) 'appName': a.appName,
         'vmServiceUri': a.vmServiceUri,
         if (a.isolateId != null) 'isolateId': a.isolateId,
+        'isolates': [for (final iso in a.isolates) iso.toJson()],
         'attachedAtMs': a.attachedAt.millisecondsSinceEpoch,
         'httpProfilingEnabled': a.httpProfilingEnabled,
         if (a.socketProfilingEnabled) 'socketProfilingEnabled': true,
@@ -165,6 +170,7 @@ FutureOr<CallToolResult> networkStatus(
             if (a.appName != null) 'appName': a.appName,
             'vmServiceUri': a.vmServiceUri,
             if (a.isolateId != null) 'isolateId': a.isolateId,
+            'isolates': [for (final iso in a.isolates) iso.toJson()],
             'attachedAtMs': a.attachedAt.millisecondsSinceEpoch,
             'httpProfilingEnabled': a.httpProfilingEnabled,
             if (a.socketProfilingEnabled) 'socketProfilingEnabled': true,
