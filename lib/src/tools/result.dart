@@ -18,8 +18,24 @@ import '../storage/database.dart';
 /// alert counts without needing a network_status round trip. Tools that
 /// already carry alert data (alerts_drain / alerts_peek / network_status)
 /// are skipped so the field doesn't shadow their richer reporting.
-CallToolResult jsonResult(Map<String, Object?> data, {bool isError = false}) {
-  final payload = isError ? data : _maybeAnnotatePendingAlerts(data);
+///
+/// **Multi-attach (Phase 4):** when [scopeSessionId] is passed, the
+/// annotation is scoped to that one session's pending alert count rather
+/// than process-wide. Tools that resolved a [Scope] should pass their
+/// `scope.sessionId` so the agent sees alerts for the session they just
+/// read from — preventing cross-app data bleed in the push-like signal.
+/// When null (no scope), falls back to `Session.instance.effectiveSessionId`
+/// (same behaviour as before Phase 4) — in multi-attach with 2+ sessions
+/// that returns null, so the annotation counts across all sessions (the
+/// only legitimate cross-session aggregate: alerts the agent might miss
+/// before picking a scope).
+CallToolResult jsonResult(
+  Map<String, Object?> data, {
+  bool isError = false,
+  int? scopeSessionId,
+}) {
+  final payload =
+      isError ? data : _maybeAnnotatePendingAlerts(data, scopeSessionId);
   final pretty = const JsonEncoder.withIndent('  ').convert(payload);
   return CallToolResult(
     content: [TextContent(text: pretty)],
@@ -38,7 +54,10 @@ CallToolResult errorResult(String message, {Map<String, Object?>? extra}) {
 /// Inserts `pendingAlerts: N` into [data] when alerts are pending in scope.
 /// Best-effort: any DB hiccup falls through silently so this never blocks a
 /// tool response.
-Map<String, Object?> _maybeAnnotatePendingAlerts(Map<String, Object?> data) {
+Map<String, Object?> _maybeAnnotatePendingAlerts(
+  Map<String, Object?> data,
+  int? scopeSessionId,
+) {
   // Don't shadow tools that already report alert counts in richer shapes.
   if (data.containsKey('alerts') || data.containsKey('pendingAlerts')) {
     return data;
@@ -46,7 +65,7 @@ Map<String, Object?> _maybeAnnotatePendingAlerts(Map<String, Object?> data) {
   if (!CapabilityConfig.instance.isEnabled(Category.alerts)) return data;
   if (!CapturesDatabase.isOpen) return data;
   try {
-    final sid = Session.instance.effectiveSessionId;
+    final sid = scopeSessionId ?? Session.instance.effectiveSessionId;
     final dao = CapturesDao();
     final pending = dao.pendingAlertCount(sessionId: sid);
     if (pending == 0) return data;

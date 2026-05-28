@@ -3,7 +3,7 @@
 // Bump [currentVersion] when changing this file and add a migration block in
 // the migration switch in database.dart.
 
-const int currentVersion = 3;
+const int currentVersion = 4;
 
 const List<String> initialSchema = [
   '''
@@ -22,6 +22,7 @@ const List<String> initialSchema = [
   CREATE TABLE http_requests (
     session_id            INTEGER NOT NULL,
     vm_id                 TEXT NOT NULL,
+    isolate_id            TEXT,
     method                TEXT,
     url                   TEXT,
     host                  TEXT,
@@ -58,6 +59,7 @@ const List<String> initialSchema = [
   CREATE TABLE socket_events (
     session_id     INTEGER NOT NULL,
     vm_id          TEXT NOT NULL,
+    isolate_id     TEXT,
     socket_type    TEXT,
     address        TEXT,
     port           INTEGER,
@@ -75,6 +77,7 @@ const List<String> initialSchema = [
   CREATE TABLE log_records (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id   INTEGER NOT NULL,
+    isolate_id   TEXT,
     timestamp_ms INTEGER,
     source       TEXT,
     level        INTEGER,
@@ -119,15 +122,18 @@ const List<String> initialSchema = [
     rowid       INTEGER PRIMARY KEY,
     session_id  INTEGER NOT NULL,
     vm_id       TEXT NOT NULL,
+    isolate_id  TEXT,
     UNIQUE(session_id, vm_id)
   )
   ''',
   'CREATE INDEX idx_http_session_start ON http_requests(session_id, start_us)',
   'CREATE INDEX idx_http_host ON http_requests(host)',
   'CREATE INDEX idx_http_status ON http_requests(status_code)',
+  'CREATE INDEX idx_http_isolate ON http_requests(session_id, isolate_id)',
   'CREATE INDEX idx_socket_session_start ON socket_events(session_id, start_us)',
   'CREATE INDEX idx_logs_session_time ON log_records(session_id, timestamp_ms)',
   'CREATE INDEX idx_logs_level ON log_records(level)',
+  'CREATE INDEX idx_logs_isolate ON log_records(session_id, isolate_id)',
   'CREATE INDEX idx_alerts_drained ON alerts(drained, severity, ts_ms)',
   '''
   CREATE TABLE redacted_headers (
@@ -209,4 +215,17 @@ const List<String> migrationV2toV3 = [
     added_at  INTEGER NOT NULL
   )
   ''',
+];
+
+/// v3 → v4: per-row `isolate_id` so multi-isolate captures can be filtered.
+/// Nullable column on each table that records VM activity — pre-v4 rows keep
+/// NULL (treated as "VM-level" / "pre-multi-isolate"). Adds covering indexes
+/// for the per-session-per-isolate query pattern.
+const List<String> migrationV3toV4 = [
+  'ALTER TABLE http_requests ADD COLUMN isolate_id TEXT',
+  'ALTER TABLE socket_events ADD COLUMN isolate_id TEXT',
+  'ALTER TABLE log_records ADD COLUMN isolate_id TEXT',
+  'ALTER TABLE http_search_map ADD COLUMN isolate_id TEXT',
+  'CREATE INDEX IF NOT EXISTS idx_http_isolate ON http_requests(session_id, isolate_id)',
+  'CREATE INDEX IF NOT EXISTS idx_logs_isolate ON log_records(session_id, isolate_id)',
 ];

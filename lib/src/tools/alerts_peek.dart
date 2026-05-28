@@ -3,8 +3,8 @@ import 'dart:async';
 import 'package:dart_mcp/server.dart';
 
 import '../config/capabilities.dart';
-import '../state/session.dart';
 import '../storage/captures_db.dart';
+import '../util/scope.dart';
 import 'alerts_drain.dart' show buildAlertsResponse;
 import 'result.dart';
 
@@ -13,11 +13,18 @@ final alertsPeekTool = Tool(
   description:
       'Returns pending alerts WITHOUT marking them as drained — read-only '
       'sibling of alerts_drain. Use to triage what is waiting before '
-      'committing. Same args and response shape.',
+      'committing. Same scope resolution as alerts_drain.',
   inputSchema: Schema.object(
     properties: {
       'sessionId': Schema.int(
-        description: 'Restrict to a session id. Default: current session (live or viewed).',
+        description:
+            'Which session to peek. Omit to auto-resolve: explicit view '
+            '(session_open) → sole attached session → error if 2+ attached.',
+      ),
+      'appNameContains': Schema.string(
+        description:
+            'Alternative to sessionId — case-insensitive substring on a '
+            'currently-attached app name.',
       ),
       'severityMin': Schema.string(
         description: '"info" | "warning" | "error" | "critical". Default: any.',
@@ -31,9 +38,11 @@ final alertsPeekTool = Tool(
 
 FutureOr<CallToolResult> alertsPeek(CallToolRequest request) async {
   final args = request.arguments ?? const <String, Object?>{};
-  final session = Session.instance;
   final caps = CapabilityConfig.instance;
-  final sessionId = (args['sessionId'] as int?) ?? session.effectiveSessionId;
+  final (scope, scopeErr) = resolveScope(args);
+  if (scopeErr != null) return scopeErr;
+  scope!;
+  final sessionId = scope.sessionId;
   final severityMin = args['severityMin'] as String?;
   final limitRaw = (args['limit'] as int?) ?? 20;
   final limit = limitRaw <= 0 ? 20 : (limitRaw > 200 ? 200 : limitRaw);
@@ -46,7 +55,7 @@ FutureOr<CallToolResult> alertsPeek(CallToolRequest request) async {
     );
     return jsonResult(buildAlertsResponse(
       action: 'peek',
-      sessionId: sessionId,
+      scope: scope,
       severityMin: severityMin,
       rows: rows,
       caps: caps,

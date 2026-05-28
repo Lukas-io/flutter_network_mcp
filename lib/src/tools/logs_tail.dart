@@ -6,6 +6,7 @@ import '../config/capabilities.dart';
 import '../state/session.dart';
 import '../storage/captures_db.dart';
 import '../util/filters.dart';
+import '../util/scope.dart';
 import 'result.dart';
 
 const int _kMessageTruncateBytes = 2048;
@@ -24,6 +25,17 @@ final logsTailTool = Tool(
       'by `levelMin` to suppress noisy info logs and surface only WARNING+.',
   inputSchema: Schema.object(
     properties: {
+      'sessionId': Schema.int(
+        description:
+            'Which session\'s logs to read. Omit to auto-resolve: explicit '
+            'view (session_open) → sole attached session → error if 2+ '
+            'attached.',
+      ),
+      'appNameContains': Schema.string(
+        description:
+            'Alternative to sessionId — case-insensitive substring on a '
+            'currently-attached app name.',
+      ),
       'since': Schema.int(
         description:
             'Cursor — local id from a prior nextCursor. Omit to fetch the '
@@ -40,6 +52,13 @@ final logsTailTool = Tool(
       'source': Schema.string(
         description: '"logging" | "stdout" | "stderr". Omit for all sources.',
       ),
+      'isolateId': Schema.string(
+        description:
+            'Optional: restrict to one isolate within the session. Get the id '
+            'from network_status.attached[].isolates[]. Omit to merge every '
+            'isolate (the default). VM-level events with no isolate context '
+            '(rare on these streams) are EXCLUDED when this filter is set.',
+      ),
       'limit': Schema.int(
         description: 'Max records returned (default 100, hard cap 500). Newest-first.',
       ),
@@ -48,17 +67,21 @@ final logsTailTool = Tool(
 );
 
 FutureOr<CallToolResult> logsTail(CallToolRequest request) async {
-  final session = Session.instance;
   final caps = CapabilityConfig.instance;
   final args = request.arguments ?? const <String, Object?>{};
+  final (scope, scopeErr) = resolveScope(args);
+  if (scopeErr != null) return scopeErr;
+  scope!;
+
   final sinceId = args['since'] as int?;
   final levelMin = args['levelMin'] as int?;
   final loggerContains = args['loggerContains'] as String?;
   final source = args['source'] as String?;
+  final isolateFilter = args['isolateId'] as String?;
   final limit = clampLimit(args['limit'] as int?, fallback: 100, hardMax: 500);
 
-  if (session.isViewingHistory) {
-    final sid = session.viewedSessionId!;
+  if (!scope.isLive) {
+    final sid = scope.sessionId;
     try {
       final rows = CapturesDao().queryLogs(
         sessionId: sid,
@@ -66,6 +89,7 @@ FutureOr<CallToolResult> logsTail(CallToolRequest request) async {
         levelMin: levelMin,
         loggerContains: loggerContains,
         source: source,
+        isolateId: isolateFilter,
         limit: limit,
       );
       final out = <Map<String, Object?>>[];
@@ -79,8 +103,8 @@ FutureOr<CallToolResult> logsTail(CallToolRequest request) async {
         out.add(_historyEntry(r));
       }
       return jsonResult(_buildResponse(
+        scope: scope,
         source: 'history',
-        sessionId: sid,
         entries: out,
         nextCursor: maxId,
         bufferSize: null,
@@ -90,7 +114,7 @@ FutureOr<CallToolResult> logsTail(CallToolRequest request) async {
         loggerContains: loggerContains,
         sourceFilter: source,
         caps: caps,
-      ));
+      ), scopeSessionId: scope.sessionId);
     } catch (e) {
       return errorResult('history query failed: $e', extra: {
         'sessionId': sid,
@@ -102,12 +126,14 @@ FutureOr<CallToolResult> logsTail(CallToolRequest request) async {
     }
   }
 
-  // Live mode — ring buffer.
-  final entries = session.logBuffer.tail(
+  // Live mode — read this attached session's own ring buffer.
+  final attached = SessionRegistry.instance.attachedById(scope.sessionId)!;
+  final entries = attached.logBuffer.tail(
     sinceId: sinceId,
     levelMin: levelMin,
     loggerContains: loggerContains,
     sourceContains: source,
+    isolateId: isolateFilter,
     limit: limit,
   );
   final out = <Map<String, Object?>>[];
@@ -119,18 +145,18 @@ FutureOr<CallToolResult> logsTail(CallToolRequest request) async {
     out.add(_liveEntry(e));
   }
   return jsonResult(_buildResponse(
+    scope: scope,
     source: 'live',
-    sessionId: session.liveSessionId,
     entries: out,
     nextCursor: maxId,
-    bufferSize: session.logBuffer.length,
-    streamActive: session.logStream.isActive,
+    bufferSize: attached.logBuffer.length,
+    streamActive: attached.logStream.isActive,
     severeCount: severeCount,
     levelMin: levelMin,
     loggerContains: loggerContains,
     sourceFilter: source,
     caps: caps,
-  ));
+  ), scopeSessionId: scope.sessionId);
 }
 
 Map<String, Object?> _historyEntry(Map<String, Object?> r) {
@@ -139,6 +165,7 @@ Map<String, Object?> _historyEntry(Map<String, Object?> r) {
   return {
     'id': r['id'],
     'source': r['source'],
+    if (r['isolate_id'] != null) 'isolateId': r['isolate_id'],
     if (r['timestamp_ms'] != null) 'timestampMs': r['timestamp_ms'],
     if (r['level'] != null) 'level': r['level'],
     if (r['logger'] != null) 'loggerName': r['logger'],
@@ -156,6 +183,7 @@ Map<String, Object?> _liveEntry(dynamic e) {
   return {
     'id': e.id,
     'source': e.source,
+    if (e.isolateId != null) 'isolateId': e.isolateId,
     if (e.timestampMs != null) 'timestampMs': e.timestampMs,
     if (e.level != null) 'level': e.level,
     if (e.loggerName != null) 'loggerName': e.loggerName,
@@ -168,8 +196,8 @@ Map<String, Object?> _liveEntry(dynamic e) {
 }
 
 Map<String, Object?> _buildResponse({
+  required Scope scope,
   required String source,
-  required int? sessionId,
   required List<Map<String, Object?>> entries,
   required int? nextCursor,
   required int? bufferSize,
@@ -180,12 +208,14 @@ Map<String, Object?> _buildResponse({
   required String? sourceFilter,
   required CapabilityConfig caps,
 }) {
+  final sessionId = scope.sessionId;
   final filters = _filterDesc(levelMin, loggerContains, sourceFilter);
   final summary = entries.isEmpty
       ? (source == 'live' && streamActive == false
           ? 'Log stream not active — buffer is empty.'
-          : 'No log records${filters.isEmpty ? "" : " matching $filters"} in $source mode${sessionId != null ? " (session $sessionId)" : ""}.')
-      : '${entries.length} record(s) from $source${sessionId != null ? " session $sessionId" : ""}'
+          : 'No log records${filters.isEmpty ? "" : " matching $filters"} in $source mode (session $sessionId${scope.appName != null ? ", ${scope.appName}" : ""}).')
+      : '${entries.length} record(s) from $source session $sessionId'
+          '${scope.appName != null ? " (${scope.appName})" : ""}'
           '${severeCount > 0 ? ", $severeCount severe (level ≥ 1200)" : ""}'
           '${filters.isEmpty ? "" : "; filtered by $filters"}.';
 
@@ -217,6 +247,7 @@ Map<String, Object?> _buildResponse({
 
   return {
     'source': source,
+    'scope': scope.toBlock(),
     'sessionId': sessionId,
     'summary': summary,
     'count': entries.length,

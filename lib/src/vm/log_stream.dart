@@ -45,6 +45,11 @@ class LogStreamSubscriber {
       final message = record.message?.valueAsString ?? '';
       final err = record.error?.valueAsString;
       final stack = record.stackTrace?.valueAsString;
+      // Phase 10: each VM service event carries the originating isolate.
+      // Tag the buffer entry AND the DB row so multi-isolate filtering
+      // downstream works in both live and history mode. Null when the
+      // event is VM-level (no isolate context — rare on these streams).
+      final isoId = event.isolate?.id;
       buffer.push(
         source: source,
         timestampMs: ts,
@@ -53,8 +58,18 @@ class LogStreamSubscriber {
         message: message,
         error: err,
         stackTrace: stack,
+        isolateId: isoId,
       );
-      _persist(source: source, timestampMs: ts, level: level, logger: logger, message: message, error: err, stack: stack);
+      _persist(
+        source: source,
+        timestampMs: ts,
+        level: level,
+        logger: logger,
+        message: message,
+        error: err,
+        stack: stack,
+        isolateId: isoId,
+      );
     }));
 
     _subs.add(service.onStdoutEvent.listen((event) {
@@ -93,8 +108,19 @@ class LogStreamSubscriber {
     if (text.endsWith('\n')) text = text.substring(0, text.length - 1);
     if (text.isEmpty) return;
     final ts = event.timestamp ?? 0;
-    buffer.push(source: source, timestampMs: ts, message: text);
-    _persist(source: source, timestampMs: ts, message: text);
+    final isoId = event.isolate?.id;
+    buffer.push(
+      source: source,
+      timestampMs: ts,
+      message: text,
+      isolateId: isoId,
+    );
+    _persist(
+      source: source,
+      timestampMs: ts,
+      message: text,
+      isolateId: isoId,
+    );
   }
 
   void _persist({
@@ -105,6 +131,7 @@ class LogStreamSubscriber {
     required String message,
     String? error,
     String? stack,
+    String? isolateId,
   }) {
     final sid = _sessionIdProvider?.call();
     if (sid == null) return;
@@ -118,6 +145,7 @@ class LogStreamSubscriber {
         message: message,
         error: error,
         stackTrace: stack,
+        isolateId: isolateId,
       );
       if (rowId != null &&
           CapabilityConfig.instance.isEnabled(Category.alerts)) {

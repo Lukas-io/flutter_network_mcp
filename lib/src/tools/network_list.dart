@@ -8,6 +8,7 @@ import '../state/session.dart';
 import '../storage/captures_db.dart';
 import '../util/body_decoder.dart';
 import '../util/filters.dart';
+import '../util/scope.dart';
 import 'result.dart';
 
 final networkListTool = Tool(
@@ -20,6 +21,17 @@ final networkListTool = Tool(
       'is opened via session_open, reads from history instead of live VM.',
   inputSchema: Schema.object(
     properties: {
+      'sessionId': Schema.int(
+        description:
+            'Which session to read from. Omit to auto-resolve: explicit '
+            'view (session_open) → sole attached session → error if 2+ '
+            'attached.',
+      ),
+      'appNameContains': Schema.string(
+        description:
+            'Alternative to sessionId — case-insensitive substring match '
+            'against currently-attached app names. Must match exactly one.',
+      ),
       'since': Schema.int(
         description:
             'Microsecond cursor — epoch micros (live mode) or start_us '
@@ -40,6 +52,13 @@ final networkListTool = Tool(
       'statusMax': Schema.int(
         description: 'Inclusive upper bound on response status code.',
       ),
+      'isolateId': Schema.string(
+        description:
+            'Optional: restrict to one isolate within the session (e.g. a '
+            'worker isolate). Get the id from network_status.attached[].'
+            'isolates[]. Omit to merge every isolate in the session (the '
+            'default — same UX as single-isolate apps).',
+      ),
       'limit': Schema.int(
         description: 'Max requests returned (default 50, hard cap 200). Newest-first.',
       ),
@@ -48,75 +67,101 @@ final networkListTool = Tool(
 );
 
 FutureOr<CallToolResult> networkList(CallToolRequest request) async {
-  final session = Session.instance;
   final caps = CapabilityConfig.instance;
   final args = request.arguments ?? const <String, Object?>{};
+  final (scope, scopeErr) = resolveScope(args);
+  if (scopeErr != null) return scopeErr;
+  scope!;
+
   final sinceArg = args['since'] as int?;
   final methods = readStringList(args['method']);
   final hostContains = args['hostContains'] as String?;
   final statusMin = args['statusMin'] as int?;
   final statusMax = args['statusMax'] as int?;
+  final isolateFilter = args['isolateId'] as String?;
   final limit = clampLimit(args['limit'] as int?, fallback: 50, hardMax: 200);
 
-  if (session.isViewingHistory) {
+  // History mode: scope is non-live (explicit sessionId arg pointing at a
+  // historical session, or session_open's viewedSessionId resolves to one
+  // that isn't currently attached).
+  if (!scope.isLive) {
     return _historyList(
-      session.viewedSessionId!,
+      scope,
       caps,
       sinceArg,
       methods,
       hostContains,
       statusMin,
       statusMax,
+      isolateFilter,
       limit,
     );
   }
 
-  // Live mode.
-  if (!session.isAttached) {
-    return errorResult(
-      'Not attached and no session opened — nothing to list.',
-      extra: const {
-        'nextSteps': [
-          'network_status — see DTD apps and pick what to attach to',
-          'network_attach — connect to a live app',
-          'session_open id:<n> — read a past session from the DB instead',
-        ],
-      },
-    );
-  }
-
+  // Live mode — scope points at an attached session; look up its resources.
+  final attached = SessionRegistry.instance.attachedById(scope.sessionId)!;
   final cursor = sinceArg == null
-      ? session.lastHttpCursor
+      ? attached.lastHttpCursor
       : (sinceArg <= 0 ? null : DateTime.fromMicrosecondsSinceEpoch(sinceArg));
 
+  // Multi-isolate live read: iterate every HTTP-profiling isolate (or the
+  // one named by [isolateFilter]) and merge. Each isolate has its own VM-
+  // side profile; the per-isolate try/catch keeps a flaky isolate from
+  // breaking the others.
+  final isolateIds = isolateFilter == null
+      ? [for (final iso in attached.vm.httpProfilingIsolates) iso.id]
+      : [isolateFilter];
+
   try {
-    final profile = await session.vm.getHttpProfile(updatedSince: cursor);
-    session.lastHttpCursor = profile.timestamp;
+    final perIsolateRequests = <(HttpProfileRequest, String)>[];
+    DateTime? latestCursor;
+    int scannedTotal = 0;
+    for (final isoId in isolateIds) {
+      try {
+        final profile = await attached.vm.getHttpProfileForIsolate(
+          isoId,
+          updatedSince: cursor,
+        );
+        if (latestCursor == null || profile.timestamp.isAfter(latestCursor)) {
+          latestCursor = profile.timestamp;
+        }
+        scannedTotal += profile.requests.length;
+        for (final req in profile.requests) {
+          perIsolateRequests.add((req, isoId));
+        }
+      } catch (_) {/* per-isolate skip */}
+    }
+    if (latestCursor != null) {
+      attached.lastHttpCursor = latestCursor;
+    }
+
+    // Sort by start time across all isolates (newest first).
+    perIsolateRequests
+        .sort((a, b) => b.$1.startTime.compareTo(a.$1.startTime));
 
     final filtered = <Map<String, Object?>>[];
-    final sorted = profile.requests.toList()
-      ..sort((a, b) => b.startTime.compareTo(a.startTime));
-
-    for (final r in sorted) {
-      if (!methodMatches(r.method, methods)) continue;
-      if (!hostMatches(r.uri.toString(), hostContains)) continue;
-      final code = r.response?.statusCode;
-      if (!statusInRange(code, statusMin, statusMax)) continue;
-      filtered.add(_liveSummary(r));
+    for (final (req, isoId) in perIsolateRequests) {
+      if (!methodMatches(req.method, methods)) continue;
+      if (!hostMatches(req.uri.toString(), hostContains)) continue;
+      if (!statusInRange(req.response?.statusCode, statusMin, statusMax)) {
+        continue;
+      }
+      final summary = _liveSummary(req);
+      summary['isolateId'] = isoId;
+      filtered.add(summary);
       if (filtered.length >= limit) break;
     }
 
-    final liveSid = session.liveSessionId;
+    final liveSid = scope.sessionId;
     final activeFilters =
         _activeFilters(methods, hostContains, statusMin, statusMax);
     final cursorWasIncremental = sinceArg == null && cursor != null;
-    final scannedTotal = profile.requests.length;
 
     final summary = filtered.isEmpty
         ? (scannedTotal == 0
-            ? 'No HTTP captured yet in session $liveSid (live).'
+            ? 'No HTTP captured yet in session $liveSid (live${scope.appName != null ? ", ${scope.appName}" : ""}).'
             : '$scannedTotal request(s) scanned, 0 matched filters.')
-        : '${filtered.length} request(s) from session $liveSid (live, newest-first)'
+        : '${filtered.length} request(s) from session $liveSid (live${scope.appName != null ? ", ${scope.appName}" : ""}, newest-first)'
             '${cursorWasIncremental ? " — incremental since last call" : ""}.';
 
     final warnings = <String>[];
@@ -161,15 +206,17 @@ FutureOr<CallToolResult> networkList(CallToolRequest request) async {
 
     return jsonResult({
       'source': 'live',
+      'scope': scope.toBlock(),
       'sessionId': liveSid,
       'summary': summary,
       'count': filtered.length,
       'totalScanned': scannedTotal,
-      'nextCursor': profile.timestamp.microsecondsSinceEpoch,
+      if (latestCursor != null)
+        'nextCursor': latestCursor.microsecondsSinceEpoch,
       if (warnings.isNotEmpty) 'warnings': warnings,
       'nextSteps': nextSteps,
       'requests': filtered,
-    });
+    }, scopeSessionId: scope.sessionId);
   } catch (e) {
     return errorResult('getHttpProfile failed: $e', extra: const {
       'nextSteps': [
@@ -181,15 +228,17 @@ FutureOr<CallToolResult> networkList(CallToolRequest request) async {
 }
 
 FutureOr<CallToolResult> _historyList(
-  int sid,
+  Scope scope,
   CapabilityConfig caps,
   int? sinceArg,
   List<String>? methods,
   String? hostContains,
   int? statusMin,
   int? statusMax,
+  String? isolateFilter,
   int limit,
 ) {
+  final sid = scope.sessionId;
   try {
     final rows = CapturesDao().queryHttpRequests(
       sessionId: sid,
@@ -198,6 +247,7 @@ FutureOr<CallToolResult> _historyList(
       hostContains: hostContains,
       statusMin: statusMin,
       statusMax: statusMax,
+      isolateId: isolateFilter,
       limit: limit,
     );
     int? maxStart;
@@ -239,6 +289,7 @@ FutureOr<CallToolResult> _historyList(
 
     return jsonResult({
       'source': 'history',
+      'scope': scope.toBlock(),
       'sessionId': sid,
       'summary': summary,
       'count': out.length,
@@ -246,7 +297,7 @@ FutureOr<CallToolResult> _historyList(
       if (warnings.isNotEmpty) 'warnings': warnings,
       'nextSteps': nextSteps,
       'requests': out,
-    });
+    }, scopeSessionId: scope.sessionId);
   } catch (e) {
     return errorResult('history query failed: $e', extra: {
       'sessionId': sid,
@@ -298,6 +349,7 @@ Map<String, Object?> _historySummary(Map<String, Object?> r) {
     if (r['request_size'] != null) 'requestContentLength': r['request_size'],
     if (r['response_size'] != null) 'responseContentLength': r['response_size'],
     if (r['content_type'] != null) 'responseContentType': r['content_type'],
+    if (r['isolate_id'] != null) 'isolateId': r['isolate_id'],
     if ((r['has_error'] as int? ?? 0) != 0) 'hasError': true,
   };
 }

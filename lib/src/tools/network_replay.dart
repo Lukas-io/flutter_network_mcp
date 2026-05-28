@@ -4,8 +4,8 @@ import 'dart:convert';
 import 'package:dart_mcp/server.dart';
 
 import '../config/capabilities.dart';
-import '../state/session.dart';
 import '../storage/captures_db.dart';
+import '../util/scope.dart';
 import 'result.dart';
 
 const _kDefaultBodyTruncate = 4096;
@@ -24,7 +24,15 @@ final networkReplayTool = Tool(
     properties: {
       'id': Schema.string(description: 'Request id from network_list / network_search.'),
       'sessionId': Schema.int(
-        description: 'Session id (default: current live or viewed session).',
+        description:
+            'Which session the request belongs to. Omit to auto-resolve: '
+            'explicit view (session_open) → sole attached session → error '
+            'if 2+ attached.',
+      ),
+      'appNameContains': Schema.string(
+        description:
+            'Alternative to sessionId — case-insensitive substring on a '
+            'currently-attached app name.',
       ),
       'redact': Schema.bool(
         description: 'Mask auth-like headers with <redacted> (default true). Set false only for local terminal use.',
@@ -51,16 +59,10 @@ FutureOr<CallToolResult> networkReplay(CallToolRequest request) async {
       ],
     });
   }
-  final session = Session.instance;
-  final sessionId = (args['sessionId'] as int?) ?? session.effectiveSessionId;
-  if (sessionId == null) {
-    return errorResult('No session — attach or open one first.', extra: const {
-      'nextSteps': [
-        'network_attach — connect to a live app',
-        'session_open id:<n> — open a past session',
-      ],
-    });
-  }
+  final (scope, scopeErr) = resolveScope(args);
+  if (scopeErr != null) return scopeErr;
+  scope!;
+  final sessionId = scope.sessionId;
   final redact = (args['redact'] as bool?) ?? true;
   final bodyMaxRaw = (args['bodyTruncateBytes'] as int?) ?? _kDefaultBodyTruncate;
   final bodyMax = bodyMaxRaw <= 0
@@ -147,6 +149,7 @@ FutureOr<CallToolResult> networkReplay(CallToolRequest request) async {
         '${totalSize != null ? ", $totalSize-byte body" : ""}).';
 
     return jsonResult({
+      'scope': scope.toBlock(),
       'sessionId': sessionId,
       'summary': summary,
       'id': id,
@@ -163,7 +166,7 @@ FutureOr<CallToolResult> networkReplay(CallToolRequest request) async {
       'curl': buf.toString(),
       if (warnings.isNotEmpty) 'warnings': warnings,
       'nextSteps': nextSteps,
-    });
+    }, scopeSessionId: scope.sessionId);
   } catch (e) {
     return errorResult('network_replay failed: $e', extra: {
       'sessionId': sessionId,
