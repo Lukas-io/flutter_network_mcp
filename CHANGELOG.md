@@ -67,6 +67,28 @@ Typed companion to `network_query` SQL for the **webhook originator + receiver**
 - **`docs/README.md`** gained multi-attach + multi-isolate + correlate callouts at the top; `network_correlate` added to the "Power user / ad-hoc queries" use-case section.
 - **`alerts_clear`** — was previously "default scope = all sessions"; now scoped per-session like every other tool so multi-attach can't accidentally cross-delete drained alerts. Cross-session bulk clear stays possible via `network_query`.
 
+### Security — auto-attach allowlist (mandatory)
+
+The first cut of `--auto-attach` was a boolean that captured every Flutter app DTD discovered after server start. A developer running `flutter run` against a target wired to staging-with-production-tokens (a common shortcut) would have that traffic captured to disk without explicit consent. Pre-merge audit caught this.
+
+**Fix (breaking change since 0.6.0 hasn't shipped):**
+
+- `--auto-attach` is now an option taking a comma-separated allowlist of case-insensitive substring patterns matched against the app name DTD reports: `--auto-attach=sanga_mobile,sanga_driver`.
+- **There is no boolean form.** To enable auto-attach you MUST specify which apps it's allowed to grab. Empty / absent disables.
+- `FLUTTER_NETWORK_MCP_AUTO_ATTACH=app1,app2` follows the same semantics (env var changed from `true|1`).
+- Non-matching apps log a one-line stderr note and are added to the known-URI set so the watcher doesn't retry every tick (acts as both rate-limit and audit trail).
+- `AutoAttacher`'s constructor enforces this with an assertion — the class is impossible to instantiate without a non-empty allowlist.
+
+### Reliability — hardening of auto features
+
+- **AutoAttacher reentrancy guard** (`_ticking` flag). `Timer.periodic` fires regardless of whether the previous tick's Future completed; without the guard, two concurrent ticks could race on `_seenUris` + double-issue `performAttach`. Subsequent ticks are now no-ops while one is in flight.
+- **AutoAttacher top-level try/catch.** Any unexpected exception in a tick (e.g. `ConcurrentModificationError` on `_seenUris`, upstream API change) logs to stderr and the watcher keeps polling. Previously a bad tick would silently kill the watcher via the zone's swallowed-exception handler.
+- **`_seenUris` cap (1024).** Pathological vmServiceUri churn (hot-restart loop) can't grow memory unbounded. When exceeded, the older half is dropped; safe failure mode because `performAttach`'s per-URI duplicate guard catches re-attach attempts.
+- **`CapturesDatabase.open` generic catch** in `main.dart` covers `SqliteException` from schema-migration failures, sqlite3 native errors, and corrupt-DB-on-open scenarios. Previously only `FileSystemException` + `StateError` were handled; other failures crashed with a raw Dart stack. Now exits cleanly with code 70 (`EX_SOFTWARE`) + a recovery hint pointing at `--data-dir <fresh path>`.
+- **`LogStreamSubscriber.onError` handlers** on all three VM service stream listeners (`onLoggingEvent`, `onStdoutEvent`, `onStderrEvent`). Synchronous exceptions in listener callbacks and asynchronous stream errors are now routed to stderr; the subscription stays active. Previously a malformed Event or mid-stream disconnect could noisily kill the logging subsystem.
+
+None of this can break the user's Flutter app — the MCP runs in a separate process, communicates with the VM service via read-mostly RPCs, and the only side-effects on the app are profiling toggles (which the VM service is designed for). These hardenings keep US from breaking in the face of weird input; the user's app is unaffected.
+
 ### Notes
 
 - DB schema unchanged — existing 0.5.x / 0.6.x DBs work without migration.

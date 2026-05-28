@@ -60,7 +60,7 @@ Beyond capability gating, these env vars tune runtime behavior:
 | `FLUTTER_NETWORK_MCP_DTD_URI` | — | — | Default DTD URI for `network_attach`. |
 | `FLUTTER_NETWORK_MCP_DATA_DIR` | — | — | Directory for `captures.db`. Equivalent to `--data-dir`. When set, the candidate-fallback chain is skipped — unwritable values error loudly. |
 | `FLUTTER_NETWORK_MCP_MAX_ATTACH` | 4 | 1–32 | Max concurrent attached sessions in multi-attach mode. |
-| `FLUTTER_NETWORK_MCP_AUTO_ATTACH` | — | `true`/`1` | Watch DTD for new apps and auto-attach. Equivalent to `--auto-attach`. |
+| `FLUTTER_NETWORK_MCP_AUTO_ATTACH` | — | comma-list | **Allowlist** for auto-attach. Comma-separated substring patterns matched against the DTD app name. Non-empty value enables; empty / absent disables. Equivalent to `--auto-attach=app1,app2`. |
 | `FLUTTER_NETWORK_MCP_AUTO_ATTACH_POLL_MS` | 5000 | 1000–60000 | Poll interval for the auto-attach watcher. |
 | `FLUTTER_NETWORK_MCP_CAPABILITIES` | (all) | — | Allowlist (see below). |
 | `FLUTTER_NETWORK_MCP_DISABLE` | — | — | Denylist (see below). |
@@ -166,15 +166,21 @@ Per-row responses include `isolateId` when known so an agent can see which isola
 
 `sessionIds` is **required** — cross-session aggregation is intentional, so the agent must pick which apps to compare (preventing accidental cross-app data bleed). Hard caps: 8 sessions per call, 100 pair results, 500 raw matches per session.
 
-### Auto-attach (`--auto-attach`)
+### Auto-attach (`--auto-attach=app1,app2`)
 
-Pass `--auto-attach` (or set `FLUTTER_NETWORK_MCP_AUTO_ATTACH=true`) to have the server watch DTD for new apps and attach to them automatically. The watcher polls every 5 seconds (`FLUTTER_NETWORK_MCP_AUTO_ATTACH_POLL_MS` to tune, clamped 1000–60000).
+Pass `--auto-attach=sanga_mobile,sanga_driver` (or set `FLUTTER_NETWORK_MCP_AUTO_ATTACH=sanga_mobile,sanga_driver`) to have the server watch DTD for new apps and attach **only those matching the allowlist**.
+
+There is **no boolean form**. Auto-attach without an explicit allowlist is intentionally not possible — it would risk silently grabbing whatever Flutter app the developer happens to spin up next (including one with production tokens). The value is a comma-separated list of substring patterns matched case-insensitively against the DTD app name.
+
+The watcher polls every 5 seconds (`FLUTTER_NETWORK_MCP_AUTO_ATTACH_POLL_MS` to tune, clamped 1000–60000).
 
 Key behaviour:
-- **Seed-and-skip on first tick** — apps already running when the server starts are NOT auto-attached. The watcher seeds its "known" set with whatever DTD reports first, then only attaches to URIs that appear in subsequent ticks (typically a fresh `flutter run` or a hot-restart that spawns a new DDS).
-- **Manual `network_detach` is respected** — once you detach, the URI stays in the known set, so the watcher won't re-grab it. To force a re-attach, restart the app (new VM service URI) or detach + re-attach manually.
-- **Cap is respected** — over-cap discoveries are logged and skipped without retrying.
-- **Off by default** — no surprise grabbing of app state.
+- **Allowlist is mandatory.** Apps whose name doesn't match any pattern log a one-line stderr note and are skipped. They're still added to the known-URI set so the watcher doesn't retry every tick.
+- **Seed-and-skip on first tick** — apps already running when the server starts are NOT auto-attached even if they'd match the allowlist. The watcher seeds its "known" set with whatever DTD reports first, then only attaches to URIs that appear in subsequent ticks.
+- **Manual `network_detach` is respected** — once you detach, the URI stays in the known set; the watcher won't re-grab it. Restart the app (new VM service URI) or detach + re-attach manually to bring it back.
+- **Reentrancy-guarded** — only one tick runs at a time; concurrent timer fires are no-ops.
+- **`FLUTTER_NETWORK_MCP_MAX_ATTACH` cap is respected** — over-cap discoveries log and skip without retry storm.
+- **Crash-resistant** — every tick wraps a top-level try/catch; an unexpected throw doesn't kill the watcher.
 
 ## The 33 tools
 
