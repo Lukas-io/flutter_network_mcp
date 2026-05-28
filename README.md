@@ -61,6 +61,7 @@ Beyond capability gating, these env vars tune runtime behavior:
 | `FLUTTER_NETWORK_MCP_DATA_DIR` | — | — | Directory for `captures.db`. Equivalent to `--data-dir`. When set, the candidate-fallback chain is skipped — unwritable values error loudly. |
 | `FLUTTER_NETWORK_MCP_MAX_ATTACH` | 4 | 1–32 | Max concurrent attached sessions in multi-attach mode. |
 | `FLUTTER_NETWORK_MCP_AUTO_ATTACH` | — | comma-list | **Allowlist** for auto-attach. Comma-separated substring patterns matched against the DTD app name. Non-empty value enables; empty / absent disables. Equivalent to `--auto-attach=app1,app2`. |
+| `FLUTTER_NETWORK_MCP_AUTO_ATTACH_DENY` | — | comma-list | **Denylist** for auto-attach (optional). Matching apps are skipped even when the allowlist would otherwise admit them. Equivalent to `--auto-attach-deny=pat1,pat2`. |
 | `FLUTTER_NETWORK_MCP_AUTO_ATTACH_POLL_MS` | 5000 | 1000–60000 | Poll interval for the auto-attach watcher. |
 | `FLUTTER_NETWORK_MCP_CAPABILITIES` | (all) | — | Allowlist (see below). |
 | `FLUTTER_NETWORK_MCP_DISABLE` | — | — | Denylist (see below). |
@@ -176,11 +177,14 @@ The watcher polls every 5 seconds (`FLUTTER_NETWORK_MCP_AUTO_ATTACH_POLL_MS` to 
 
 Key behaviour:
 - **Allowlist is mandatory.** Apps whose name doesn't match any pattern log a one-line stderr note and are skipped. They're still added to the known-URI set so the watcher doesn't retry every tick.
+- **Optional denylist** — pass `--auto-attach-deny="Pixel 7,Android emulator"` (or set `FLUTTER_NETWORK_MCP_AUTO_ATTACH_DENY=Pixel 7,Android emulator`) to exclude specific devices even when they'd match the allowlist. Useful when the allowlist is a broad package name but you want to skip a particular device or form factor. Deny wins over allow.
 - **Seed-and-skip on first tick** — apps already running when the server starts are NOT auto-attached even if they'd match the allowlist. The watcher seeds its "known" set with whatever DTD reports first, then only attaches to URIs that appear in subsequent ticks.
 - **Manual `network_detach` is respected** — once you detach, the URI stays in the known set; the watcher won't re-grab it. Restart the app (new VM service URI) or detach + re-attach manually to bring it back.
 - **Reentrancy-guarded** — only one tick runs at a time; concurrent timer fires are no-ops.
 - **`FLUTTER_NETWORK_MCP_MAX_ATTACH` cap is respected** — over-cap discoveries log and skip without retry storm.
 - **Crash-resistant** — every tick wraps a top-level try/catch; an unexpected throw doesn't kill the watcher.
+
+DTD reports app names like `Flutter - iPhone 17 - Package: sanga_mobile` — so substring patterns can target either the package (`sanga_mobile`) or the device (`iPhone 17`, `Android emulator`, `iOS Simulator`). Example: `--auto-attach=sanga_mobile --auto-attach-deny="Android emulator"` auto-attaches sanga_mobile only on physical iOS + iOS Simulator.
 
 ## The 33 tools
 

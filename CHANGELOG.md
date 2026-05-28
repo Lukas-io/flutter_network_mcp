@@ -20,6 +20,8 @@ A security + reliability follow-up to 0.6.0. Closes a real auto-attach exposure 
 - Non-matching apps log a one-line stderr note and are added to the known-URI set so the watcher doesn't retry every tick (acts as both rate-limit and audit trail).
 - `AutoAttacher`'s constructor enforces this with an assertion — the class is impossible to instantiate without a non-empty allowlist.
 
+**Optional denylist** — `--auto-attach-deny=Pixel 7,Android emulator` (or env var `FLUTTER_NETWORK_MCP_AUTO_ATTACH_DENY=...`) excludes specific apps/devices even when the allowlist would otherwise admit them. Useful for cases where the allowlist is a broad package name (e.g. `sanga_mobile`) but a particular device or form factor should be skipped. Same case-insensitive substring matching as the allowlist. Deny wins over allow. DTD reports names like `Flutter - iPhone 17 - Package: sanga_mobile`, so substring patterns can target either the package or the device.
+
 **Migration from 0.6.0:** if you launched the server with `--auto-attach` (bool form, no value) in 0.6.0, change it to `--auto-attach=<app substring,...>`. Same for the env var. Without the value, the watcher silently stays off — no surprise grabbing.
 
 ### Reliability — hardening of auto features

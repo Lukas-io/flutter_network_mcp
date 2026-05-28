@@ -55,6 +55,18 @@ Future<void> main(List<String> args) async {
           'FLUTTER_NETWORK_MCP_DTD_URI. Env-var fallback: '
           'FLUTTER_NETWORK_MCP_AUTO_ATTACH=app1,app2.',
     )
+    ..addOption(
+      'auto-attach-deny',
+      help:
+          'Optional denylist for auto-attach. Comma-separated case-'
+          'insensitive substring patterns matched against the app name '
+          'from DTD; matching apps are skipped even if they also match '
+          '--auto-attach. Useful for excluding specific devices like '
+          'physical hardware or emulators when the allowlist would '
+          'otherwise grab them. Example: '
+          '--auto-attach=sanga_mobile --auto-attach-deny="Pixel 7,Android emulator". '
+          'Env-var fallback: FLUTTER_NETWORK_MCP_AUTO_ATTACH_DENY=pat1,pat2.',
+    )
     ..addFlag('help', abbr: 'h', negatable: false);
 
   final ArgResults results;
@@ -138,9 +150,13 @@ Future<void> main(List<String> args) async {
       env['FLUTTER_NETWORK_MCP_AUTO_ATTACH'];
   final autoAttachAllowlist = _parseAllowlist(autoAttachRaw);
   if (autoAttachAllowlist.isNotEmpty) {
+    final autoAttachDenyRaw = (results['auto-attach-deny'] as String?) ??
+        env['FLUTTER_NETWORK_MCP_AUTO_ATTACH_DENY'];
+    final autoAttachDenylist = _parseAllowlist(autoAttachDenyRaw);
     AutoAttacher(
       defaultDtdUri: dtdUri,
       allowedAppPatterns: autoAttachAllowlist,
+      deniedAppPatterns: autoAttachDenylist,
     ).start();
   }
 }

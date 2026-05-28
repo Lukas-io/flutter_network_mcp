@@ -13,8 +13,17 @@ import 'tools/network_attach.dart' show performAttach;
 /// matches "Flutter - iPhone 17 - Package: sanga_mobile"). The CLI
 /// surface (`--auto-attach=app1,app2`) has no boolean form — you can't
 /// enable auto-attach without saying which apps it's allowed to grab.
-/// Non-matching apps log a one-line stderr note + are added to the
-/// known set so they don't retry every tick.
+///
+/// **Optional denylist** ([deniedAppPatterns]) lets you exclude specific
+/// devices that would otherwise match the allowlist — useful when the
+/// allowlist is a broad package name but you want to skip a particular
+/// device (`--auto-attach=sanga_mobile --auto-attach-deny="Pixel 7"`).
+/// Same case-insensitive substring matching as the allowlist. Deny wins
+/// when both match.
+///
+/// Non-matching apps (allowlist miss OR denylist hit) log a one-line
+/// stderr note + are added to the known-URI set so they don't retry
+/// every tick (acts as both rate-limit and audit trail).
 ///
 /// Existing apps visible at startup are NOT auto-attached — they're seeded
 /// into the "known" set on the first tick. This avoids surprise-attaching
@@ -34,6 +43,7 @@ class AutoAttacher {
   AutoAttacher({
     required this.defaultDtdUri,
     required this.allowedAppPatterns,
+    this.deniedAppPatterns = const [],
     Duration? pollInterval,
   })  : assert(
           allowedAppPatterns.isNotEmpty,
@@ -60,6 +70,11 @@ class AutoAttacher {
   /// Required + non-empty by constructor assertion. At least one pattern
   /// must match an app's name for that app to be auto-attached.
   final List<String> allowedAppPatterns;
+
+  /// Optional denylist: case-insensitive substring patterns. If any
+  /// pattern matches, the app is skipped even when the allowlist would
+  /// otherwise admit it. Empty by default. Deny wins over allow.
+  final List<String> deniedAppPatterns;
 
   final Duration pollInterval;
   Timer? _timer;
@@ -90,11 +105,14 @@ class AutoAttacher {
     }
     if (_timer != null) return;
     _timer = Timer.periodic(pollInterval, (_) => _tick());
+    final denyLine = deniedAppPatterns.isEmpty
+        ? ''
+        : '; denylist: ${deniedAppPatterns.join(", ")}';
     io.stderr.writeln(
       'flutter_network_mcp: auto-attach watcher started '
       '(poll ${pollInterval.inMilliseconds}ms; allowlist: '
-      '${allowedAppPatterns.join(", ")}; first tick seeds the known set, '
-      'subsequent ticks attach NEW allowlisted apps only).',
+      '${allowedAppPatterns.join(", ")}$denyLine; first tick seeds the '
+      'known set, subsequent ticks attach NEW allowlisted apps only).',
     );
     unawaited(_tick());
   }
@@ -110,6 +128,20 @@ class AutoAttacher {
     if (appName.isEmpty) return false;
     final lower = appName.toLowerCase();
     for (final pattern in allowedAppPatterns) {
+      if (pattern.isEmpty) continue;
+      if (lower.contains(pattern.toLowerCase())) return true;
+    }
+    return false;
+  }
+
+  /// Returns true when [appName] matches any denylist pattern. Empty
+  /// denylist (the default) always returns false — no filtering. Empty
+  /// app names also never match (consistent with allowlist semantics).
+  bool _matchesDenylist(String appName) {
+    if (deniedAppPatterns.isEmpty) return false;
+    if (appName.isEmpty) return false;
+    final lower = appName.toLowerCase();
+    for (final pattern in deniedAppPatterns) {
       if (pattern.isEmpty) continue;
       if (lower.contains(pattern.toLowerCase())) return true;
     }
@@ -191,6 +223,7 @@ class AutoAttacher {
 
     for (final uri in newUris) {
       final appName = currentByUri[uri] ?? '';
+      final displayName = appName.isEmpty ? '(unnamed)' : appName;
 
       // Allowlist gate — the security-critical check. Non-matching apps
       // log + are skipped; they stay in _seenUris so we don't retry
@@ -198,9 +231,20 @@ class AutoAttacher {
       if (!_matchesAllowlist(appName)) {
         io.stderr.writeln(
           'flutter_network_mcp: auto-attach skipped $uri '
-          '(app "${appName.isEmpty ? "(unnamed)" : appName}") — '
-          'no allowlist pattern matched. Allowlist: '
-          '${allowedAppPatterns.join(", ")}.',
+          '(app "$displayName") — no allowlist pattern matched. '
+          'Allowlist: ${allowedAppPatterns.join(", ")}.',
+        );
+        continue;
+      }
+
+      // Denylist gate — wins over allowlist. Logged with the specific
+      // matched pattern (best-effort) so the user sees why a normally-
+      // allowed app got blocked.
+      if (_matchesDenylist(appName)) {
+        io.stderr.writeln(
+          'flutter_network_mcp: auto-attach skipped $uri '
+          '(app "$displayName") — denylist matched. Denylist: '
+          '${deniedAppPatterns.join(", ")}.',
         );
         continue;
       }
