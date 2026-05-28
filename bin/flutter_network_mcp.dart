@@ -1,6 +1,7 @@
 import 'dart:io' as io;
 
 import 'package:args/args.dart';
+import 'package:flutter_network_mcp/src/auto_attach.dart';
 import 'package:flutter_network_mcp/src/config/capabilities.dart';
 import 'package:flutter_network_mcp/src/server.dart';
 import 'package:flutter_network_mcp/src/storage/database.dart';
@@ -36,6 +37,19 @@ Future<void> main(List<String> args) async {
       help:
           'Comma-separated denylist of categories to disable. Same option '
           'set as --capabilities. Falls back to FLUTTER_NETWORK_MCP_DISABLE.',
+    )
+    ..addFlag(
+      'auto-attach',
+      negatable: false,
+      help:
+          'Watch DTD for new apps and auto-attach as they appear. Apps '
+          'already running at server startup are NOT auto-attached '
+          '(seed-and-skip on first tick). Manual network_detach survives — '
+          'detached apps stay in the known set, no re-attach. Poll '
+          'interval: FLUTTER_NETWORK_MCP_AUTO_ATTACH_POLL_MS (default '
+          '5000, clamped 1000–60000). Requires --dtd-uri or '
+          'FLUTTER_NETWORK_MCP_DTD_URI. Env-var fallback: '
+          'FLUTTER_NETWORK_MCP_AUTO_ATTACH=true|1.',
     )
     ..addFlag('help', abbr: 'h', negatable: false);
 
@@ -97,4 +111,15 @@ Future<void> main(List<String> args) async {
   } catch (_) {/* table may be empty / freshly migrated */}
 
   FlutterNetworkMcpServer.stdio(defaultDtdUri: dtdUri);
+
+  // Optional: watch DTD for new apps and auto-attach. CLI flag takes
+  // priority; env var (FLUTTER_NETWORK_MCP_AUTO_ATTACH=true|1) is the
+  // fallback. No-op when no DTD URI is configured.
+  final autoAttachEnv = env['FLUTTER_NETWORK_MCP_AUTO_ATTACH']?.toLowerCase();
+  final autoAttach = (results['auto-attach'] as bool?) == true ||
+      autoAttachEnv == 'true' ||
+      autoAttachEnv == '1';
+  if (autoAttach) {
+    AutoAttacher(defaultDtdUri: dtdUri).start();
+  }
 }

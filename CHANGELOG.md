@@ -21,9 +21,22 @@ Shipped across six commits (phases 1–6), summarized here:
 
 15 read tools threaded through the scope resolver: `network_list`, `network_get`, `network_body`, `network_clear`, `network_search`, `network_diff`, `network_replay`, `socket_list`, `socket_get`, `socket_clear`, `logs_tail`, `logs_clear`, `alerts_drain`, `alerts_peek`, `alerts_clear`. Each gained optional `sessionId:int` and `appNameContains:string` args. In single-attach mode (the common case) behaviour is unchanged — auto-resolve handles it without extra args.
 
+### Added — auto-attach (`--auto-attach`)
+
+Optional background watcher (off by default) that polls DTD and attaches automatically to apps that appear AFTER the server starts. Naturally builds on multi-attach — apps come and go, the server keeps up without the agent needing to call `network_attach` manually each time.
+
+- New CLI flag `--auto-attach` and env-var fallback `FLUTTER_NETWORK_MCP_AUTO_ATTACH=true|1`.
+- Poll interval via `FLUTTER_NETWORK_MCP_AUTO_ATTACH_POLL_MS` (default 5000, clamped 1000–60000).
+- **Seed-and-skip on first tick:** apps already running at server startup are NOT auto-attached. The watcher seeds its known set on first poll, then only attaches to URIs that appear in subsequent ticks (a fresh `flutter run` or a hot-restart that spawns a new DDS).
+- **Respects manual `network_detach`:** a detached URI stays in the known set, so the next poll tick won't re-attach it. Restart the app or detach + re-attach manually to bring it back.
+- **Respects `FLUTTER_NETWORK_MCP_MAX_ATTACH`:** over-cap discoveries log a one-line stderr note and stay in the known set (no retry storm).
+- Implementation: `lib/src/auto_attach.dart` (`AutoAttacher` class); wired in `bin/flutter_network_mcp.dart`.
+
 ### Added — env vars
 
 - `FLUTTER_NETWORK_MCP_MAX_ATTACH` (default 4, clamped 1–32) — caps concurrent attachments.
+- `FLUTTER_NETWORK_MCP_AUTO_ATTACH` (`true`/`1`) — equivalent to `--auto-attach`.
+- `FLUTTER_NETWORK_MCP_AUTO_ATTACH_POLL_MS` (default 5000, clamped 1000–60000) — auto-attach poll interval.
 
 ### Changed
 
