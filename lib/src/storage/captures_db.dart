@@ -175,13 +175,28 @@ class CapturesDao {
     );
   }
 
-  /// Returns ids of requests in the session that are complete but have no bodies stored yet.
-  List<String> pendingBodyFetches(int sessionId, {int limit = 50}) {
+  /// One entry returned by [pendingBodyFetches] — carries the vm_id plus the
+  /// isolate_id the request was originally captured from so the writer can
+  /// route the body backfill RPC to the right isolate (v4+).
+  ///
+  /// `isolateId` is nullable: pre-v4 rows and rows captured before isolate
+  /// tagging stay NULL. The writer falls back to the first known isolate.
+  /// (Record-typed alias so the public DAO surface stays explicit.)
+  // ignore: library_private_types_in_public_api
+  List<({String vmId, String? isolateId})> pendingBodyFetches(
+    int sessionId, {
+    int limit = 50,
+  }) {
     final rows = _db.select(
-      'SELECT vm_id FROM http_requests WHERE session_id=? AND bodies_fetched=0 AND end_us IS NOT NULL ORDER BY end_us ASC LIMIT ?',
+      'SELECT vm_id, isolate_id FROM http_requests '
+      'WHERE session_id=? AND bodies_fetched=0 AND end_us IS NOT NULL '
+      'ORDER BY end_us ASC LIMIT ?',
       [sessionId, limit],
     );
-    return rows.map((r) => r['vm_id'] as String).toList();
+    return [
+      for (final r in rows)
+        (vmId: r['vm_id'] as String, isolateId: r['isolate_id'] as String?),
+    ];
   }
 
   List<Map<String, Object?>> queryHttpRequests({
@@ -522,6 +537,7 @@ class CapturesDao {
     required String url,
     String? requestText,
     String? responseText,
+    String? isolateId,
   }) {
     final existing = _db.select(
       'SELECT rowid FROM http_search_map WHERE session_id=? AND vm_id=?',
@@ -534,6 +550,14 @@ class CapturesDao {
         'INSERT INTO http_search(rowid, url, content_request, content_response) VALUES (?,?,?,?)',
         [rowid, url, requestText ?? '', responseText ?? ''],
       );
+      // Update isolate_id if the row was missing it (e.g. first indexed
+      // before isolate tagging arrived) — COALESCE preserves an existing
+      // tag rather than overwriting with NULL.
+      _db.execute(
+        'UPDATE http_search_map SET isolate_id = COALESCE(?, isolate_id) '
+        'WHERE session_id=? AND vm_id=?',
+        [isolateId, sessionId, vmId],
+      );
       return;
     }
     _db.execute(
@@ -542,8 +566,8 @@ class CapturesDao {
     );
     final rowid = _db.lastInsertRowId;
     _db.execute(
-      'INSERT INTO http_search_map(rowid, session_id, vm_id) VALUES (?,?,?)',
-      [rowid, sessionId, vmId],
+      'INSERT INTO http_search_map(rowid, session_id, vm_id, isolate_id) VALUES (?,?,?,?)',
+      [rowid, sessionId, vmId, isolateId],
     );
   }
 

@@ -31,11 +31,25 @@ class CaptureWriter {
   final CapturesDao _dao = CapturesDao();
   late final AlertDetector _detector = AlertDetector(_dao);
 
+  /// Periodic isolate re-scan cadence — every Nth tick we re-discover
+  /// HTTP-profiling isolates so newly-spawned ones get picked up
+  /// without forcing a manual re-attach. At the default 2s tick this
+  /// means ~20s discovery lag for fresh isolates.
+  static const int _rescanEveryNTicks = 10;
+
   VmClient? _vm;
   int? _sessionId;
   Timer? _timer;
   bool _ticking = false;
-  DateTime? _lastHttpCursor;
+
+  /// Per-isolate HTTP cursor map (multi-isolate Phase 10). Each isolate
+  /// runs at its own request cadence, so each needs its own incremental
+  /// "updatedSince" cursor or we drop requests on the floor.
+  final Map<String, DateTime> _lastCursorPerIsolate = {};
+
+  /// Tick counter modulo [_rescanEveryNTicks].
+  int _ticksSinceRescan = 0;
+
   Set<String> _ignoredHosts = const {};
 
   bool get isRunning => _timer != null;
@@ -44,7 +58,8 @@ class CaptureWriter {
     stop();
     _vm = vm;
     _sessionId = sessionId;
-    _lastHttpCursor = null;
+    _lastCursorPerIsolate.clear();
+    _ticksSinceRescan = 0;
     _refreshIgnoredHosts();
     _timer = Timer.periodic(pollInterval, (_) => _tick());
     unawaited(_tick());
@@ -55,7 +70,8 @@ class CaptureWriter {
     _timer = null;
     _vm = null;
     _sessionId = null;
-    _lastHttpCursor = null;
+    _lastCursorPerIsolate.clear();
+    _ticksSinceRescan = 0;
     _ticking = false;
   }
 
@@ -98,42 +114,117 @@ class CaptureWriter {
   }
 
   Future<void> _pollHttp(VmClient vm, int sid) async {
-    final profile = await vm.getHttpProfile(updatedSince: _lastHttpCursor);
-    _lastHttpCursor = profile.timestamp;
+    await _maybeRescanIsolates(vm);
+
     final alertsOn = CapabilityConfig.instance.isEnabled(Category.alerts);
-    for (final req in profile.requests) {
-      if (_ignoredHosts.contains(req.uri.host)) continue;
-      _dao.upsertHttpRequest(sid, req);
-      if (alertsOn) _detector.forHttpRequest(sid, req);
+    final isolates = vm.httpProfilingIsolates;
+    if (isolates.isEmpty) return;
+
+    // Poll each known isolate; tag every captured request with the
+    // isolate it came from so per-isolate filtering downstream works.
+    // Per-isolate try/catch so one bad isolate doesn't stop the others.
+    for (final iso in isolates) {
+      try {
+        final profile = await vm.getHttpProfileForIsolate(
+          iso.id,
+          updatedSince: _lastCursorPerIsolate[iso.id],
+        );
+        _lastCursorPerIsolate[iso.id] = profile.timestamp;
+        for (final req in profile.requests) {
+          if (_ignoredHosts.contains(req.uri.host)) continue;
+          _dao.upsertHttpRequest(sid, req, isolateId: iso.id);
+          if (alertsOn) _detector.forHttpRequest(sid, req);
+        }
+      } catch (e, st) {
+        io.stderr.writeln(
+          'CaptureWriter _pollHttp(${iso.id}) failed: $e\n$st',
+        );
+      }
     }
   }
 
   Future<void> _pollSockets(VmClient vm, int sid) async {
-    try {
-      final profile = await vm.getSocketProfile();
-      for (final s in profile.sockets) {
-        _dao.upsertSocket(sid, s);
+    // Don't re-scan here — _pollHttp handles re-scan, and sockets share
+    // the same isolate set. Avoids double discovery RPCs per tick.
+    for (final iso in vm.httpProfilingIsolates) {
+      try {
+        final profile = await vm.getSocketProfileForIsolate(iso.id);
+        for (final s in profile.sockets) {
+          _dao.upsertSocket(sid, s, isolateId: iso.id);
+        }
+      } catch (_) {
+        // Socket profiling may be unavailable on some embedders; ignore.
       }
-    } catch (_) {
-      // Socket profiling may be unavailable on some embedders; ignore.
     }
   }
 
   Future<void> _backfillBodies(VmClient vm, int sid) async {
     final pending = _dao.pendingBodyFetches(sid, limit: 10);
     final searchOn = CapabilityConfig.instance.isEnabled(Category.search);
-    for (final vmId in pending) {
+    for (final entry in pending) {
+      // Use the recorded isolate id when known; fall back to the first
+      // tracked isolate for pre-v4 rows (NULL isolate_id) or rows
+      // inserted before isolate tagging took effect mid-session.
+      final isolateId = entry.isolateId ?? vm.isolateId;
+      if (isolateId == null) continue;
       try {
-        final detail = await vm.getHttpProfileRequest(vmId);
+        final detail = await vm.getHttpProfileRequestForIsolate(
+          isolateId,
+          entry.vmId,
+        );
         _dao.storeBodies(sid, detail);
-        if (searchOn) _indexForSearch(sid, detail);
+        if (searchOn) _indexForSearch(sid, detail, isolateId: isolateId);
       } catch (_) {
-        // Request id might have been cleared; we'll retry next tick.
+        // Request id might have been cleared; retry next tick.
       }
     }
   }
 
-  void _indexForSearch(int sessionId, HttpProfileRequest detail) {
+  /// On the first tick and every [_rescanEveryNTicks] ticks thereafter,
+  /// re-discover HTTP-profiling isolates so newly-spawned ones come
+  /// into capture without forcing a manual re-attach. Newly-found
+  /// isolates get their profiling enabled before we poll them.
+  Future<void> _maybeRescanIsolates(VmClient vm) async {
+    final firstTick = vm.httpProfilingIsolates.isEmpty;
+    final dueForRescan = _ticksSinceRescan >= _rescanEveryNTicks;
+    if (!firstTick && !dueForRescan) {
+      _ticksSinceRescan++;
+      return;
+    }
+    _ticksSinceRescan = 0;
+
+    try {
+      final before = {for (final i in vm.httpProfilingIsolates) i.id};
+      final fresh = await vm.discoverHttpProfilingIsolates();
+      // Enable HTTP (+ optionally socket) profiling on every newly-
+      // discovered isolate so its requests start flowing into our polls.
+      final socketsOn =
+          CapabilityConfig.instance.isEnabled(Category.sockets);
+      for (final iso in fresh) {
+        if (before.contains(iso.id)) continue;
+        try {
+          await vm.enableHttpLoggingForIsolate(iso.id);
+        } catch (_) {/* embedder may not support per-isolate enable */}
+        if (socketsOn) {
+          try {
+            await vm.enableSocketProfilingForIsolate(iso.id);
+          } catch (_) {/* harmless */}
+        }
+      }
+      // Drop cursors for isolates that vanished (e.g. compute isolate
+      // finished). Their captured rows stay in the DB.
+      final freshIds = {for (final i in fresh) i.id};
+      _lastCursorPerIsolate.removeWhere((id, _) => !freshIds.contains(id));
+    } catch (e) {
+      io.stderr.writeln('CaptureWriter isolate re-scan failed: $e');
+    }
+  }
+
+  void _indexForSearch(
+    int sessionId,
+    HttpProfileRequest detail, {
+    String? isolateId,
+  }) {
     final url = detail.uri.toString();
     final reqHeaders =
         detail.request?.hasError == true ? null : detail.request?.headers;
@@ -144,6 +235,7 @@ class CaptureWriter {
     _dao.indexForSearch(
       sessionId: sessionId,
       vmId: detail.id,
+      isolateId: isolateId,
       url: url,
       requestText: _safeUtf8(detail.requestBody, reqCt),
       responseText: _safeUtf8(detail.responseBody, respCt),

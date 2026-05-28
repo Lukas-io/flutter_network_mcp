@@ -54,7 +54,19 @@ class LogStreamSubscriber {
         error: err,
         stackTrace: stack,
       );
-      _persist(source: source, timestampMs: ts, level: level, logger: logger, message: message, error: err, stack: stack);
+      _persist(
+        source: source,
+        timestampMs: ts,
+        level: level,
+        logger: logger,
+        message: message,
+        error: err,
+        stack: stack,
+        // Phase 10: each VM service event carries the originating isolate.
+        // Tag the row so multi-isolate filtering downstream works. Null
+        // when the event is VM-level (no isolate context).
+        isolateId: event.isolate?.id,
+      );
     }));
 
     _subs.add(service.onStdoutEvent.listen((event) {
@@ -94,7 +106,12 @@ class LogStreamSubscriber {
     if (text.isEmpty) return;
     final ts = event.timestamp ?? 0;
     buffer.push(source: source, timestampMs: ts, message: text);
-    _persist(source: source, timestampMs: ts, message: text);
+    _persist(
+      source: source,
+      timestampMs: ts,
+      message: text,
+      isolateId: event.isolate?.id,
+    );
   }
 
   void _persist({
@@ -105,6 +122,7 @@ class LogStreamSubscriber {
     required String message,
     String? error,
     String? stack,
+    String? isolateId,
   }) {
     final sid = _sessionIdProvider?.call();
     if (sid == null) return;
@@ -118,6 +136,7 @@ class LogStreamSubscriber {
         message: message,
         error: error,
         stackTrace: stack,
+        isolateId: isolateId,
       );
       if (rowId != null &&
           CapabilityConfig.instance.isEnabled(Category.alerts)) {

@@ -213,17 +213,42 @@ Future<Map<String, Object?>> performAttach({
     final logStream = localLogStream = LogStreamSubscriber();
 
     await vm.connect(Uri.parse(resolvedVmServiceUri));
-    final isolateId = await vm.pickHttpProfilingIsolate();
 
-    final httpState = await vm.enableHttpLogging();
+    // Multi-isolate (Phase 10): discover every isolate that exposes
+    // ext.dart.io.getHttpProfile, not just the first. enableHttpLogging /
+    // enableSocketProfiling fire per-isolate so every one's traffic flows
+    // into the capture writer's per-isolate poll. The session row's
+    // `isolate_id` column stores the first isolate (for back-compat with
+    // session metadata that assumed one isolate per session).
+    final allIsolates = await vm.discoverHttpProfilingIsolates();
+    if (allIsolates.isEmpty) {
+      throw StateError(
+        'No running isolate exposes dart:io HTTP profiling. '
+        'Is the target a Flutter/Dart app that uses HttpClient / package:http?',
+      );
+    }
+    final primaryIsolateId = allIsolates.first.id;
 
     final caps = CapabilityConfig.instance;
-    final bool socketEnabled;
-    if (caps.isEnabled(Category.sockets)) {
-      socketEnabled = await vm.enableSocketProfiling();
-    } else {
-      socketEnabled = false;
+    bool anyHttpEnabled = false;
+    bool anySocketEnabled = false;
+    for (final iso in allIsolates) {
+      try {
+        final state = await vm.enableHttpLoggingForIsolate(iso.id);
+        if (state.enabled) anyHttpEnabled = true;
+      } catch (_) {/* embedder may not support per-isolate enable */}
+      if (caps.isEnabled(Category.sockets)) {
+        try {
+          if (await vm.enableSocketProfilingForIsolate(iso.id)) {
+            anySocketEnabled = true;
+          }
+        } catch (_) {/* harmless */}
+      }
     }
+    // Local synonyms so the rest of the function reads naturally.
+    final httpEnabled = anyHttpEnabled;
+    final socketEnabled = anySocketEnabled;
+    final isolateId = primaryIsolateId;
 
     final dao = CapturesDao();
     final sid = dao.createSession(
@@ -259,14 +284,14 @@ Future<Map<String, Object?>> performAttach({
         logBuffer: logBuffer,
         logStream: logStream,
         attachedAt: DateTime.now(),
-        httpProfilingEnabled: httpState.enabled,
+        httpProfilingEnabled: httpEnabled,
         socketProfilingEnabled: socketEnabled,
       ),
     );
 
     // Synthesize warnings for partial degradation.
     final warnings = <String>[];
-    if (!httpState.enabled) {
+    if (!httpEnabled) {
       warnings.add(
         'HTTP timeline logging did not enable cleanly — captured requests may be incomplete.',
       );
@@ -295,7 +320,7 @@ Future<Map<String, Object?>> performAttach({
 
     // One-line summary the agent can echo back to the user.
     final captured = <String>[];
-    if (httpState.enabled) captured.add('HTTP');
+    if (httpEnabled) captured.add('HTTP');
     if (socketEnabled) captured.add('sockets');
     if (logStream.isActive) captured.add('logs');
     final what =
