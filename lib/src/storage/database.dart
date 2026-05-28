@@ -107,6 +107,7 @@ class CapturesDatabase {
   static List<String> _migrationFor(int from, int to) {
     if (from == 1 && to == 2) return migrationV1toV2;
     if (from == 2 && to == 3) return migrationV2toV3;
+    if (from == 3 && to == 4) return migrationV3toV4;
     throw StateError('No migration defined for $from → $to.');
   }
 
