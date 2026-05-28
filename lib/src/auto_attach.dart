@@ -7,6 +7,15 @@ import 'tools/network_attach.dart' show performAttach;
 /// Background watcher that polls DTD periodically for new VM service URIs
 /// and auto-attaches to apps that appear AFTER the watcher started.
 ///
+/// **Mandatory allowlist:** every constructor call must pass a non-empty
+/// [allowedAppPatterns] list. Each pattern is a case-insensitive
+/// substring matched against the DTD app name (e.g. "sanga_mobile"
+/// matches "Flutter - iPhone 17 - Package: sanga_mobile"). The CLI
+/// surface (`--auto-attach=app1,app2`) has no boolean form — you can't
+/// enable auto-attach without saying which apps it's allowed to grab.
+/// Non-matching apps log a one-line stderr note + are added to the
+/// known set so they don't retry every tick.
+///
 /// Existing apps visible at startup are NOT auto-attached — they're seeded
 /// into the "known" set on the first tick. This avoids surprise-attaching
 /// to whatever was already running when the user enabled the flag, and
@@ -24,8 +33,14 @@ import 'tools/network_attach.dart' show performAttach;
 class AutoAttacher {
   AutoAttacher({
     required this.defaultDtdUri,
+    required this.allowedAppPatterns,
     Duration? pollInterval,
-  }) : pollInterval = pollInterval ?? _envPollInterval();
+  })  : assert(
+          allowedAppPatterns.isNotEmpty,
+          'allowedAppPatterns must be non-empty — auto-attach requires '
+          'an explicit allowlist of app substrings.',
+        ),
+        pollInterval = pollInterval ?? _envPollInterval();
 
   /// Reads `FLUTTER_NETWORK_MCP_AUTO_ATTACH_POLL_MS` (1000–60000).
   /// Default 5000ms.
@@ -40,10 +55,25 @@ class AutoAttacher {
   }
 
   final String? defaultDtdUri;
+
+  /// Case-insensitive substring patterns matched against the DTD app name.
+  /// Required + non-empty by constructor assertion. At least one pattern
+  /// must match an app's name for that app to be auto-attached.
+  final List<String> allowedAppPatterns;
+
   final Duration pollInterval;
   Timer? _timer;
   final Set<String> _seenUris = {};
   bool _seedComplete = false;
+
+  /// Reentrancy guard. `Timer.periodic` fires regardless of whether the
+  /// previous tick's Future completed; without this, two concurrent ticks
+  /// could race on _seenUris + double-issue performAttach.
+  bool _ticking = false;
+
+  /// Cap on the known-URI set so pathological vmServiceUri churn (a
+  /// hot-restart loop, say) can't grow memory unbounded.
+  static const int _seenUrisCap = 1024;
 
   bool get isRunning => _timer != null;
 
@@ -62,8 +92,9 @@ class AutoAttacher {
     _timer = Timer.periodic(pollInterval, (_) => _tick());
     io.stderr.writeln(
       'flutter_network_mcp: auto-attach watcher started '
-      '(poll ${pollInterval.inMilliseconds}ms; first tick seeds the known '
-      'set, subsequent ticks attach to NEW apps only).',
+      '(poll ${pollInterval.inMilliseconds}ms; allowlist: '
+      '${allowedAppPatterns.join(", ")}; first tick seeds the known set, '
+      'subsequent ticks attach NEW allowlisted apps only).',
     );
     unawaited(_tick());
   }
@@ -73,7 +104,40 @@ class AutoAttacher {
     _timer = null;
   }
 
+  /// Returns true when [appName] is matched by at least one allowlist
+  /// pattern (case-insensitive substring). Empty app names never match.
+  bool _matchesAllowlist(String appName) {
+    if (appName.isEmpty) return false;
+    final lower = appName.toLowerCase();
+    for (final pattern in allowedAppPatterns) {
+      if (pattern.isEmpty) continue;
+      if (lower.contains(pattern.toLowerCase())) return true;
+    }
+    return false;
+  }
+
   Future<void> _tick() async {
+    if (_ticking) return; // Re-entrancy guard.
+    _ticking = true;
+    // Defense-in-depth: top-level try/catch so an unexpected throw
+    // (ConcurrentModificationError on _seenUris, a stack underflow from
+    // some upstream API, anything) never escapes the Timer callback.
+    // Timer.periodic swallows callback exceptions into the zone, but
+    // explicit handling keeps the watcher running even when one tick
+    // blows up.
+    try {
+      await _runTick();
+    } catch (e, st) {
+      io.stderr.writeln(
+        'flutter_network_mcp: auto-attach tick crashed unexpectedly '
+        '($e). Watcher continues polling.\n$st',
+      );
+    } finally {
+      _ticking = false;
+    }
+  }
+
+  Future<void> _runTick() async {
     final dtd = SessionRegistry.instance.dtd;
 
     // Ensure DTD is connected. Don't disturb an existing connection —
@@ -95,19 +159,27 @@ class AutoAttacher {
       return;
     }
 
-    final currentUris = <String>{
-      for (final a in apps) (a.uri as String?) ?? '',
-    }..removeWhere((u) => u.isEmpty);
+    // Map uri → name for the current poll so the allowlist gate has
+    // the app name handy when filtering newUris.
+    final currentByUri = <String, String>{};
+    for (final a in apps) {
+      final uri = (a.uri as String?) ?? '';
+      if (uri.isEmpty) continue;
+      currentByUri[uri] = (a.name as String?) ?? '';
+    }
+    final currentUris = currentByUri.keys.toSet();
 
     // First tick: seed the known set without attaching. Apps that were
     // already running when the watcher started are NOT auto-grabbed.
     if (!_seedComplete) {
       _seenUris.addAll(currentUris);
+      _enforceSeenUrisCap();
       _seedComplete = true;
       if (currentUris.isNotEmpty) {
         io.stderr.writeln(
           'flutter_network_mcp: auto-attach seeded with ${currentUris.length} '
-          'existing app(s); will attach to NEW apps that appear after this.',
+          'existing app(s); will attach to NEW allowlisted apps that '
+          'appear after this.',
         );
       }
       return;
@@ -115,10 +187,26 @@ class AutoAttacher {
 
     final newUris = currentUris.difference(_seenUris);
     _seenUris.addAll(currentUris);
+    _enforceSeenUrisCap();
 
     for (final uri in newUris) {
-      // Defensive: skip if already attached (race condition between this
-      // tick and a manual network_attach the agent just fired).
+      final appName = currentByUri[uri] ?? '';
+
+      // Allowlist gate — the security-critical check. Non-matching apps
+      // log + are skipped; they stay in _seenUris so we don't retry
+      // every tick (acts as both rate-limit and audit trail).
+      if (!_matchesAllowlist(appName)) {
+        io.stderr.writeln(
+          'flutter_network_mcp: auto-attach skipped $uri '
+          '(app "${appName.isEmpty ? "(unnamed)" : appName}") — '
+          'no allowlist pattern matched. Allowlist: '
+          '${allowedAppPatterns.join(", ")}.',
+        );
+        continue;
+      }
+
+      // Defensive: skip if already attached (race between this tick and
+      // a manual network_attach the agent just fired).
       if (SessionRegistry.instance.attachedByUri(uri) != null) continue;
 
       try {
@@ -144,5 +232,22 @@ class AutoAttacher {
         );
       }
     }
+  }
+
+  /// Bounds _seenUris at [_seenUrisCap]. If we'd exceed, drop the older
+  /// half — the safe failure mode is that an old vmServiceUri might be
+  /// auto-attached again on a future tick, which performAttach's
+  /// per-URI duplicate guard catches if the URI is somehow still alive.
+  void _enforceSeenUrisCap() {
+    if (_seenUris.length <= _seenUrisCap) return;
+    final asList = _seenUris.toList();
+    _seenUris
+      ..clear()
+      ..addAll(asList.sublist(asList.length ~/ 2));
+    io.stderr.writeln(
+      'flutter_network_mcp: auto-attach known-URI set hit cap '
+      '($_seenUrisCap); pruned to ${_seenUris.length}. Pathological '
+      'vmServiceUri churn? File an issue.',
+    );
   }
 }
