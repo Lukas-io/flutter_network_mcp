@@ -59,6 +59,9 @@ Beyond capability gating, these env vars tune runtime behavior:
 | `FLUTTER_NETWORK_MCP_LOG_BUFFER` | 500 | 50–10000 | In-memory log ring buffer size for `logs_tail` live mode. |
 | `FLUTTER_NETWORK_MCP_DTD_URI` | — | — | Default DTD URI for `network_attach`. |
 | `FLUTTER_NETWORK_MCP_DATA_DIR` | — | — | Directory for `captures.db`. Equivalent to `--data-dir`. When set, the candidate-fallback chain is skipped — unwritable values error loudly. |
+| `FLUTTER_NETWORK_MCP_MAX_ATTACH` | 4 | 1–32 | Max concurrent attached sessions in multi-attach mode. |
+| `FLUTTER_NETWORK_MCP_AUTO_ATTACH` | — | `true`/`1` | Watch DTD for new apps and auto-attach. Equivalent to `--auto-attach`. |
+| `FLUTTER_NETWORK_MCP_AUTO_ATTACH_POLL_MS` | 5000 | 1000–60000 | Poll interval for the auto-attach watcher. |
 | `FLUTTER_NETWORK_MCP_CAPABILITIES` | (all) | — | Allowlist (see below). |
 | `FLUTTER_NETWORK_MCP_DISABLE` | — | — | Denylist (see below). |
 
@@ -146,6 +149,16 @@ How it works in practice:
 Single-attach is unchanged — when only one session is attached, every tool auto-resolves to it and no extra args are needed. Multi-attach only adds friction when you genuinely have two apps in flight, and the friction is a structured error with a ready-to-paste fix.
 
 Cap: `FLUTTER_NETWORK_MCP_MAX_ATTACH` env var, default 4 (clamped 1–32). Each attach costs ~100 KB of memory (log buffer) + one 2s polling timer + 3 VM stream subscriptions.
+
+### Auto-attach (`--auto-attach`)
+
+Pass `--auto-attach` (or set `FLUTTER_NETWORK_MCP_AUTO_ATTACH=true`) to have the server watch DTD for new apps and attach to them automatically. The watcher polls every 5 seconds (`FLUTTER_NETWORK_MCP_AUTO_ATTACH_POLL_MS` to tune, clamped 1000–60000).
+
+Key behaviour:
+- **Seed-and-skip on first tick** — apps already running when the server starts are NOT auto-attached. The watcher seeds its "known" set with whatever DTD reports first, then only attaches to URIs that appear in subsequent ticks (typically a fresh `flutter run` or a hot-restart that spawns a new DDS).
+- **Manual `network_detach` is respected** — once you detach, the URI stays in the known set, so the watcher won't re-grab it. To force a re-attach, restart the app (new VM service URI) or detach + re-attach manually.
+- **Cap is respected** — over-cap discoveries are logged and skipped without retrying.
+- **Off by default** — no surprise grabbing of app state.
 
 ## The 32 tools
 
