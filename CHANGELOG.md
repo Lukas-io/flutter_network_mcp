@@ -4,6 +4,36 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6.1] — 2026-05-28
+
+A security + reliability follow-up to 0.6.0. Closes a real auto-attach exposure that 0.6.0's audit caught after the merge.
+
+### Security — auto-attach allowlist (mandatory) — **BREAKING vs. 0.6.0**
+
+0.6.0 shipped `--auto-attach` as a boolean that captured every Flutter app DTD discovered after server start. A developer running `flutter run -t lib/main_prod.dart` against a target wired to staging-with-production-tokens (a common shortcut) would have prod traffic captured to disk without explicit consent.
+
+**Fix:**
+
+- `--auto-attach` is now an option taking a comma-separated allowlist of case-insensitive substring patterns matched against the app name DTD reports: `--auto-attach=sanga_mobile,sanga_driver`.
+- **There is no boolean form.** To enable auto-attach you MUST specify which apps it's allowed to grab. Empty / absent disables.
+- `FLUTTER_NETWORK_MCP_AUTO_ATTACH=app1,app2` follows the same semantics (env var changed from `true|1`).
+- Non-matching apps log a one-line stderr note and are added to the known-URI set so the watcher doesn't retry every tick (acts as both rate-limit and audit trail).
+- `AutoAttacher`'s constructor enforces this with an assertion — the class is impossible to instantiate without a non-empty allowlist.
+
+**Optional denylist** — `--auto-attach-deny=Pixel 7,Android emulator` (or env var `FLUTTER_NETWORK_MCP_AUTO_ATTACH_DENY=...`) excludes specific apps/devices even when the allowlist would otherwise admit them. Useful for cases where the allowlist is a broad package name (e.g. `sanga_mobile`) but a particular device or form factor should be skipped. Same case-insensitive substring matching as the allowlist. Deny wins over allow. DTD reports names like `Flutter - iPhone 17 - Package: sanga_mobile`, so substring patterns can target either the package or the device.
+
+**Migration from 0.6.0:** if you launched the server with `--auto-attach` (bool form, no value) in 0.6.0, change it to `--auto-attach=<app substring,...>`. Same for the env var. Without the value, the watcher silently stays off — no surprise grabbing.
+
+### Reliability — hardening of auto features
+
+- **AutoAttacher reentrancy guard** (`_ticking` flag). `Timer.periodic` fires regardless of whether the previous tick's Future completed; without the guard, two concurrent ticks could race on `_seenUris` + double-issue `performAttach`. Subsequent ticks are now no-ops while one is in flight.
+- **AutoAttacher top-level try/catch.** Any unexpected exception in a tick (e.g. `ConcurrentModificationError` on `_seenUris`, upstream API change) logs to stderr and the watcher keeps polling. Previously a bad tick would silently kill the watcher via the zone's swallowed-exception handler.
+- **`_seenUris` cap (1024).** Pathological vmServiceUri churn (hot-restart loop) can't grow memory unbounded. When exceeded, the older half is dropped; safe failure mode because `performAttach`'s per-URI duplicate guard catches re-attach attempts.
+- **`CapturesDatabase.open` generic catch** in `main.dart` covers `SqliteException` from schema-migration failures, sqlite3 native errors, and corrupt-DB-on-open scenarios. Previously only `FileSystemException` + `StateError` were handled; other failures crashed with a raw Dart stack. Now exits cleanly with code 70 (`EX_SOFTWARE`) + a recovery hint pointing at `--data-dir <fresh path>`.
+- **`LogStreamSubscriber.onError` handlers** on all three VM service stream listeners (`onLoggingEvent`, `onStdoutEvent`, `onStderrEvent`). Synchronous exceptions in listener callbacks and asynchronous stream errors are now routed to stderr; the subscription stays active. Previously a malformed Event or mid-stream disconnect could noisily kill the logging subsystem.
+
+None of this can break the user's Flutter app — the MCP runs in a separate process, communicates with the VM service via read-mostly RPCs, and the only side-effects on the app are profiling toggles (which the VM service is designed for). These hardenings keep US from breaking in the face of weird input; the user's app is unaffected.
+
 ## [0.6.0] — 2026-05-28
 
 ### Added — multi-attach

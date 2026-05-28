@@ -38,18 +38,34 @@ Future<void> main(List<String> args) async {
           'Comma-separated denylist of categories to disable. Same option '
           'set as --capabilities. Falls back to FLUTTER_NETWORK_MCP_DISABLE.',
     )
-    ..addFlag(
+    ..addOption(
       'auto-attach',
-      negatable: false,
       help:
-          'Watch DTD for new apps and auto-attach as they appear. Apps '
-          'already running at server startup are NOT auto-attached '
-          '(seed-and-skip on first tick). Manual network_detach survives — '
-          'detached apps stay in the known set, no re-attach. Poll '
-          'interval: FLUTTER_NETWORK_MCP_AUTO_ATTACH_POLL_MS (default '
-          '5000, clamped 1000–60000). Requires --dtd-uri or '
+          'Watch DTD for new apps and auto-attach them. Value is a '
+          'comma-separated allowlist of case-insensitive substring '
+          'patterns matched against the app name from DTD; only matching '
+          'apps are auto-attached. Example: '
+          '--auto-attach=sanga_mobile,sanga_driver. There is NO bool '
+          'form — to enable auto-attach you MUST specify which apps. '
+          'Absent or empty value disables. Apps already running at '
+          'startup are NOT auto-attached (seed-and-skip). Manual '
+          'network_detach survives — detached apps stay in the known '
+          'set. Poll interval: FLUTTER_NETWORK_MCP_AUTO_ATTACH_POLL_MS '
+          '(default 5000, clamped 1000–60000). Requires --dtd-uri or '
           'FLUTTER_NETWORK_MCP_DTD_URI. Env-var fallback: '
-          'FLUTTER_NETWORK_MCP_AUTO_ATTACH=true|1.',
+          'FLUTTER_NETWORK_MCP_AUTO_ATTACH=app1,app2.',
+    )
+    ..addOption(
+      'auto-attach-deny',
+      help:
+          'Optional denylist for auto-attach. Comma-separated case-'
+          'insensitive substring patterns matched against the app name '
+          'from DTD; matching apps are skipped even if they also match '
+          '--auto-attach. Useful for excluding specific devices like '
+          'physical hardware or emulators when the allowlist would '
+          'otherwise grab them. Example: '
+          '--auto-attach=sanga_mobile --auto-attach-deny="Pixel 7,Android emulator". '
+          'Env-var fallback: FLUTTER_NETWORK_MCP_AUTO_ATTACH_DENY=pat1,pat2.',
     )
     ..addFlag('help', abbr: 'h', negatable: false);
 
@@ -102,6 +118,19 @@ Future<void> main(List<String> args) async {
     io.stderr.writeln('flutter_network_mcp: ${e.message}');
     io.exitCode = 73;
     return;
+  } catch (e, st) {
+    // Defense-in-depth: schema migration failures throw SqliteException;
+    // sqlite3 native errors throw their own types; corrupt DB throws on
+    // first PRAGMA. Whatever the source, surface a clean error + exit
+    // code 70 (EX_SOFTWARE) instead of crashing with a raw Dart stack.
+    io.stderr.writeln(
+      'flutter_network_mcp: database open failed ($e). The DB may be '
+      'corrupted or running a migration this binary version doesn\'t '
+      'support. Try --data-dir <fresh path> to bypass.',
+    );
+    io.stderr.writeln(st);
+    io.exitCode = 70;
+    return;
   }
 
   // Hydrate user-defined alert patterns from the DB so they fire from the
@@ -113,13 +142,34 @@ Future<void> main(List<String> args) async {
   FlutterNetworkMcpServer.stdio(defaultDtdUri: dtdUri);
 
   // Optional: watch DTD for new apps and auto-attach. CLI flag takes
-  // priority; env var (FLUTTER_NETWORK_MCP_AUTO_ATTACH=true|1) is the
-  // fallback. No-op when no DTD URI is configured.
-  final autoAttachEnv = env['FLUTTER_NETWORK_MCP_AUTO_ATTACH']?.toLowerCase();
-  final autoAttach = (results['auto-attach'] as bool?) == true ||
-      autoAttachEnv == 'true' ||
-      autoAttachEnv == '1';
-  if (autoAttach) {
-    AutoAttacher(defaultDtdUri: dtdUri).start();
+  // priority; env var fallback is FLUTTER_NETWORK_MCP_AUTO_ATTACH=app1,app2.
+  // Value is a comma-separated allowlist of substring patterns. Empty /
+  // absent disables. No bool form — to enable auto-attach you must say
+  // which apps it's allowed to grab.
+  final autoAttachRaw = (results['auto-attach'] as String?) ??
+      env['FLUTTER_NETWORK_MCP_AUTO_ATTACH'];
+  final autoAttachAllowlist = _parseAllowlist(autoAttachRaw);
+  if (autoAttachAllowlist.isNotEmpty) {
+    final autoAttachDenyRaw = (results['auto-attach-deny'] as String?) ??
+        env['FLUTTER_NETWORK_MCP_AUTO_ATTACH_DENY'];
+    final autoAttachDenylist = _parseAllowlist(autoAttachDenyRaw);
+    AutoAttacher(
+      defaultDtdUri: dtdUri,
+      allowedAppPatterns: autoAttachAllowlist,
+      deniedAppPatterns: autoAttachDenylist,
+    ).start();
   }
+}
+
+/// Parses a comma-separated allowlist value into a list of trimmed, non-
+/// empty patterns. Returns empty when [raw] is null, empty, or contains
+/// only whitespace / empty segments.
+List<String> _parseAllowlist(String? raw) {
+  if (raw == null) return const [];
+  final out = <String>[];
+  for (final piece in raw.split(',')) {
+    final trimmed = piece.trim();
+    if (trimmed.isNotEmpty) out.add(trimmed);
+  }
+  return out;
 }

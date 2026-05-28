@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io' as io;
 
 import 'package:vm_service/vm_service.dart';
 
@@ -70,14 +71,27 @@ class LogStreamSubscriber {
         stack: stack,
         isolateId: isoId,
       );
-    }));
+    }, onError: _onStreamError));
 
-    _subs.add(service.onStdoutEvent.listen((event) {
-      _pushWriteEvent(buffer, event, 'stdout');
-    }));
-    _subs.add(service.onStderrEvent.listen((event) {
-      _pushWriteEvent(buffer, event, 'stderr');
-    }));
+    _subs.add(service.onStdoutEvent.listen(
+      (event) => _pushWriteEvent(buffer, event, 'stdout'),
+      onError: _onStreamError,
+    ));
+    _subs.add(service.onStderrEvent.listen(
+      (event) => _pushWriteEvent(buffer, event, 'stderr'),
+      onError: _onStreamError,
+    ));
+  }
+
+  /// Catches synchronous + asynchronous stream errors so they don't
+  /// propagate to the zone's uncaught handler (which would noise up
+  /// stderr or, worse, take down the MCP loop). All we lose is one
+  /// log record; the subscription stays active.
+  void _onStreamError(Object error, StackTrace stack) {
+    io.stderr.writeln(
+      'flutter_network_mcp: log stream error ($error). '
+      'Subscription continues.',
+    );
   }
 
   Future<void> stop() async {
