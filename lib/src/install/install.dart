@@ -2,6 +2,8 @@ import 'dart:io' as io;
 
 import 'package:path/path.dart' as p;
 
+import '../version.dart';
+
 /// `flutter_network_mcp install` subcommand: AOT-compiles this package's
 /// entrypoint via `dart compile exe` and writes the resulting native binary
 /// over the JIT wrapper that `dart pub global activate` ships.
@@ -45,15 +47,27 @@ Future<void> runInstall(List<String> args) async {
     return;
   }
 
+  // Resolve the git SHA from the source dir so we can bake it into the
+  // binary. `network_status` then surfaces it so the agent can tell what
+  // build is running.
+  final sha = currentCommitSha();
   io.stderr.writeln(
     'flutter_network_mcp install: compiling $source\n'
     '                          to $output\n'
+    '${sha != null ? "                       commit ${sha.substring(0, 12)}\n" : ""}'
     '(this takes ~10–20s; the resulting binary starts in <100ms).',
   );
 
   final compile = await io.Process.start(
     'dart',
-    ['compile', 'exe', source, '-o', output],
+    [
+      'compile',
+      'exe',
+      source,
+      if (sha != null) '-Dflutter_network_mcp_sha=$sha',
+      '-o',
+      output,
+    ],
     mode: io.ProcessStartMode.inheritStdio,
   );
   final exitCode = await compile.exitCode;
