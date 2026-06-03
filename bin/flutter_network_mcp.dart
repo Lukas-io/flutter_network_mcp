@@ -6,6 +6,7 @@ import 'package:flutter_network_mcp/src/config/capabilities.dart';
 import 'package:flutter_network_mcp/src/server.dart';
 import 'package:flutter_network_mcp/src/storage/database.dart';
 import 'package:flutter_network_mcp/src/tools/alert_patterns.dart' as alert_patterns;
+import 'package:flutter_network_mcp/src/vm/dtd_discovery.dart';
 
 Future<void> main(List<String> args) async {
   final parser = ArgParser()
@@ -13,7 +14,20 @@ Future<void> main(List<String> args) async {
       'dtd-uri',
       help:
           'Default DTD WebSocket URI for network_attach. Falls back to the '
-          'FLUTTER_NETWORK_MCP_DTD_URI environment variable.',
+          'FLUTTER_NETWORK_MCP_DTD_URI environment variable. When neither '
+          'is set the server auto-discovers from the standard package:dtd '
+          'discovery dir (~/Library/Application Support/dart/dtd on macOS) '
+          'unless --no-auto-discover-dtd is passed.',
+    )
+    ..addFlag(
+      'no-auto-discover-dtd',
+      negatable: false,
+      help:
+          'Disable auto-discovery of DTD from the standard package:dtd '
+          'discovery directory at startup. Use when you want a fully '
+          'explicit .mcp.json (paranoid configs, CI, multi-DTD machines '
+          'where guessing would be dangerous). Env-var fallback: '
+          'FLUTTER_NETWORK_MCP_AUTO_DISCOVER_DTD=false.',
     )
     ..addOption(
       'data-dir',
@@ -86,8 +100,31 @@ Future<void> main(List<String> args) async {
   }
 
   final env = io.Platform.environment;
-  final dtdUri = (results['dtd-uri'] as String?) ??
+  var dtdUri = (results['dtd-uri'] as String?) ??
       env['FLUTTER_NETWORK_MCP_DTD_URI'];
+
+  // Auto-discover the DTD URI from the standard package:dtd discovery dir
+  // when nothing was configured explicitly. Opt-out: --no-auto-discover-dtd
+  // or FLUTTER_NETWORK_MCP_AUTO_DISCOVER_DTD=false. When discovery finds
+  // nothing, dtdUri stays null and downstream behaviour is unchanged
+  // (network_attach reports its existing "no DTD URI configured" error).
+  final autoDiscover = !((results['no-auto-discover-dtd'] as bool?) ?? false) &&
+      (env['FLUTTER_NETWORK_MCP_AUTO_DISCOVER_DTD']?.toLowerCase() != 'false');
+  if (dtdUri == null && autoDiscover) {
+    final candidates = DtdDiscovery.discover();
+    final picked = candidates.isEmpty ? null : candidates.first;
+    if (picked != null) {
+      dtdUri = picked.wsUri;
+      io.stderr.writeln(
+        'flutter_network_mcp: auto-discovered DTD at $dtdUri '
+        '(pid ${picked.pid}, '
+        'workspaceRoot: ${picked.workspaceRoot ?? "(unknown)"}, '
+        'epoch ${picked.epoch.toIso8601String()}). '
+        'Pass --dtd-uri to override or --no-auto-discover-dtd to disable.',
+      );
+    }
+  }
+
   final dataDir = results['data-dir'] as String?;
   final capabilities =
       (results['capabilities'] as String?) ?? env['FLUTTER_NETWORK_MCP_CAPABILITIES'];
