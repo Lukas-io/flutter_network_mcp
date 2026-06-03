@@ -6,6 +6,7 @@ import '../config/capabilities.dart';
 import '../state/session.dart';
 import '../storage/captures_db.dart';
 import '../storage/database.dart';
+import '../vm/dtd_discovery.dart';
 import 'network_attach.dart' as attach_helper;
 import 'result.dart';
 
@@ -235,7 +236,38 @@ List<String> _suggestNextSteps(
   final defaultUri = dtd['defaultUri'] as String?;
 
   if (!dtdConnected && defaultUri == null) {
-    steps.add('No DTD URI — start the server with --dtd-uri or pass dtdUri/vmServiceUri to network_attach');
+    // Before falling back to "ask the user for a URI", peek at the
+    // package:dtd discovery directory — there may be a live DTD here
+    // that the agent can attach to without involving the user.
+    final discovered = DtdDiscovery.discover()
+        .where((c) => c.isLive)
+        .toList();
+    final cwdMatches = discovered.where((c) => c.matchesCwd).toList();
+    if (cwdMatches.isNotEmpty) {
+      final best = cwdMatches.first;
+      steps.add(
+        'network_attach dtdUri:"${best.wsUri}" — DTD discovered for cwd '
+        '(${best.workspaceRoot}, pid ${best.pid})',
+      );
+      if (cwdMatches.length > 1) {
+        steps.add(
+          'network_discover_dtd — ${cwdMatches.length} candidates match cwd, pick another',
+        );
+      }
+      return steps;
+    }
+    if (discovered.isNotEmpty) {
+      steps.add(
+        'network_discover_dtd — ${discovered.length} live DTD(s) on this '
+        'machine, none in cwd. Pass cwdMatch:false to see them.',
+      );
+      return steps;
+    }
+    steps.add(
+      'No DTD URI configured and none discovered. Launch a Flutter/Dart '
+      'app, then call network_discover_dtd to pick one up automatically — '
+      'or start the server with --dtd-uri.',
+    );
     return steps;
   }
   if (!dtdConnected && defaultUri != null) {

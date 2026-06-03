@@ -21,6 +21,7 @@ import 'tools/network_clear.dart';
 import 'tools/network_correlate.dart';
 import 'tools/network_detach.dart';
 import 'tools/network_diff.dart';
+import 'tools/network_discover_dtd.dart';
 import 'tools/network_get.dart';
 import 'tools/network_list.dart';
 import 'tools/network_query.dart';
@@ -75,6 +76,7 @@ base class FlutterNetworkMcpServer extends MCPServer with ToolsSupport {
     registerTool(networkStatusTool, (req) => networkStatus(req, defaultDtdUri));
     registerTool(networkAttachTool, (req) => networkAttach(req, defaultDtdUri));
     registerTool(networkDetachTool, networkDetach);
+    registerTool(networkDiscoverDtdTool, networkDiscoverDtd);
 
     if (caps.isEnabled(Category.http)) {
       registerTool(networkListTool, networkList);
