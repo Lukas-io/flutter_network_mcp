@@ -18,6 +18,7 @@ The index below is by **use case** ("I want to do X — which tool?"). Some tool
 
 ### [Getting started — first call of any session](tools/lifecycle/)
 - [`network_status`](tools/lifecycle/network_status.md) — what's reachable, what's pending, what's enabled. Auto-connects DTD.
+- [`network_discover_dtd`](tools/lifecycle/network_discover_dtd.md) — list DTDs on this machine from the standard `package:dtd` directory. Useful when multiple `flutter run` instances are active or when startup auto-discovery picked the wrong one (0.6.2+).
 - [`network_attach`](tools/lifecycle/network_attach.md) — open a capture session against a running app.
 
 ### [Finding a request](tools/finding/)
@@ -114,4 +115,4 @@ For `--capabilities` / `--disable` startup flags — the tools each capability g
 | `sessions` | `session_list`, `session_open`, `session_close`, `session_export`, `session_note`, `session_delete` |
 | `sql` | `network_query` |
 | `admin` | `ignored_hosts`, `redacted_headers`, `db_stats`, `db_vacuum`, `bodies_purge` |
-| _(always on)_ | `network_status`, `network_attach`, `network_detach` |
+| _(always on)_ | `network_status`, `network_attach`, `network_detach`, `network_discover_dtd` |

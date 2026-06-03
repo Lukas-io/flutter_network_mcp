@@ -1,11 +1,16 @@
 import 'dart:async';
 
 import 'package:dart_mcp/server.dart';
+import 'package:path/path.dart' as p;
 
 import '../config/capabilities.dart';
 import '../state/session.dart';
 import '../storage/captures_db.dart';
 import '../storage/database.dart';
+import '../update/update_check.dart';
+import '../version.dart';
+import '../vm/dtd_discovery.dart';
+import '../vm/dtd_probe.dart';
 import 'network_attach.dart' as attach_helper;
 import 'result.dart';
 
@@ -72,6 +77,7 @@ FutureOr<CallToolResult> networkStatus(
   ];
 
   final out = <String, Object?>{
+    'mcp': _buildMcpBlock(),
     'attachedCount': registry.attachedCount,
     'attached': attachedList,
     // Compact: emit "all" instead of the 8-element list in the common case.
@@ -134,21 +140,68 @@ FutureOr<CallToolResult> networkStatus(
     } catch (_) {/* DB might be mid-migration on first run */}
   }
 
-  // App discovery — possible now that DTD may be auto-connected above.
-  if (session.dtd.isConnected) {
-    try {
-      final apps = await session.dtd.getConnectedApps();
-      out['knownApps'] = [
-        for (final app in apps)
-          {
-            'name': app.name,
-            'uri': app.uri,
-            if (app.exposedUri != null) 'exposedUri': app.exposedUri,
-          },
-      ];
-    } catch (e) {
-      out['knownAppsError'] = e.toString();
+  // App discovery — multi-DTD aware in 0.6.2. Each `flutter run` spawns
+  // its own DTD; we probe ALL discovered DTDs in parallel (transient
+  // connections, never touches `session.dtd`) so the agent sees every
+  // app on the machine, not just the ones under the primary DTD.
+  //
+  // Each app's `dtdUri` + `workspaceRoot` tells the agent which DTD owns
+  // it, so cross-DTD attach can pick the right `dtdUri:` arg if needed
+  // (though direct `vmServiceUri:` works without DTD at all).
+  try {
+    final listings = await DtdProbe.probeAll();
+    final knownApps = <Map<String, Object?>>[];
+    final seenUris = <String>{};
+    for (final listing in listings) {
+      for (final app in listing.apps) {
+        if (!seenUris.add(app.uri)) continue;
+        knownApps.add({
+          'name': app.name,
+          'uri': app.uri,
+          if (app.exposedUri != null) 'exposedUri': app.exposedUri,
+          'dtdUri': listing.dtdUri.toString(),
+          if (listing.workspaceRoot != null)
+            'workspaceRoot': listing.workspaceRoot,
+        });
+      }
     }
+
+    // Defense-in-depth fallback: if the multi-DTD probe returned nothing
+    // (e.g. discovery files unreadable on this system) but the primary
+    // DTD IS connected, fall back to the single-DTD path so a working
+    // attach stays visible.
+    if (knownApps.isEmpty && session.dtd.isConnected) {
+      final apps = await session.dtd.getConnectedApps();
+      final primaryUri = session.dtd.connectedUri?.toString();
+      for (final app in apps) {
+        knownApps.add({
+          'name': app.name,
+          'uri': app.uri,
+          if (app.exposedUri != null) 'exposedUri': app.exposedUri,
+          if (primaryUri != null) 'dtdUri': primaryUri,
+        });
+      }
+    }
+
+    out['knownApps'] = knownApps;
+
+    // Surface per-DTD errors (e.g. one stale discovery file) so the agent
+    // can see why a known DTD didn't contribute apps.
+    final probeErrors = [
+      for (final listing in listings)
+        if (listing.error != null)
+          {
+            'dtdUri': listing.dtdUri.toString(),
+            if (listing.workspaceRoot != null)
+              'workspaceRoot': listing.workspaceRoot,
+            'error': listing.error,
+          },
+    ];
+    if (probeErrors.isNotEmpty) {
+      out['dtdProbeErrors'] = probeErrors;
+    }
+  } catch (e) {
+    out['knownAppsError'] = e.toString();
   }
 
   // Opt-in one-shot orient+attach: only fires when nothing is attached
@@ -183,6 +236,40 @@ FutureOr<CallToolResult> networkStatus(
   out['nextSteps'] = _suggestNextSteps(registry, session, out);
 
   return jsonResult(out);
+}
+
+/// Builds the `mcp` block — agent-readable identity for the running
+/// server. Includes version, commit SHA (when known), AOT/JIT mode, the
+/// one-command upgrade path, and (when the daily background check has
+/// flagged a newer release) the upstream version.
+///
+/// The agent reads this on every `network_status` call so it can:
+///   1. Tell the user what version is running ("you're on 0.6.2").
+///   2. Notice when an upgrade is available without scraping stderr.
+///   3. Hand the user a paste-ready `flutter_network_mcp update` command.
+Map<String, Object?> _buildMcpBlock() {
+  final block = <String, Object?>{
+    'version': packageVersion,
+    if (currentCommitSha() != null) 'commit': currentCommitSha(),
+    'isAot': isAotBuild,
+    'upgradeCommand': 'flutter_network_mcp update',
+  };
+
+  // Read the agent-readable update-status file written by UpdateCheck.
+  // Only surface when it flagged a newer release; otherwise the field is
+  // omitted so the absence of `updateAvailable` is itself a signal.
+  if (CapturesDatabase.isOpen) {
+    final dataDir = p.dirname(CapturesDatabase.instance.path);
+    final status = UpdateCheck.readStatusFile(dataDir);
+    if (status != null && status['isNewer'] == true) {
+      block['updateAvailable'] = {
+        'latest': status['latest'],
+        if (status['checkedAtMs'] != null) 'checkedAtMs': status['checkedAtMs'],
+      };
+    }
+  }
+
+  return block;
 }
 
 /// Returns 1–2 short hints telling the agent what to do given the current
@@ -235,7 +322,38 @@ List<String> _suggestNextSteps(
   final defaultUri = dtd['defaultUri'] as String?;
 
   if (!dtdConnected && defaultUri == null) {
-    steps.add('No DTD URI — start the server with --dtd-uri or pass dtdUri/vmServiceUri to network_attach');
+    // Before falling back to "ask the user for a URI", peek at the
+    // package:dtd discovery directory — there may be a live DTD here
+    // that the agent can attach to without involving the user.
+    final discovered = DtdDiscovery.discover()
+        .where((c) => c.isLive)
+        .toList();
+    final cwdMatches = discovered.where((c) => c.matchesCwd).toList();
+    if (cwdMatches.isNotEmpty) {
+      final best = cwdMatches.first;
+      steps.add(
+        'network_attach dtdUri:"${best.wsUri}" — DTD discovered for cwd '
+        '(${best.workspaceRoot}, pid ${best.pid})',
+      );
+      if (cwdMatches.length > 1) {
+        steps.add(
+          'network_discover_dtd — ${cwdMatches.length} candidates match cwd, pick another',
+        );
+      }
+      return steps;
+    }
+    if (discovered.isNotEmpty) {
+      steps.add(
+        'network_discover_dtd — ${discovered.length} live DTD(s) on this '
+        'machine, none in cwd. Pass cwdMatch:false to see them.',
+      );
+      return steps;
+    }
+    steps.add(
+      'No DTD URI configured and none discovered. Launch a Flutter/Dart '
+      'app, then call network_discover_dtd to pick one up automatically — '
+      'or start the server with --dtd-uri.',
+    );
     return steps;
   }
   if (!dtdConnected && defaultUri != null) {

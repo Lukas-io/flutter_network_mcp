@@ -3,6 +3,7 @@ import 'dart:io' as io;
 
 import 'state/session.dart';
 import 'tools/network_attach.dart' show performAttach;
+import 'vm/dtd_probe.dart';
 
 /// Background watcher that polls DTD periodically for new VM service URIs
 /// and auto-attaches to apps that appear AFTER the watcher started.
@@ -25,11 +26,11 @@ import 'tools/network_attach.dart' show performAttach;
 /// stderr note + are added to the known-URI set so they don't retry
 /// every tick (acts as both rate-limit and audit trail).
 ///
-/// Existing apps visible at startup are NOT auto-attached — they're seeded
-/// into the "known" set on the first tick. This avoids surprise-attaching
-/// to whatever was already running when the user enabled the flag, and
-/// matches the principle of explicit-first behaviour (no silent grab of
-/// state the user didn't ask for).
+/// Existing apps visible at startup ARE auto-attached when they match the
+/// allowlist (0.6.2 change — the allowlist is the explicit opt-in, no need
+/// to also wait for a Flutter restart). On the first tick, every running
+/// app goes through the same allowlist + denylist gate as later ticks; the
+/// `_seenUris` set still de-dupes so each URI is attached at most once.
 ///
 /// Manual `network_detach` survives auto-attach: a detached app's URI
 /// stays in the known set, so the next poll tick won't re-attach it.
@@ -93,8 +94,8 @@ class AutoAttacher {
   bool get isRunning => _timer != null;
 
   /// Starts the polling watcher. No-op if [defaultDtdUri] is null (we have
-  /// nothing to poll). Fires the first tick immediately so the seed phase
-  /// doesn't wait `pollInterval`.
+  /// nothing to poll). Fires the first tick immediately so allowlisted
+  /// already-running apps attach without waiting `pollInterval`.
   void start() {
     if (defaultDtdUri == null) {
       io.stderr.writeln(
@@ -111,8 +112,8 @@ class AutoAttacher {
     io.stderr.writeln(
       'flutter_network_mcp: auto-attach watcher started '
       '(poll ${pollInterval.inMilliseconds}ms; allowlist: '
-      '${allowedAppPatterns.join(", ")}$denyLine; first tick seeds the '
-      'known set, subsequent ticks attach NEW allowlisted apps only).',
+      '${allowedAppPatterns.join(", ")}$denyLine; allowlisted apps already '
+      'running attach on the first tick).',
     );
     unawaited(_tick());
   }
@@ -170,51 +171,45 @@ class AutoAttacher {
   }
 
   Future<void> _runTick() async {
-    final dtd = SessionRegistry.instance.dtd;
-
-    // Ensure DTD is connected. Don't disturb an existing connection —
-    // DtdClient.connect() disconnects-then-reconnects, which would break
-    // any attached session's DTD-derived state.
-    if (!dtd.isConnected) {
-      try {
-        await dtd.connect(Uri.parse(defaultDtdUri!));
-      } catch (_) {
-        // DTD might be down between polls — silently skip this tick.
-        return;
-      }
-    }
-
-    final List<dynamic> apps;
+    // Multi-DTD aware in 0.6.2. Each `flutter run` spawns its own DTD;
+    // DtdProbe.probeAll opens TRANSIENT clients across every live DTD on
+    // the machine and aggregates the app list. The primary
+    // `Session.instance.dtd` is left untouched — cross-DTD attaches go
+    // via `performAttach(vmServiceUri: ...)` which bypasses DTD entirely.
+    final List<DtdAppListing> listings;
     try {
-      apps = await dtd.getConnectedApps();
+      listings = await DtdProbe.probeAll();
     } catch (_) {
+      // Discovery filesystem read failed — silently skip this tick. The
+      // primary DTD (if connected) keeps capturing on its existing
+      // attachments; we just don't pick up new ones this tick.
       return;
     }
 
-    // Map uri → name for the current poll so the allowlist gate has
-    // the app name handy when filtering newUris.
+    // Map uri → name across ALL DTDs. De-duped by uri (same vmService
+    // shouldn't surface from two DTDs but defend anyway).
     final currentByUri = <String, String>{};
-    for (final a in apps) {
-      final uri = (a.uri as String?) ?? '';
-      if (uri.isEmpty) continue;
-      currentByUri[uri] = (a.name as String?) ?? '';
+    for (final listing in listings) {
+      for (final a in listing.apps) {
+        if (a.uri.isEmpty) continue;
+        // First listing wins on duplicate — order is discovery rank.
+        currentByUri.putIfAbsent(a.uri, () => a.name ?? '');
+      }
     }
     final currentUris = currentByUri.keys.toSet();
 
-    // First tick: seed the known set without attaching. Apps that were
-    // already running when the watcher started are NOT auto-grabbed.
-    if (!_seedComplete) {
-      _seenUris.addAll(currentUris);
-      _enforceSeenUrisCap();
-      _seedComplete = true;
-      if (currentUris.isNotEmpty) {
-        io.stderr.writeln(
-          'flutter_network_mcp: auto-attach seeded with ${currentUris.length} '
-          'existing app(s); will attach to NEW allowlisted apps that '
-          'appear after this.',
-        );
-      }
-      return;
+    // First tick: log intent then fall through. 0.6.2 dropped the old
+    // "seed without attaching" behaviour — the allowlist is the explicit
+    // opt-in, so allowlisted apps already running should attach now, not
+    // wait for the user to flutter-restart.
+    final isFirstTick = !_seedComplete;
+    _seedComplete = true;
+    if (isFirstTick && currentUris.isNotEmpty) {
+      io.stderr.writeln(
+        'flutter_network_mcp: auto-attach first tick — evaluating '
+        '${currentUris.length} currently-running app(s) against allowlist '
+        '${allowedAppPatterns.join(", ")}. Matching apps attach immediately.',
+      );
     }
 
     final newUris = currentUris.difference(_seenUris);
