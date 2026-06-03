@@ -4,6 +4,111 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6.2] — 2026-06-03
+
+Zero-config DTD discovery. Before 0.6.2 the typical onboarding flow was: launch `flutter run`, copy the printed `ws://...` URI from the IDE console, paste it into `.mcp.json`, restart Claude Code. Agents working in fresh sessions ended up running `lsof + ps` to find the port and still failed because they couldn't get the security token. 0.6.2 reads the canonical `package:dtd` discovery files directly — token included — so the MCP just works when launched in a project with a live `flutter run`.
+
+### Added — DTD auto-discovery
+
+- **Startup hook** (`bin/flutter_network_mcp.dart`): when neither `--dtd-uri` nor `FLUTTER_NETWORK_MCP_DTD_URI` is set, the server scans the standard `package:dtd` discovery directory and picks the best live candidate. A one-line stderr note names the chosen DTD's pid + workspaceRoot + epoch and points at the override flags.
+- **Discovery paths** (per-platform, matches `package:dtd`):
+
+  | Platform | Path |
+  |---|---|
+  | macOS   | `$HOME/Library/Application Support/dart/dtd` |
+  | Linux   | `$XDG_CONFIG_HOME/dart/dtd` (fallback `$HOME/.config/dart/dtd`) |
+  | Windows | `%APPDATA%/dart/dtd` |
+
+- **Ranking** (best-first): live process (`kill -0` POSIX / `tasklist` Windows) over dead, `workspaceRoot == cwd` over mismatch over null, newer epoch over older.
+- **Defensive 64-file scan cap** so a pathologically-busy discovery dir can't blow the budget. Errors during scan log to stderr and produce an empty list — never throws.
+
+### Added — `network_discover_dtd` tool
+
+New always-on lifecycle tool that exposes the discovery surface to the agent on demand. Inputs: `cwdMatch` (default true), `includeStale` (default false — dead-pid candidates), `limit` (default 5, hard cap 20). Returns per-candidate `wsUri / pid / epochMs / dartVersion / workspaceRoot / ideName / isLive / matchesCwd` plus a `recommended` URI and ranked `nextSteps` pointing at `network_attach`. Use it when:
+
+- Multiple `flutter run` instances are running and startup auto-discovery picked the wrong one.
+- A discovery file might be stale (Dart process died uncleanly) — `includeStale:true` to inspect.
+- The MCP was launched from outside the project's cwd — `cwdMatch:false` to see every DTD.
+
+### Changed — `network_status` integration
+
+`_suggestNextSteps()` now consults discovery when not attached and no DTD is configured, instead of the old "ask the user for a URI" message. Live cwd-matching candidates surface as `network_attach dtdUri:"<wsUri>"`. Live non-cwd-matching candidates surface as a `network_discover_dtd` suggestion to disambiguate. Empty discovery falls back to the existing "No DTD URI configured" message but now mentions `network_discover_dtd` as the entry point.
+
+### Added — env vars
+
+- `FLUTTER_NETWORK_MCP_AUTO_DISCOVER_DTD` (default enabled; set to `false` to disable). Equivalent to `--no-auto-discover-dtd`.
+
+### Added — `install` and `update` subcommands
+
+`dart pub global activate -s git URL` ships a JIT snapshot wrapper that re-runs `pub get` + recompiles on every spawn (~1–2s cold). The MCP host's JSON-RPC handshake can race the recompile and mark the server "Failed to connect" on first attach, then succeed on the next probe — flickering connection status.
+
+- `flutter_network_mcp install` runs `dart compile exe` and overwrites the JIT wrapper at `~/.pub-cache/bin/flutter_network_mcp` (or platform equivalent) with a native binary. Startup drops to <100ms; no recompile, no flicker. Writes `<data-dir>/.compiled` marker so the `update` subcommand knows to re-AOT.
+- `flutter_network_mcp update` re-runs `dart pub global activate -s git https://github.com/Lukas-io/flutter_network_mcp.git` and (if `.compiled` exists) re-runs the AOT compile so the upgrade doesn't silently downgrade you back to the JIT wrapper.
+- **JIT-mode detection** at startup via `bool.fromEnvironment('dart.vm.product')` (canonical Dart AOT-vs-JIT check). When running as JIT, one-line stderr nudge points at the install subcommand. Silence with `FLUTTER_NETWORK_MCP_NO_JIT_NUDGE=true`.
+
+### Added — multi-DTD app enumeration
+
+Each `flutter run` spawns its own DTD. Before 0.6.2, the MCP connected to one DTD and only saw the apps registered to THAT DTD. A user with sanga_mobile + sanga_driver + a sample in three `flutter run` terminals saw only ONE in `network_status.knownApps`.
+
+New `lib/src/vm/dtd_probe.dart` enumerates apps across every live DTD on the machine via TRANSIENT `DtdClient` connections — never touches `Session.instance.dtd` or attached session state. Parallel `Future.wait` with a 1.5s per-probe timeout so one hung DTD can't block the others. Result cached for 30s keyed by discovery-key (sorted pid:epoch tuples).
+
+`network_status.knownApps` now lists apps across all DTDs. Each entry carries new `dtdUri` + `workspaceRoot` fields naming the source DTD — the agent can pick the right `dtdUri:` arg for `network_attach` if needed, though direct `vmServiceUri:` works without DTD at all. Existing fields (`name`, `uri`, `exposedUri`) unchanged. Per-DTD probe errors surface in `dtdProbeErrors`.
+
+AutoAttacher uses the same probe so `--auto-attach=sanga_mobile,sanga_driver` works across multiple DTDs — when a matching app is found in a DTD OTHER than the primary, attach happens via `performAttach(vmServiceUri: ...)` (the existing branch that bypasses DTD entirely), so the primary connection is never disturbed.
+
+### Changed — auto-attach first tick
+
+0.6.1's defensive design seeded already-running apps into `_seenUris` on the first tick of `AutoAttacher` WITHOUT attaching them. But 0.6.1 also made the allowlist mandatory — the user has already explicitly named which apps to grab. Skip-on-first-tick meant if sanga_mobile was running before the MCP came up, the agent couldn't see it until a Flutter restart.
+
+The early-return at `auto_attach.dart:206` is dropped. First-tick behaviour now: log the intent (`auto-attach first tick — evaluating N currently-running app(s) against allowlist X`), then fall through to the standard allowlist gate + `performAttach` loop. The existing `_seenUris` de-dupe (post-attach the URI joins the set) prevents double-attach on subsequent ticks. Allowlist + denylist gates unchanged.
+
+### Added — startup version check
+
+`lib/src/update/update_check.dart` runs at most once per UTC day. Fetches `pubspec.yaml` from `master` via raw.githubusercontent.com (no GitHub API rate limits), parses the `version:` line, compares against the embedded `packageVersion`. When newer, one stderr nudge names the upstream version + the `update` subcommand. Uses `dart:io HttpClient` directly (no new dependency). Fire-and-forget from `main()` — never blocks the MCP-host handshake. All errors swallowed silently.
+
+Cache file: `<data-dir>/.update-check` (one-line ISO timestamp; touched on every successful poll). Opt-out: `FLUTTER_NETWORK_MCP_NO_UPDATE_CHECK=true` skips the whole probe.
+
+### Added — env vars
+
+- `FLUTTER_NETWORK_MCP_AUTO_DISCOVER_DTD` (default enabled; set to `false` to disable). Equivalent to `--no-auto-discover-dtd`.
+- `FLUTTER_NETWORK_MCP_NO_JIT_NUDGE` (`true` to silence the JIT-mode install nudge).
+- `FLUTTER_NETWORK_MCP_NO_UPDATE_CHECK` (`true` to skip the daily version probe entirely).
+
+### Reconfiguring without `mcp remove + add`
+
+README gains a "Reconfiguring without re-registering" section explaining that every CLI flag has an env-var fallback. Edit shell rc, restart your MCP host, new config takes effect — no `claude mcp remove + add` cycle.
+
+### Added — agent-readable `mcp` block in `network_status`
+
+`network_status` responses now carry a top-level `mcp` block with `version`, `commit` (when known), `isAot`, `upgradeCommand`, and (when the daily background check has flagged a newer release) `updateAvailable: { latest, checkedAtMs }`. The agent can read this on every `network_status` call to identify the running build and recommend the upgrade command without scraping stderr.
+
+**Commit SHA bake-in.** `flutter_network_mcp install` resolves the source dir's commit via `git rev-parse HEAD` and passes `-Dflutter_network_mcp_sha=<sha>` to `dart compile exe`. Under JIT, the same constant falls back to a runtime git read against the activated source dir. Both paths cache per process.
+
+**Status file.** `UpdateCheck.maybeCheck` now writes `<data-dir>/.update-status.json` alongside the existing `.update-check` cache so `network_status` can surface the result without re-hitting the network.
+
+### Added — `autoAttachSuggestion` on `network_attach`
+
+After a successful attach, the response includes an `autoAttachSuggestion` block when the attached app isn't already covered by the `FLUTTER_NETWORK_MCP_AUTO_ATTACH` allowlist. The block carries:
+
+- `appName` / `pattern` (extracted token — "sanga_mobile" from "Flutter - iPhone 17 - Package: sanga_mobile")
+- `currentAllowlist`, `enabled`
+- `suggestedShellLine` (paste-ready `export ...`)
+- `agentAction` (explicit instruction to ASK THE USER before editing anything)
+
+The agent reads `agentAction`, asks the user whether to add the app to auto-attach for future sessions, and only edits the shell rc on confirmation. Already-allowlisted apps get no hint (no nag). The goal: turn one-off attaches into durable auto-attach config without making the user type `claude mcp remove + add`.
+
+New `lib/src/config/auto_attach_config.dart` publishes the resolved allowlist + denylist as a process-lifetime singleton so non-`bin/` tools can read the live config without re-parsing.
+
+### Notes — crash telemetry TODO
+
+User-asked TODO marker for a future opt-IN crash-telemetry channel (so bugs come back to the maintainer without a GitHub roundtrip). NOT IMPLEMENTED in 0.6.2. New `docs/CRASH_REPORTING.md` sketches the design — opt-IN env var, anonymized payload (version, OS, error class, stack head with paths redacted), no PII / source paths, local audit trail, single maintainer-controlled collector endpoint TBD. Marker comment in `bin/flutter_network_mcp.dart` points at the design doc.
+
+### Notes
+
+- Live-verified on macOS against 4 currently-running DTDs (sanga_mobile, sanga_driver, two dart-sdk Android Studio sessions). The Linux + Windows path branches were reviewed but not runtime-tested in this round.
+- No security gap: the discovery files are written by `package:dtd` itself and are protected by per-user filesystem permissions. The MCP can only see what the user can see.
+- Tool count: 33 → **34** (`network_discover_dtd` added under Lifecycle). Tool surface unchanged in the multi-DTD work — only `knownApps` shape gained additive fields.
+
 ## [0.6.1] — 2026-05-28
 
 A security + reliability follow-up to 0.6.0. Closes a real auto-attach exposure that 0.6.0's audit caught after the merge.

@@ -1,19 +1,95 @@
+import 'dart:async' show runZonedGuarded, unawaited;
 import 'dart:io' as io;
 
 import 'package:args/args.dart';
 import 'package:flutter_network_mcp/src/auto_attach.dart';
+import 'package:flutter_network_mcp/src/config/auto_attach_config.dart';
 import 'package:flutter_network_mcp/src/config/capabilities.dart';
+import 'package:flutter_network_mcp/src/install/install.dart';
+import 'package:flutter_network_mcp/src/install/update.dart';
 import 'package:flutter_network_mcp/src/server.dart';
 import 'package:flutter_network_mcp/src/storage/database.dart';
 import 'package:flutter_network_mcp/src/tools/alert_patterns.dart' as alert_patterns;
+import 'package:flutter_network_mcp/src/update/update_check.dart';
+import 'package:flutter_network_mcp/src/version.dart';
+import 'package:flutter_network_mcp/src/vm/dtd_discovery.dart';
+import 'package:path/path.dart' as p;
+
+// TODO(crash-telemetry): wrap main() in runZonedGuarded to capture uncaught
+// exceptions + POST anonymized (version, OS, error class, stack head — no
+// source paths, no app data, no headers) to a maintainer-controlled
+// collector endpoint. Opt-IN via FLUTTER_NETWORK_MCP_CRASH_REPORT=true.
+// See docs/CRASH_REPORTING.md for the full design sketch. NOT IMPLEMENTED
+// in 0.6.2 — placeholder only.
 
 Future<void> main(List<String> args) async {
+  // Top-level zone guard. Anything that escapes the per-call try/catches
+  // inside the server, capture writer, gateways, etc. lands here — we log
+  // it cleanly to stderr (so the MCP host sees a closed channel, not a
+  // raw Dart trace) and set exit code 70 (EX_SOFTWARE).
+  //
+  // When crash telemetry lands (see docs/CRASH_REPORTING.md), the error
+  // handler will additionally POST an anonymized payload to the
+  // maintainer's collector — opt-IN only.
+  await runZonedGuarded(() => _runMain(args), (error, stack) {
+    io.stderr.writeln(
+      'flutter_network_mcp: UNCAUGHT ERROR ($error). The MCP host will see '
+      'the stdio channel close — restart your MCP host to recover. Please '
+      'report this at https://github.com/Lukas-io/flutter_network_mcp/issues '
+      'with the trace below.\n$stack',
+    );
+    io.exitCode = 70;
+  });
+}
+
+Future<void> _runMain(List<String> args) async {
+  // Subcommands short-circuit ArgParser. Keep this dispatch FIRST so a
+  // typo on the main flags doesn't pre-empt `install` / `update`.
+  if (args.isNotEmpty) {
+    switch (args.first) {
+      case 'install':
+        return runInstall(args.skip(1).toList());
+      case 'update':
+        return runUpdate(args.skip(1).toList());
+    }
+  }
+
+  // JIT-mode startup nudge. The standard `dart pub global activate -s git`
+  // install ships a snapshot wrapper that recompiles on every spawn (~1–2s
+  // cold), which the MCP host can race and mark the server "Failed to
+  // connect". `bool.fromEnvironment('dart.vm.product')` is the canonical
+  // AOT-vs-JIT check — true only when compiled with `dart compile exe`.
+  final envForNudge = io.Platform.environment;
+  if (!isAotBuild &&
+      envForNudge['FLUTTER_NETWORK_MCP_NO_JIT_NUDGE']?.toLowerCase() != 'true') {
+    io.stderr.writeln(
+      'flutter_network_mcp: running in JIT mode — slow cold-start may '
+      'cause MCP host handshake timeouts ("Failed to connect" on first '
+      'attach, then success on the next probe). Run '
+      '`flutter_network_mcp install` once for sub-100ms native startup. '
+      '(Set FLUTTER_NETWORK_MCP_NO_JIT_NUDGE=true to silence.)',
+    );
+  }
+
   final parser = ArgParser()
     ..addOption(
       'dtd-uri',
       help:
           'Default DTD WebSocket URI for network_attach. Falls back to the '
-          'FLUTTER_NETWORK_MCP_DTD_URI environment variable.',
+          'FLUTTER_NETWORK_MCP_DTD_URI environment variable. When neither '
+          'is set the server auto-discovers from the standard package:dtd '
+          'discovery dir (~/Library/Application Support/dart/dtd on macOS) '
+          'unless --no-auto-discover-dtd is passed.',
+    )
+    ..addFlag(
+      'no-auto-discover-dtd',
+      negatable: false,
+      help:
+          'Disable auto-discovery of DTD from the standard package:dtd '
+          'discovery directory at startup. Use when you want a fully '
+          'explicit .mcp.json (paranoid configs, CI, multi-DTD machines '
+          'where guessing would be dangerous). Env-var fallback: '
+          'FLUTTER_NETWORK_MCP_AUTO_DISCOVER_DTD=false.',
     )
     ..addOption(
       'data-dir',
@@ -48,9 +124,11 @@ Future<void> main(List<String> args) async {
           '--auto-attach=sanga_mobile,sanga_driver. There is NO bool '
           'form — to enable auto-attach you MUST specify which apps. '
           'Absent or empty value disables. Apps already running at '
-          'startup are NOT auto-attached (seed-and-skip). Manual '
-          'network_detach survives — detached apps stay in the known '
-          'set. Poll interval: FLUTTER_NETWORK_MCP_AUTO_ATTACH_POLL_MS '
+          'startup that match the allowlist ARE auto-attached on the '
+          'first tick (0.6.2 change — the allowlist is the explicit '
+          'opt-in). Manual network_detach survives — detached apps '
+          'stay in the known set so they won\'t re-attach. '
+          'Poll interval: FLUTTER_NETWORK_MCP_AUTO_ATTACH_POLL_MS '
           '(default 5000, clamped 1000–60000). Requires --dtd-uri or '
           'FLUTTER_NETWORK_MCP_DTD_URI. Env-var fallback: '
           'FLUTTER_NETWORK_MCP_AUTO_ATTACH=app1,app2.',
@@ -86,8 +164,31 @@ Future<void> main(List<String> args) async {
   }
 
   final env = io.Platform.environment;
-  final dtdUri = (results['dtd-uri'] as String?) ??
+  var dtdUri = (results['dtd-uri'] as String?) ??
       env['FLUTTER_NETWORK_MCP_DTD_URI'];
+
+  // Auto-discover the DTD URI from the standard package:dtd discovery dir
+  // when nothing was configured explicitly. Opt-out: --no-auto-discover-dtd
+  // or FLUTTER_NETWORK_MCP_AUTO_DISCOVER_DTD=false. When discovery finds
+  // nothing, dtdUri stays null and downstream behaviour is unchanged
+  // (network_attach reports its existing "no DTD URI configured" error).
+  final autoDiscover = !((results['no-auto-discover-dtd'] as bool?) ?? false) &&
+      (env['FLUTTER_NETWORK_MCP_AUTO_DISCOVER_DTD']?.toLowerCase() != 'false');
+  if (dtdUri == null && autoDiscover) {
+    final candidates = DtdDiscovery.discover();
+    final picked = candidates.isEmpty ? null : candidates.first;
+    if (picked != null) {
+      dtdUri = picked.wsUri;
+      io.stderr.writeln(
+        'flutter_network_mcp: auto-discovered DTD at $dtdUri '
+        '(pid ${picked.pid}, '
+        'workspaceRoot: ${picked.workspaceRoot ?? "(unknown)"}, '
+        'epoch ${picked.epoch.toIso8601String()}). '
+        'Pass --dtd-uri to override or --no-auto-discover-dtd to disable.',
+      );
+    }
+  }
+
   final dataDir = results['data-dir'] as String?;
   final capabilities =
       (results['capabilities'] as String?) ?? env['FLUTTER_NETWORK_MCP_CAPABILITIES'];
@@ -141,6 +242,16 @@ Future<void> main(List<String> args) async {
 
   FlutterNetworkMcpServer.stdio(defaultDtdUri: dtdUri);
 
+  // Background "is there a newer version?" probe. Daily-cached, opt-out
+  // via FLUTTER_NETWORK_MCP_NO_UPDATE_CHECK=true. Fire-and-forget — never
+  // blocks the MCP-host JSON-RPC handshake, never disturbs startup.
+  unawaited(
+    UpdateCheck.maybeCheck(
+      currentVersion: packageVersion,
+      dataDir: p.dirname(CapturesDatabase.instance.path),
+    ),
+  );
+
   // Optional: watch DTD for new apps and auto-attach. CLI flag takes
   // priority; env var fallback is FLUTTER_NETWORK_MCP_AUTO_ATTACH=app1,app2.
   // Value is a comma-separated allowlist of substring patterns. Empty /
@@ -149,10 +260,18 @@ Future<void> main(List<String> args) async {
   final autoAttachRaw = (results['auto-attach'] as String?) ??
       env['FLUTTER_NETWORK_MCP_AUTO_ATTACH'];
   final autoAttachAllowlist = _parseAllowlist(autoAttachRaw);
+  final autoAttachDenyRaw = (results['auto-attach-deny'] as String?) ??
+      env['FLUTTER_NETWORK_MCP_AUTO_ATTACH_DENY'];
+  final autoAttachDenylist = _parseAllowlist(autoAttachDenyRaw);
+
+  // Publish the resolved config so non-bin/ tools (network_attach's
+  // autoAttachSuggestion hint) can read it without re-parsing.
+  AutoAttachConfig.set(
+    allowed: autoAttachAllowlist,
+    denied: autoAttachDenylist,
+  );
+
   if (autoAttachAllowlist.isNotEmpty) {
-    final autoAttachDenyRaw = (results['auto-attach-deny'] as String?) ??
-        env['FLUTTER_NETWORK_MCP_AUTO_ATTACH_DENY'];
-    final autoAttachDenylist = _parseAllowlist(autoAttachDenyRaw);
     AutoAttacher(
       defaultDtdUri: dtdUri,
       allowedAppPatterns: autoAttachAllowlist,

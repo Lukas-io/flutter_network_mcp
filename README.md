@@ -18,9 +18,12 @@ Not for: production observability, traffic outside `dart:io` HTTP, or release/pr
 
 ```bash
 dart pub global activate -s git https://github.com/Lukas-io/flutter_network_mcp.git
+flutter_network_mcp install   # optional but recommended — AOT-compile for fast startup
 ```
 
 The binary lands at `~/.pub-cache/bin/flutter_network_mcp` (Flutter installs put that directory on `$PATH`). `package:sqlite3` ships its own native lib so there's no system dependency to chase.
+
+**Why the `install` step?** `dart pub global activate` ships a JIT snapshot wrapper that recompiles on every spawn (~1–2s cold). The MCP host's JSON-RPC handshake can race that recompile and mark the server "Failed to connect" on first attach, then succeed on the next probe — flickering connection status. `flutter_network_mcp install` runs `dart compile exe` once and overwrites the JIT wrapper with a native binary; startup drops to <100ms and the flicker goes away. If you skip it, the first-launch stderr emits a one-line nudge (silence with `FLUTTER_NETWORK_MCP_NO_JIT_NUDGE=true`).
 
 Then in any project's `.mcp.json` (or `~/.claude.json` for machine-wide):
 
@@ -36,7 +39,29 @@ Then in any project's `.mcp.json` (or `~/.claude.json` for machine-wide):
 }
 ```
 
-`--dtd-uri` is optional — pass it once and `network_attach` works with no args. The DTD WS URI is printed in the IDE console when you `flutter run`.
+`--dtd-uri` is optional in 0.6.2+. When omitted, the server auto-discovers a DTD on startup by reading the standard `package:dtd` discovery directory (`~/Library/Application Support/dart/dtd` on macOS) and picking the best live candidate matching your current working directory. The discovery files include the full WS URI + security token, so no token-hunting from IDE consoles is needed. To opt out (paranoid configs, CI), pass `--no-auto-discover-dtd` or set `FLUTTER_NETWORK_MCP_AUTO_DISCOVER_DTD=false`. See the [`network_discover_dtd`](docs/tools/lifecycle/network_discover_dtd.md) tool for on-demand discovery when multiple DTDs are running. **0.6.2 also enumerates apps across every live DTD** (each `flutter run` spawns its own DTD), so `network_status.knownApps` lists apps from every running `flutter run` on the machine, not just one. Each entry carries a `dtdUri` + `workspaceRoot` naming the source DTD.
+
+## Reconfiguring without `mcp remove + add`
+
+When you want to change CLI args (add `--auto-attach=...`, swap `--data-dir`, etc.) the natural reflex is `claude mcp remove flutter-network && claude mcp add flutter-network ...`. There's a quieter path: **every CLI flag has an env-var fallback**. Edit your shell rc:
+
+```bash
+# ~/.zshrc or ~/.bashrc
+export FLUTTER_NETWORK_MCP_AUTO_ATTACH=sanga_mobile,sanga_driver
+export FLUTTER_NETWORK_MCP_AUTO_ATTACH_DENY="Pixel 7"
+```
+
+Restart your MCP host (Claude Code, Cursor, …) and the new config takes effect — no `claude mcp remove`, no re-registration. The [Environment knobs](#environment-knobs-fine-tune-at-startup) table below lists every variable.
+
+## Updating
+
+```bash
+flutter_network_mcp update   # runs pub global activate + re-AOT if you installed
+```
+
+`flutter_network_mcp update` re-runs `dart pub global activate -s git https://github.com/Lukas-io/flutter_network_mcp.git` and, if you previously ran `flutter_network_mcp install`, re-runs the AOT compile so the upgrade doesn't silently downgrade you to the slow JIT wrapper. Restart your MCP host after running.
+
+The server **runs a daily background version check** (hits `raw.githubusercontent.com/Lukas-io/flutter_network_mcp/master/pubspec.yaml`, compares versions, nudges to stderr if newer). Cached at `<data-dir>/.update-check`; opt-out via `FLUTTER_NETWORK_MCP_NO_UPDATE_CHECK=true`.
 
 ## Found a bug? Let your agent file it
 
@@ -57,7 +82,8 @@ Beyond capability gating, these env vars tune runtime behavior:
 |---|---|---|---|
 | `FLUTTER_NETWORK_MCP_POLL_MS` | 2000 | 50–60000 | CaptureWriter poll interval. Lower for chatty apps, higher for quiet ones. |
 | `FLUTTER_NETWORK_MCP_LOG_BUFFER` | 500 | 50–10000 | In-memory log ring buffer size for `logs_tail` live mode. |
-| `FLUTTER_NETWORK_MCP_DTD_URI` | — | — | Default DTD URI for `network_attach`. |
+| `FLUTTER_NETWORK_MCP_DTD_URI` | — | — | Default DTD URI for `network_attach`. When unset, auto-discovery scans the standard `package:dtd` directory. |
+| `FLUTTER_NETWORK_MCP_AUTO_DISCOVER_DTD` | `true` | `false` to disable | Set `false` to skip filesystem DTD auto-discovery at startup. Equivalent to `--no-auto-discover-dtd`. |
 | `FLUTTER_NETWORK_MCP_DATA_DIR` | — | — | Directory for `captures.db`. Equivalent to `--data-dir`. When set, the candidate-fallback chain is skipped — unwritable values error loudly. |
 | `FLUTTER_NETWORK_MCP_MAX_ATTACH` | 4 | 1–32 | Max concurrent attached sessions in multi-attach mode. |
 | `FLUTTER_NETWORK_MCP_AUTO_ATTACH` | — | comma-list | **Allowlist** for auto-attach. Comma-separated substring patterns matched against the DTD app name. Non-empty value enables; empty / absent disables. Equivalent to `--auto-attach=app1,app2`. |
@@ -65,10 +91,12 @@ Beyond capability gating, these env vars tune runtime behavior:
 | `FLUTTER_NETWORK_MCP_AUTO_ATTACH_POLL_MS` | 5000 | 1000–60000 | Poll interval for the auto-attach watcher. |
 | `FLUTTER_NETWORK_MCP_CAPABILITIES` | (all) | — | Allowlist (see below). |
 | `FLUTTER_NETWORK_MCP_DISABLE` | — | — | Denylist (see below). |
+| `FLUTTER_NETWORK_MCP_NO_JIT_NUDGE` | — | `true` to silence | Suppresses the "running in JIT mode" stderr nudge that suggests `flutter_network_mcp install`. Set after you've decided you're fine with JIT startup. |
+| `FLUTTER_NETWORK_MCP_NO_UPDATE_CHECK` | — | `true` to silence | Skips the daily background version check entirely (no network access to GitHub raw on startup). |
 
 ## Capability gating (control your context budget)
 
-Thirty-three tools is a lot of schema for the agent to load. Disable the categories you don't use:
+Thirty-four tools is a lot of schema for the agent to load. Disable the categories you don't use:
 
 ```json
 {
@@ -85,7 +113,7 @@ Thirty-three tools is a lot of schema for the agent to load. Disable the categor
 }
 ```
 
-The opposite is `--disable sockets,sql,admin` — start from "all on" and remove. Lifecycle (`network_status`, `network_attach`, `network_detach`) is always on.
+The opposite is `--disable sockets,sql,admin` — start from "all on" and remove. Lifecycle (`network_status`, `network_attach`, `network_detach`, `network_discover_dtd`) is always on.
 
 Categories: `http` · `sockets` · `logs` · `alerts` · `search` · `sessions` · `sql` · `admin`. Env vars: `FLUTTER_NETWORK_MCP_CAPABILITIES`, `FLUTTER_NETWORK_MCP_DISABLE`.
 
@@ -186,7 +214,7 @@ Key behaviour:
 
 DTD reports app names like `Flutter - iPhone 17 - Package: sanga_mobile` — so substring patterns can target either the package (`sanga_mobile`) or the device (`iPhone 17`, `Android emulator`, `iOS Simulator`). Example: `--auto-attach=sanga_mobile --auto-attach-deny="Android emulator"` auto-attaches sanga_mobile only on physical iOS + iOS Simulator.
 
-## The 33 tools
+## The 34 tools
 
 Each tool's MCP `description` (loaded into every agent at handshake) tells the agent WHEN to reach for it. This table is the same information at a glance — useful when you want to remind an agent that a tool exists, or when picking the right one yourself.
 
@@ -198,6 +226,7 @@ Each tool's MCP `description` (loaded into every agent at handshake) tells the a
 | `network_status` | — | Always call first. Reports `attached:[]` list, DB path, active capabilities, known apps, pending alerts. Will auto-attach if exactly one app is reachable and nothing is attached yet. |
 | `network_attach` | — | Connect to a running Flutter/Dart app to start capturing HTTP, sockets, and logs into a new session. **0.6.0:** can be called multiple times for different apps; per-vmServiceUri duplicate guard prevents accidental same-app re-attach. |
 | `network_detach` | ✅ + `all:true` | End one capture session (sessionId / appNameContains), or `all:true` for every attached. DTD disconnects only when nothing remains attached. |
+| `network_discover_dtd` | — | List DTDs on this machine from the standard `package:dtd` discovery dir. Auto-runs at startup when `--dtd-uri` is unset; call directly when multiple DTDs are running or to inspect stale candidates (`includeStale:true`). |
 | **HTTP** | | |
 | `network_list` | ✅ | Browse recent HTTP requests by metadata: host, method, status, time. Cursor-paged. |
 | `network_get` | ✅ | Read full details of ONE request — headers + body + lifecycle events. Use after `network_list` or `network_search` finds the id. |
