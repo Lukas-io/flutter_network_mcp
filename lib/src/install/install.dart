@@ -58,18 +58,29 @@ Future<void> runInstall(List<String> args) async {
     '(this takes ~10–20s; the resulting binary starts in <100ms).',
   );
 
-  final compile = await io.Process.start(
-    'dart',
-    [
-      'compile',
-      'exe',
-      source,
-      if (sha != null) '-Dflutter_network_mcp_sha=$sha',
-      '-o',
-      output,
-    ],
-    mode: io.ProcessStartMode.inheritStdio,
-  );
+  final io.Process compile;
+  try {
+    compile = await io.Process.start(
+      'dart',
+      [
+        'compile',
+        'exe',
+        source,
+        if (sha != null) '-Dflutter_network_mcp_sha=$sha',
+        '-o',
+        output,
+      ],
+      mode: io.ProcessStartMode.inheritStdio,
+    );
+  } on io.ProcessException catch (e) {
+    io.stderr.writeln(
+      'flutter_network_mcp install: failed to spawn `dart` (${e.message}). '
+      'Is the Dart SDK on your PATH? Install from https://dart.dev/get-dart, '
+      'verify with `which dart`, then retry.',
+    );
+    io.exitCode = 127;
+    return;
+  }
   final exitCode = await compile.exitCode;
   if (exitCode != 0) {
     io.stderr.writeln(
