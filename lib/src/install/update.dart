@@ -20,11 +20,22 @@ Future<void> runUpdate(List<String> args) async {
     'flutter_network_mcp update: re-activating from $repo …',
   );
 
-  final activate = await io.Process.start(
-    'dart',
-    ['pub', 'global', 'activate', '-s', 'git', repo],
-    mode: io.ProcessStartMode.inheritStdio,
-  );
+  final io.Process activate;
+  try {
+    activate = await io.Process.start(
+      'dart',
+      ['pub', 'global', 'activate', '-s', 'git', repo],
+      mode: io.ProcessStartMode.inheritStdio,
+    );
+  } on io.ProcessException catch (e) {
+    io.stderr.writeln(
+      'flutter_network_mcp update: failed to spawn `dart` (${e.message}). '
+      'Is the Dart SDK on your PATH? Install from https://dart.dev/get-dart, '
+      'verify with `which dart`, then retry.',
+    );
+    io.exitCode = 127;
+    return;
+  }
   final activateCode = await activate.exitCode;
   if (activateCode != 0) {
     io.stderr.writeln(

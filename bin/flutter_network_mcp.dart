@@ -1,4 +1,4 @@
-import 'dart:async' show unawaited;
+import 'dart:async' show runZonedGuarded, unawaited;
 import 'dart:io' as io;
 
 import 'package:args/args.dart';
@@ -23,6 +23,26 @@ import 'package:path/path.dart' as p;
 // in 0.6.2 — placeholder only.
 
 Future<void> main(List<String> args) async {
+  // Top-level zone guard. Anything that escapes the per-call try/catches
+  // inside the server, capture writer, gateways, etc. lands here — we log
+  // it cleanly to stderr (so the MCP host sees a closed channel, not a
+  // raw Dart trace) and set exit code 70 (EX_SOFTWARE).
+  //
+  // When crash telemetry lands (see docs/CRASH_REPORTING.md), the error
+  // handler will additionally POST an anonymized payload to the
+  // maintainer's collector — opt-IN only.
+  await runZonedGuarded(() => _runMain(args), (error, stack) {
+    io.stderr.writeln(
+      'flutter_network_mcp: UNCAUGHT ERROR ($error). The MCP host will see '
+      'the stdio channel close — restart your MCP host to recover. Please '
+      'report this at https://github.com/Lukas-io/flutter_network_mcp/issues '
+      'with the trace below.\n$stack',
+    );
+    io.exitCode = 70;
+  });
+}
+
+Future<void> _runMain(List<String> args) async {
   // Subcommands short-circuit ArgParser. Keep this dispatch FIRST so a
   // typo on the main flags doesn't pre-empt `install` / `update`.
   if (args.isNotEmpty) {
