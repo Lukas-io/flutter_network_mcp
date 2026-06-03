@@ -37,6 +37,12 @@ When `attachIfOne:true` AND `attached:false` AND `knownApps.length == 1` AND `de
 
 ```json
 {
+  "mcp": {
+    "version": "0.6.2",
+    "commit": "d804c4d…",
+    "isAot": true,
+    "upgradeCommand": "flutter_network_mcp update"
+  },
   "attached": false,
   "capabilities": "all",
   "dtd": {"connected": true, "uri": "ws://...", "defaultUri": "ws://..."},
@@ -60,6 +66,8 @@ When `attachIfOne:true` AND `attached:false` AND `knownApps.length == 1` AND `de
 ```
 
 `capabilities` is the string `"all"` when every category is enabled, or an array of category keys when the user passed `--capabilities` / `--disable`. `dtd.connectError` appears (string) when the auto-connect attempt fails. `autoAttached` appears only when `attachIfOne:true` actually triggered an attach.
+
+**The `mcp` block (0.6.2+)** carries `version`, `commit` (when the SHA is known — baked at install time or read via git rev-parse under JIT), `isAot` (true = native binary from `flutter_network_mcp install`, false = JIT wrapper), and `upgradeCommand`. When the daily background check has flagged a newer release, an additional `updateAvailable: { latest, checkedAtMs }` field appears — the agent should mention the upgrade to the user and offer to run `flutter_network_mcp update`.
 
 ## Pairs well with
 

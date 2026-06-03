@@ -78,6 +78,27 @@ Cache file: `<data-dir>/.update-check` (one-line ISO timestamp; touched on every
 
 README gains a "Reconfiguring without re-registering" section explaining that every CLI flag has an env-var fallback. Edit shell rc, restart your MCP host, new config takes effect — no `claude mcp remove + add` cycle.
 
+### Added — agent-readable `mcp` block in `network_status`
+
+`network_status` responses now carry a top-level `mcp` block with `version`, `commit` (when known), `isAot`, `upgradeCommand`, and (when the daily background check has flagged a newer release) `updateAvailable: { latest, checkedAtMs }`. The agent can read this on every `network_status` call to identify the running build and recommend the upgrade command without scraping stderr.
+
+**Commit SHA bake-in.** `flutter_network_mcp install` resolves the source dir's commit via `git rev-parse HEAD` and passes `-Dflutter_network_mcp_sha=<sha>` to `dart compile exe`. Under JIT, the same constant falls back to a runtime git read against the activated source dir. Both paths cache per process.
+
+**Status file.** `UpdateCheck.maybeCheck` now writes `<data-dir>/.update-status.json` alongside the existing `.update-check` cache so `network_status` can surface the result without re-hitting the network.
+
+### Added — `autoAttachSuggestion` on `network_attach`
+
+After a successful attach, the response includes an `autoAttachSuggestion` block when the attached app isn't already covered by the `FLUTTER_NETWORK_MCP_AUTO_ATTACH` allowlist. The block carries:
+
+- `appName` / `pattern` (extracted token — "sanga_mobile" from "Flutter - iPhone 17 - Package: sanga_mobile")
+- `currentAllowlist`, `enabled`
+- `suggestedShellLine` (paste-ready `export ...`)
+- `agentAction` (explicit instruction to ASK THE USER before editing anything)
+
+The agent reads `agentAction`, asks the user whether to add the app to auto-attach for future sessions, and only edits the shell rc on confirmation. Already-allowlisted apps get no hint (no nag). The goal: turn one-off attaches into durable auto-attach config without making the user type `claude mcp remove + add`.
+
+New `lib/src/config/auto_attach_config.dart` publishes the resolved allowlist + denylist as a process-lifetime singleton so non-`bin/` tools can read the live config without re-parsing.
+
 ### Notes — crash telemetry TODO
 
 User-asked TODO marker for a future opt-IN crash-telemetry channel (so bugs come back to the maintainer without a GitHub roundtrip). NOT IMPLEMENTED in 0.6.2. New `docs/CRASH_REPORTING.md` sketches the design — opt-IN env var, anonymized payload (version, OS, error class, stack head with paths redacted), no PII / source paths, local audit trail, single maintainer-controlled collector endpoint TBD. Marker comment in `bin/flutter_network_mcp.dart` points at the design doc.
