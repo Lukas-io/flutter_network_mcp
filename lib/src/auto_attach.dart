@@ -3,6 +3,7 @@ import 'dart:io' as io;
 
 import 'state/session.dart';
 import 'tools/network_attach.dart' show performAttach;
+import 'vm/dtd_probe.dart';
 
 /// Background watcher that polls DTD periodically for new VM service URIs
 /// and auto-attaches to apps that appear AFTER the watcher started.
@@ -170,34 +171,30 @@ class AutoAttacher {
   }
 
   Future<void> _runTick() async {
-    final dtd = SessionRegistry.instance.dtd;
-
-    // Ensure DTD is connected. Don't disturb an existing connection —
-    // DtdClient.connect() disconnects-then-reconnects, which would break
-    // any attached session's DTD-derived state.
-    if (!dtd.isConnected) {
-      try {
-        await dtd.connect(Uri.parse(defaultDtdUri!));
-      } catch (_) {
-        // DTD might be down between polls — silently skip this tick.
-        return;
-      }
-    }
-
-    final List<dynamic> apps;
+    // Multi-DTD aware in 0.6.2. Each `flutter run` spawns its own DTD;
+    // DtdProbe.probeAll opens TRANSIENT clients across every live DTD on
+    // the machine and aggregates the app list. The primary
+    // `Session.instance.dtd` is left untouched — cross-DTD attaches go
+    // via `performAttach(vmServiceUri: ...)` which bypasses DTD entirely.
+    final List<DtdAppListing> listings;
     try {
-      apps = await dtd.getConnectedApps();
+      listings = await DtdProbe.probeAll();
     } catch (_) {
+      // Discovery filesystem read failed — silently skip this tick. The
+      // primary DTD (if connected) keeps capturing on its existing
+      // attachments; we just don't pick up new ones this tick.
       return;
     }
 
-    // Map uri → name for the current poll so the allowlist gate has
-    // the app name handy when filtering newUris.
+    // Map uri → name across ALL DTDs. De-duped by uri (same vmService
+    // shouldn't surface from two DTDs but defend anyway).
     final currentByUri = <String, String>{};
-    for (final a in apps) {
-      final uri = (a.uri as String?) ?? '';
-      if (uri.isEmpty) continue;
-      currentByUri[uri] = (a.name as String?) ?? '';
+    for (final listing in listings) {
+      for (final a in listing.apps) {
+        if (a.uri.isEmpty) continue;
+        // First listing wins on duplicate — order is discovery rank.
+        currentByUri.putIfAbsent(a.uri, () => a.name ?? '');
+      }
     }
     final currentUris = currentByUri.keys.toSet();
 
