@@ -7,6 +7,7 @@ import '../state/session.dart';
 import '../storage/captures_db.dart';
 import '../storage/database.dart';
 import '../vm/dtd_discovery.dart';
+import '../vm/dtd_probe.dart';
 import 'network_attach.dart' as attach_helper;
 import 'result.dart';
 
@@ -135,21 +136,68 @@ FutureOr<CallToolResult> networkStatus(
     } catch (_) {/* DB might be mid-migration on first run */}
   }
 
-  // App discovery — possible now that DTD may be auto-connected above.
-  if (session.dtd.isConnected) {
-    try {
-      final apps = await session.dtd.getConnectedApps();
-      out['knownApps'] = [
-        for (final app in apps)
-          {
-            'name': app.name,
-            'uri': app.uri,
-            if (app.exposedUri != null) 'exposedUri': app.exposedUri,
-          },
-      ];
-    } catch (e) {
-      out['knownAppsError'] = e.toString();
+  // App discovery — multi-DTD aware in 0.6.2. Each `flutter run` spawns
+  // its own DTD; we probe ALL discovered DTDs in parallel (transient
+  // connections, never touches `session.dtd`) so the agent sees every
+  // app on the machine, not just the ones under the primary DTD.
+  //
+  // Each app's `dtdUri` + `workspaceRoot` tells the agent which DTD owns
+  // it, so cross-DTD attach can pick the right `dtdUri:` arg if needed
+  // (though direct `vmServiceUri:` works without DTD at all).
+  try {
+    final listings = await DtdProbe.probeAll();
+    final knownApps = <Map<String, Object?>>[];
+    final seenUris = <String>{};
+    for (final listing in listings) {
+      for (final app in listing.apps) {
+        if (!seenUris.add(app.uri)) continue;
+        knownApps.add({
+          'name': app.name,
+          'uri': app.uri,
+          if (app.exposedUri != null) 'exposedUri': app.exposedUri,
+          'dtdUri': listing.dtdUri.toString(),
+          if (listing.workspaceRoot != null)
+            'workspaceRoot': listing.workspaceRoot,
+        });
+      }
     }
+
+    // Defense-in-depth fallback: if the multi-DTD probe returned nothing
+    // (e.g. discovery files unreadable on this system) but the primary
+    // DTD IS connected, fall back to the single-DTD path so a working
+    // attach stays visible.
+    if (knownApps.isEmpty && session.dtd.isConnected) {
+      final apps = await session.dtd.getConnectedApps();
+      final primaryUri = session.dtd.connectedUri?.toString();
+      for (final app in apps) {
+        knownApps.add({
+          'name': app.name,
+          'uri': app.uri,
+          if (app.exposedUri != null) 'exposedUri': app.exposedUri,
+          if (primaryUri != null) 'dtdUri': primaryUri,
+        });
+      }
+    }
+
+    out['knownApps'] = knownApps;
+
+    // Surface per-DTD errors (e.g. one stale discovery file) so the agent
+    // can see why a known DTD didn't contribute apps.
+    final probeErrors = [
+      for (final listing in listings)
+        if (listing.error != null)
+          {
+            'dtdUri': listing.dtdUri.toString(),
+            if (listing.workspaceRoot != null)
+              'workspaceRoot': listing.workspaceRoot,
+            'error': listing.error,
+          },
+    ];
+    if (probeErrors.isNotEmpty) {
+      out['dtdProbeErrors'] = probeErrors;
+    }
+  } catch (e) {
+    out['knownAppsError'] = e.toString();
   }
 
   // Opt-in one-shot orient+attach: only fires when nothing is attached
