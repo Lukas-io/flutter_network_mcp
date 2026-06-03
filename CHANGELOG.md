@@ -4,6 +4,46 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6.2] — 2026-06-03
+
+Zero-config DTD discovery. Before 0.6.2 the typical onboarding flow was: launch `flutter run`, copy the printed `ws://...` URI from the IDE console, paste it into `.mcp.json`, restart Claude Code. Agents working in fresh sessions ended up running `lsof + ps` to find the port and still failed because they couldn't get the security token. 0.6.2 reads the canonical `package:dtd` discovery files directly — token included — so the MCP just works when launched in a project with a live `flutter run`.
+
+### Added — DTD auto-discovery
+
+- **Startup hook** (`bin/flutter_network_mcp.dart`): when neither `--dtd-uri` nor `FLUTTER_NETWORK_MCP_DTD_URI` is set, the server scans the standard `package:dtd` discovery directory and picks the best live candidate. A one-line stderr note names the chosen DTD's pid + workspaceRoot + epoch and points at the override flags.
+- **Discovery paths** (per-platform, matches `package:dtd`):
+
+  | Platform | Path |
+  |---|---|
+  | macOS   | `$HOME/Library/Application Support/dart/dtd` |
+  | Linux   | `$XDG_CONFIG_HOME/dart/dtd` (fallback `$HOME/.config/dart/dtd`) |
+  | Windows | `%APPDATA%/dart/dtd` |
+
+- **Ranking** (best-first): live process (`kill -0` POSIX / `tasklist` Windows) over dead, `workspaceRoot == cwd` over mismatch over null, newer epoch over older.
+- **Defensive 64-file scan cap** so a pathologically-busy discovery dir can't blow the budget. Errors during scan log to stderr and produce an empty list — never throws.
+
+### Added — `network_discover_dtd` tool
+
+New always-on lifecycle tool that exposes the discovery surface to the agent on demand. Inputs: `cwdMatch` (default true), `includeStale` (default false — dead-pid candidates), `limit` (default 5, hard cap 20). Returns per-candidate `wsUri / pid / epochMs / dartVersion / workspaceRoot / ideName / isLive / matchesCwd` plus a `recommended` URI and ranked `nextSteps` pointing at `network_attach`. Use it when:
+
+- Multiple `flutter run` instances are running and startup auto-discovery picked the wrong one.
+- A discovery file might be stale (Dart process died uncleanly) — `includeStale:true` to inspect.
+- The MCP was launched from outside the project's cwd — `cwdMatch:false` to see every DTD.
+
+### Changed — `network_status` integration
+
+`_suggestNextSteps()` now consults discovery when not attached and no DTD is configured, instead of the old "ask the user for a URI" message. Live cwd-matching candidates surface as `network_attach dtdUri:"<wsUri>"`. Live non-cwd-matching candidates surface as a `network_discover_dtd` suggestion to disambiguate. Empty discovery falls back to the existing "No DTD URI configured" message but now mentions `network_discover_dtd` as the entry point.
+
+### Added — env vars
+
+- `FLUTTER_NETWORK_MCP_AUTO_DISCOVER_DTD` (default enabled; set to `false` to disable). Equivalent to `--no-auto-discover-dtd`.
+
+### Notes
+
+- Live-verified on macOS against 4 currently-running DTDs (sanga_mobile, sanga_driver, two dart-sdk Android Studio sessions). The Linux + Windows path branches were reviewed but not runtime-tested in this round.
+- No security gap: the discovery files are written by `package:dtd` itself and are protected by per-user filesystem permissions. The MCP can only see what the user can see.
+- Tool count: 33 → **34** (`network_discover_dtd` added under Lifecycle).
+
 ## [0.6.1] — 2026-05-28
 
 A security + reliability follow-up to 0.6.0. Closes a real auto-attach exposure that 0.6.0's audit caught after the merge.
