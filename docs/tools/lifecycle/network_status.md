@@ -22,7 +22,9 @@ when_to_use: As the very first call of any investigation. It auto-connects DTD (
 
 ## How it works
 
-Reads in-process state. If `connectDtd:true` (default) and DTD isn't already connected and a default URI exists, opens DTD with a 5s timeout so `knownApps` can populate. Queries the alerts table for three counts (current scope / DB-wide / critical). Reads the DB path and session count. Synthesizes a 1–2 item `nextSteps` array based on state.
+Reads in-process state. If `connectDtd:true` (default) and DTD isn't already connected and a default URI exists, opens DTD with a 5s timeout. Queries the alerts table for three counts (current scope / DB-wide / critical). Reads the DB path and session count. Synthesizes a 1–2 item `nextSteps` array based on state.
+
+**Multi-DTD enumeration (0.6.2+).** `knownApps` lists apps across EVERY live DTD on the local machine, not just the one the primary connection is on. Each `flutter run` spawns its own DTD; this tool probes every discovered DTD via transient `DtdClient` connections (parallel, 1.5s per-probe timeout, 30s cache) so a user with three `flutter run`s in three terminals sees three apps. Each entry carries a `dtdUri` + `workspaceRoot` naming the source DTD — the agent can pass `dtdUri:"<that one>"` to `network_attach` to switch DTDs explicitly, though passing `vmServiceUri:` directly bypasses DTD entirely. Per-DTD probe errors surface under `dtdProbeErrors`.
 
 When `attachIfOne:true` AND `attached:false` AND `knownApps.length == 1` AND `defaultDtdUri != null`, the call additionally runs the full attach flow (same as `network_attach` with no args). The attach result is returned under `autoAttached`, and the top-level `attached`/`vmService`/`liveSessionId` fields are refreshed in the same response.
 
@@ -44,7 +46,15 @@ When `attachIfOne:true` AND `attached:false` AND `knownApps.length == 1` AND `de
   "dbPath": "/Users/me/.local/share/flutter_network_mcp/captures.db",
   "sessionCount": 0,
   "alerts": {"pendingCurrent": 0, "pendingTotal": 0, "critical": 0},
-  "knownApps": [{"name": "...", "uri": "ws://..."}],
+  "knownApps": [
+    {
+      "name": "sanga_mobile - iPhone 17",
+      "uri": "ws://127.0.0.1:54450/...",
+      "dtdUri": "ws://127.0.0.1:56443/...",
+      "workspaceRoot": "/Users/me/StudioProjects/sanga_mobile"
+    }
+  ],
+  "dtdProbeErrors": [],
   "nextSteps": ["Call network_attach (one app available — will be auto-picked)"]
 }
 ```

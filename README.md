@@ -18,9 +18,12 @@ Not for: production observability, traffic outside `dart:io` HTTP, or release/pr
 
 ```bash
 dart pub global activate -s git https://github.com/Lukas-io/flutter_network_mcp.git
+flutter_network_mcp install   # optional but recommended — AOT-compile for fast startup
 ```
 
 The binary lands at `~/.pub-cache/bin/flutter_network_mcp` (Flutter installs put that directory on `$PATH`). `package:sqlite3` ships its own native lib so there's no system dependency to chase.
+
+**Why the `install` step?** `dart pub global activate` ships a JIT snapshot wrapper that recompiles on every spawn (~1–2s cold). The MCP host's JSON-RPC handshake can race that recompile and mark the server "Failed to connect" on first attach, then succeed on the next probe — flickering connection status. `flutter_network_mcp install` runs `dart compile exe` once and overwrites the JIT wrapper with a native binary; startup drops to <100ms and the flicker goes away. If you skip it, the first-launch stderr emits a one-line nudge (silence with `FLUTTER_NETWORK_MCP_NO_JIT_NUDGE=true`).
 
 Then in any project's `.mcp.json` (or `~/.claude.json` for machine-wide):
 
@@ -36,7 +39,29 @@ Then in any project's `.mcp.json` (or `~/.claude.json` for machine-wide):
 }
 ```
 
-`--dtd-uri` is optional in 0.6.2+. When omitted, the server auto-discovers a DTD on startup by reading the standard `package:dtd` discovery directory (`~/Library/Application Support/dart/dtd` on macOS) and picking the best live candidate matching your current working directory. The discovery files include the full WS URI + security token, so no token-hunting from IDE consoles is needed. To opt out (paranoid configs, CI), pass `--no-auto-discover-dtd` or set `FLUTTER_NETWORK_MCP_AUTO_DISCOVER_DTD=false`. See the [`network_discover_dtd`](docs/tools/lifecycle/network_discover_dtd.md) tool for on-demand discovery when multiple DTDs are running.
+`--dtd-uri` is optional in 0.6.2+. When omitted, the server auto-discovers a DTD on startup by reading the standard `package:dtd` discovery directory (`~/Library/Application Support/dart/dtd` on macOS) and picking the best live candidate matching your current working directory. The discovery files include the full WS URI + security token, so no token-hunting from IDE consoles is needed. To opt out (paranoid configs, CI), pass `--no-auto-discover-dtd` or set `FLUTTER_NETWORK_MCP_AUTO_DISCOVER_DTD=false`. See the [`network_discover_dtd`](docs/tools/lifecycle/network_discover_dtd.md) tool for on-demand discovery when multiple DTDs are running. **0.6.2 also enumerates apps across every live DTD** (each `flutter run` spawns its own DTD), so `network_status.knownApps` lists apps from every running `flutter run` on the machine, not just one. Each entry carries a `dtdUri` + `workspaceRoot` naming the source DTD.
+
+## Reconfiguring without `mcp remove + add`
+
+When you want to change CLI args (add `--auto-attach=...`, swap `--data-dir`, etc.) the natural reflex is `claude mcp remove flutter-network && claude mcp add flutter-network ...`. There's a quieter path: **every CLI flag has an env-var fallback**. Edit your shell rc:
+
+```bash
+# ~/.zshrc or ~/.bashrc
+export FLUTTER_NETWORK_MCP_AUTO_ATTACH=sanga_mobile,sanga_driver
+export FLUTTER_NETWORK_MCP_AUTO_ATTACH_DENY="Pixel 7"
+```
+
+Restart your MCP host (Claude Code, Cursor, …) and the new config takes effect — no `claude mcp remove`, no re-registration. The [Environment knobs](#environment-knobs-fine-tune-at-startup) table below lists every variable.
+
+## Updating
+
+```bash
+flutter_network_mcp update   # runs pub global activate + re-AOT if you installed
+```
+
+`flutter_network_mcp update` re-runs `dart pub global activate -s git https://github.com/Lukas-io/flutter_network_mcp.git` and, if you previously ran `flutter_network_mcp install`, re-runs the AOT compile so the upgrade doesn't silently downgrade you to the slow JIT wrapper. Restart your MCP host after running.
+
+The server **runs a daily background version check** (hits `raw.githubusercontent.com/Lukas-io/flutter_network_mcp/master/pubspec.yaml`, compares versions, nudges to stderr if newer). Cached at `<data-dir>/.update-check`; opt-out via `FLUTTER_NETWORK_MCP_NO_UPDATE_CHECK=true`.
 
 ## Found a bug? Let your agent file it
 
@@ -66,6 +91,8 @@ Beyond capability gating, these env vars tune runtime behavior:
 | `FLUTTER_NETWORK_MCP_AUTO_ATTACH_POLL_MS` | 5000 | 1000–60000 | Poll interval for the auto-attach watcher. |
 | `FLUTTER_NETWORK_MCP_CAPABILITIES` | (all) | — | Allowlist (see below). |
 | `FLUTTER_NETWORK_MCP_DISABLE` | — | — | Denylist (see below). |
+| `FLUTTER_NETWORK_MCP_NO_JIT_NUDGE` | — | `true` to silence | Suppresses the "running in JIT mode" stderr nudge that suggests `flutter_network_mcp install`. Set after you've decided you're fine with JIT startup. |
+| `FLUTTER_NETWORK_MCP_NO_UPDATE_CHECK` | — | `true` to silence | Skips the daily background version check entirely (no network access to GitHub raw on startup). |
 
 ## Capability gating (control your context budget)
 
