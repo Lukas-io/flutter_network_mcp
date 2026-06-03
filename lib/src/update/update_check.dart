@@ -49,7 +49,19 @@ class UpdateCheck {
       // no point retrying until tomorrow.
       _touchCache(cacheFile);
 
-      if (_isNewer(upstream, currentVersion)) {
+      final isNewer = _isNewer(upstream, currentVersion);
+
+      // Write the agent-readable status file alongside the cache.
+      // network_status reads this and surfaces `mcp.updateAvailable` so
+      // the agent doesn't have to scrape stderr for the nudge.
+      _writeStatusFile(
+        dataDir: dataDir,
+        currentVersion: currentVersion,
+        latestVersion: upstream,
+        isNewer: isNewer,
+      );
+
+      if (isNewer) {
         io.stderr.writeln(
           'flutter_network_mcp: v$upstream available (you\'re on '
           'v$currentVersion). Run `flutter_network_mcp update` to upgrade. '
@@ -83,6 +95,44 @@ class UpdateCheck {
       if (!parent.existsSync()) parent.createSync(recursive: true);
       cacheFile.writeAsStringSync(DateTime.now().toUtc().toIso8601String());
     } catch (_) {/* silent */}
+  }
+
+  /// Writes `<data-dir>/.update-status.json` so `network_status` can
+  /// surface `mcp.updateAvailable` without re-hitting the network. Best-
+  /// effort — write failures stay silent.
+  static void _writeStatusFile({
+    required String dataDir,
+    required String currentVersion,
+    required String latestVersion,
+    required bool isNewer,
+  }) {
+    try {
+      final file = io.File(p.join(dataDir, '.update-status.json'));
+      final parent = file.parent;
+      if (!parent.existsSync()) parent.createSync(recursive: true);
+      final payload = {
+        'checkedAtMs': DateTime.now().toUtc().millisecondsSinceEpoch,
+        'current': currentVersion,
+        'latest': latestVersion,
+        'isNewer': isNewer,
+        'upgradeCommand': 'flutter_network_mcp update',
+      };
+      file.writeAsStringSync(jsonEncode(payload));
+    } catch (_) {/* silent */}
+  }
+
+  /// Best-effort reader for `network_status`. Returns null when the file
+  /// is missing / unreadable / stale / malformed.
+  static Map<String, Object?>? readStatusFile(String dataDir) {
+    try {
+      final file = io.File(p.join(dataDir, '.update-status.json'));
+      if (!file.existsSync()) return null;
+      final decoded = jsonDecode(file.readAsStringSync());
+      if (decoded is! Map) return null;
+      return decoded.cast<String, Object?>();
+    } catch (_) {
+      return null;
+    }
   }
 
   static Future<String?> _fetchUpstreamVersion() async {

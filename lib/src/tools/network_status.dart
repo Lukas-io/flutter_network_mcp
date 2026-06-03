@@ -1,11 +1,14 @@
 import 'dart:async';
 
 import 'package:dart_mcp/server.dart';
+import 'package:path/path.dart' as p;
 
 import '../config/capabilities.dart';
 import '../state/session.dart';
 import '../storage/captures_db.dart';
 import '../storage/database.dart';
+import '../update/update_check.dart';
+import '../version.dart';
 import '../vm/dtd_discovery.dart';
 import '../vm/dtd_probe.dart';
 import 'network_attach.dart' as attach_helper;
@@ -74,6 +77,7 @@ FutureOr<CallToolResult> networkStatus(
   ];
 
   final out = <String, Object?>{
+    'mcp': _buildMcpBlock(),
     'attachedCount': registry.attachedCount,
     'attached': attachedList,
     // Compact: emit "all" instead of the 8-element list in the common case.
@@ -232,6 +236,40 @@ FutureOr<CallToolResult> networkStatus(
   out['nextSteps'] = _suggestNextSteps(registry, session, out);
 
   return jsonResult(out);
+}
+
+/// Builds the `mcp` block — agent-readable identity for the running
+/// server. Includes version, commit SHA (when known), AOT/JIT mode, the
+/// one-command upgrade path, and (when the daily background check has
+/// flagged a newer release) the upstream version.
+///
+/// The agent reads this on every `network_status` call so it can:
+///   1. Tell the user what version is running ("you're on 0.6.2").
+///   2. Notice when an upgrade is available without scraping stderr.
+///   3. Hand the user a paste-ready `flutter_network_mcp update` command.
+Map<String, Object?> _buildMcpBlock() {
+  final block = <String, Object?>{
+    'version': packageVersion,
+    if (currentCommitSha() != null) 'commit': currentCommitSha(),
+    'isAot': isAotBuild,
+    'upgradeCommand': 'flutter_network_mcp update',
+  };
+
+  // Read the agent-readable update-status file written by UpdateCheck.
+  // Only surface when it flagged a newer release; otherwise the field is
+  // omitted so the absence of `updateAvailable` is itself a signal.
+  if (CapturesDatabase.isOpen) {
+    final dataDir = p.dirname(CapturesDatabase.instance.path);
+    final status = UpdateCheck.readStatusFile(dataDir);
+    if (status != null && status['isNewer'] == true) {
+      block['updateAvailable'] = {
+        'latest': status['latest'],
+        if (status['checkedAtMs'] != null) 'checkedAtMs': status['checkedAtMs'],
+      };
+    }
+  }
+
+  return block;
 }
 
 /// Returns 1–2 short hints telling the agent what to do given the current

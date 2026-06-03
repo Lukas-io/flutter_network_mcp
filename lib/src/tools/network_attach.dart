@@ -3,6 +3,7 @@ import 'dart:io' as io;
 
 import 'package:dart_mcp/server.dart';
 
+import '../config/auto_attach_config.dart';
 import '../config/capabilities.dart';
 import '../state/log_buffer.dart';
 import '../state/session.dart';
@@ -329,6 +330,8 @@ Future<Map<String, Object?>> performAttach({
         ? 'Attached to ${appName ?? "app"} — capturing $what into session $sid. ${registry.attachedCount} sessions now attached.'
         : 'Attached to ${appName ?? "app"} — capturing $what into session $sid.';
 
+    final autoAttachSuggestion = _buildAutoAttachSuggestion(appName);
+
     return {
       'attached': true,
       'summary': summary,
@@ -340,12 +343,16 @@ Future<Map<String, Object?>> performAttach({
       'socketProfilingEnabled': socketEnabled,
       'attachedCount': registry.attachedCount,
       if (warnings.isNotEmpty) 'warnings': warnings,
+      if (autoAttachSuggestion != null)
+        'autoAttachSuggestion': autoAttachSuggestion,
       'nextSteps': [
         'Drive the app to generate traffic',
         if (registry.attachedCount > 1)
           'Subsequent reads need sessionId:$sid (or appNameContains) to disambiguate'
         else
           secondStep,
+        if (autoAttachSuggestion != null)
+          'autoAttachSuggestion — ask the user whether to add "${autoAttachSuggestion['pattern']}" to FLUTTER_NETWORK_MCP_AUTO_ATTACH for future sessions',
       ],
     };
   } catch (e, st) {
@@ -375,4 +382,74 @@ Future<Map<String, Object?>> performAttach({
             ],
     };
   }
+}
+
+/// Builds an onboarding hint asking the agent to PROMPT the user about
+/// adding the freshly-attached app to the auto-attach allowlist. Returns
+/// null when the app is already covered by the allowlist (no nag) or when
+/// we don't have a usable app name to suggest.
+///
+/// **Important contract for the agent**: this hint instructs the agent
+/// to ASK the user before editing anything. The agent must not silently
+/// append to the user's shell rc — the suggested shell line is provided
+/// as a paste-ready string for the user to confirm.
+Map<String, Object?>? _buildAutoAttachSuggestion(String? appName) {
+  if (appName == null || appName.isEmpty) return null;
+  if (AutoAttachConfig.matchesAllowlist(appName)) return null;
+
+  // Pull a stable, recognizable token from the full DTD name. DTD app
+  // names look like "Flutter - iPhone 17 - Package: sanga_mobile"; the
+  // user's allowlist convention is the package name ("sanga_mobile"),
+  // not the whole string.
+  final pattern = _extractPattern(appName);
+
+  final currentAllowlist = AutoAttachConfig.allowedPatterns;
+  final enabled = AutoAttachConfig.isEnabled;
+
+  final newAllowlist = [...currentAllowlist, pattern].join(',');
+  final shellLine = 'export FLUTTER_NETWORK_MCP_AUTO_ATTACH=$newAllowlist';
+
+  final agentAction = enabled
+      ? 'Auto-attach is enabled but "$pattern" isn\'t in the current '
+        'allowlist (${currentAllowlist.join(", ")}). ASK THE USER: '
+        '"Would you like flutter_network_mcp to auto-attach to $pattern '
+        'on future MCP launches?" If they confirm, append the '
+        'suggestedShellLine below to their shell rc (e.g. ~/.zshrc on '
+        'macOS, ~/.bashrc on Linux), then have them restart their MCP '
+        'host (e.g. /quit then re-open Claude Code). DO NOT edit the '
+        'rc file without explicit user confirmation.'
+      : 'Auto-attach isn\'t configured yet. ASK THE USER: "Would you like '
+        'flutter_network_mcp to auto-attach to $pattern on future MCP '
+        'launches? This means future sessions will skip the manual '
+        'network_attach step." If they confirm, append the '
+        'suggestedShellLine below to their shell rc (e.g. ~/.zshrc on '
+        'macOS, ~/.bashrc on Linux), then have them restart their MCP '
+        'host. DO NOT edit the rc file without explicit user confirmation.';
+
+  return {
+    'enabled': enabled,
+    'matchesAllowlist': false,
+    'appName': appName,
+    'pattern': pattern,
+    'currentAllowlist': currentAllowlist,
+    'suggestedShellLine': shellLine,
+    'agentAction': agentAction,
+  };
+}
+
+/// Extracts a stable allowlist token from a DTD app name.
+///
+/// DTD app names typically look like:
+///   "Flutter - iPhone 17 - Package: sanga_mobile"
+///   "Flutter - macOS - Package: sanga_driver"
+///
+/// We want the user's allowlist to be `sanga_mobile`, not the whole
+/// string (which embeds device + form factor noise that breaks the
+/// substring match when the device changes). Strategy: take everything
+/// after "Package: " when present; otherwise fall back to the full name.
+String _extractPattern(String appName) {
+  const marker = 'Package:';
+  final idx = appName.indexOf(marker);
+  if (idx == -1) return appName.trim();
+  return appName.substring(idx + marker.length).trim();
 }

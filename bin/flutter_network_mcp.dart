@@ -3,6 +3,7 @@ import 'dart:io' as io;
 
 import 'package:args/args.dart';
 import 'package:flutter_network_mcp/src/auto_attach.dart';
+import 'package:flutter_network_mcp/src/config/auto_attach_config.dart';
 import 'package:flutter_network_mcp/src/config/capabilities.dart';
 import 'package:flutter_network_mcp/src/install/install.dart';
 import 'package:flutter_network_mcp/src/install/update.dart';
@@ -38,7 +39,6 @@ Future<void> main(List<String> args) async {
   // cold), which the MCP host can race and mark the server "Failed to
   // connect". `bool.fromEnvironment('dart.vm.product')` is the canonical
   // AOT-vs-JIT check — true only when compiled with `dart compile exe`.
-  const bool isAotBuild = bool.fromEnvironment('dart.vm.product');
   final envForNudge = io.Platform.environment;
   if (!isAotBuild &&
       envForNudge['FLUTTER_NETWORK_MCP_NO_JIT_NUDGE']?.toLowerCase() != 'true') {
@@ -240,10 +240,18 @@ Future<void> main(List<String> args) async {
   final autoAttachRaw = (results['auto-attach'] as String?) ??
       env['FLUTTER_NETWORK_MCP_AUTO_ATTACH'];
   final autoAttachAllowlist = _parseAllowlist(autoAttachRaw);
+  final autoAttachDenyRaw = (results['auto-attach-deny'] as String?) ??
+      env['FLUTTER_NETWORK_MCP_AUTO_ATTACH_DENY'];
+  final autoAttachDenylist = _parseAllowlist(autoAttachDenyRaw);
+
+  // Publish the resolved config so non-bin/ tools (network_attach's
+  // autoAttachSuggestion hint) can read it without re-parsing.
+  AutoAttachConfig.set(
+    allowed: autoAttachAllowlist,
+    denied: autoAttachDenylist,
+  );
+
   if (autoAttachAllowlist.isNotEmpty) {
-    final autoAttachDenyRaw = (results['auto-attach-deny'] as String?) ??
-        env['FLUTTER_NETWORK_MCP_AUTO_ATTACH_DENY'];
-    final autoAttachDenylist = _parseAllowlist(autoAttachDenyRaw);
     AutoAttacher(
       defaultDtdUri: dtdUri,
       allowedAppPatterns: autoAttachAllowlist,
