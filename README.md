@@ -36,7 +36,7 @@ Then in any project's `.mcp.json` (or `~/.claude.json` for machine-wide):
 }
 ```
 
-`--dtd-uri` is optional — pass it once and `network_attach` works with no args. The DTD WS URI is printed in the IDE console when you `flutter run`.
+`--dtd-uri` is optional in 0.6.2+. When omitted, the server auto-discovers a DTD on startup by reading the standard `package:dtd` discovery directory (`~/Library/Application Support/dart/dtd` on macOS) and picking the best live candidate matching your current working directory. The discovery files include the full WS URI + security token, so no token-hunting from IDE consoles is needed. To opt out (paranoid configs, CI), pass `--no-auto-discover-dtd` or set `FLUTTER_NETWORK_MCP_AUTO_DISCOVER_DTD=false`. See the [`network_discover_dtd`](docs/tools/lifecycle/network_discover_dtd.md) tool for on-demand discovery when multiple DTDs are running.
 
 ## Found a bug? Let your agent file it
 
@@ -57,7 +57,8 @@ Beyond capability gating, these env vars tune runtime behavior:
 |---|---|---|---|
 | `FLUTTER_NETWORK_MCP_POLL_MS` | 2000 | 50–60000 | CaptureWriter poll interval. Lower for chatty apps, higher for quiet ones. |
 | `FLUTTER_NETWORK_MCP_LOG_BUFFER` | 500 | 50–10000 | In-memory log ring buffer size for `logs_tail` live mode. |
-| `FLUTTER_NETWORK_MCP_DTD_URI` | — | — | Default DTD URI for `network_attach`. |
+| `FLUTTER_NETWORK_MCP_DTD_URI` | — | — | Default DTD URI for `network_attach`. When unset, auto-discovery scans the standard `package:dtd` directory. |
+| `FLUTTER_NETWORK_MCP_AUTO_DISCOVER_DTD` | `true` | `false` to disable | Set `false` to skip filesystem DTD auto-discovery at startup. Equivalent to `--no-auto-discover-dtd`. |
 | `FLUTTER_NETWORK_MCP_DATA_DIR` | — | — | Directory for `captures.db`. Equivalent to `--data-dir`. When set, the candidate-fallback chain is skipped — unwritable values error loudly. |
 | `FLUTTER_NETWORK_MCP_MAX_ATTACH` | 4 | 1–32 | Max concurrent attached sessions in multi-attach mode. |
 | `FLUTTER_NETWORK_MCP_AUTO_ATTACH` | — | comma-list | **Allowlist** for auto-attach. Comma-separated substring patterns matched against the DTD app name. Non-empty value enables; empty / absent disables. Equivalent to `--auto-attach=app1,app2`. |
@@ -68,7 +69,7 @@ Beyond capability gating, these env vars tune runtime behavior:
 
 ## Capability gating (control your context budget)
 
-Thirty-three tools is a lot of schema for the agent to load. Disable the categories you don't use:
+Thirty-four tools is a lot of schema for the agent to load. Disable the categories you don't use:
 
 ```json
 {
@@ -85,7 +86,7 @@ Thirty-three tools is a lot of schema for the agent to load. Disable the categor
 }
 ```
 
-The opposite is `--disable sockets,sql,admin` — start from "all on" and remove. Lifecycle (`network_status`, `network_attach`, `network_detach`) is always on.
+The opposite is `--disable sockets,sql,admin` — start from "all on" and remove. Lifecycle (`network_status`, `network_attach`, `network_detach`, `network_discover_dtd`) is always on.
 
 Categories: `http` · `sockets` · `logs` · `alerts` · `search` · `sessions` · `sql` · `admin`. Env vars: `FLUTTER_NETWORK_MCP_CAPABILITIES`, `FLUTTER_NETWORK_MCP_DISABLE`.
 
@@ -186,7 +187,7 @@ Key behaviour:
 
 DTD reports app names like `Flutter - iPhone 17 - Package: sanga_mobile` — so substring patterns can target either the package (`sanga_mobile`) or the device (`iPhone 17`, `Android emulator`, `iOS Simulator`). Example: `--auto-attach=sanga_mobile --auto-attach-deny="Android emulator"` auto-attaches sanga_mobile only on physical iOS + iOS Simulator.
 
-## The 33 tools
+## The 34 tools
 
 Each tool's MCP `description` (loaded into every agent at handshake) tells the agent WHEN to reach for it. This table is the same information at a glance — useful when you want to remind an agent that a tool exists, or when picking the right one yourself.
 
@@ -198,6 +199,7 @@ Each tool's MCP `description` (loaded into every agent at handshake) tells the a
 | `network_status` | — | Always call first. Reports `attached:[]` list, DB path, active capabilities, known apps, pending alerts. Will auto-attach if exactly one app is reachable and nothing is attached yet. |
 | `network_attach` | — | Connect to a running Flutter/Dart app to start capturing HTTP, sockets, and logs into a new session. **0.6.0:** can be called multiple times for different apps; per-vmServiceUri duplicate guard prevents accidental same-app re-attach. |
 | `network_detach` | ✅ + `all:true` | End one capture session (sessionId / appNameContains), or `all:true` for every attached. DTD disconnects only when nothing remains attached. |
+| `network_discover_dtd` | — | List DTDs on this machine from the standard `package:dtd` discovery dir. Auto-runs at startup when `--dtd-uri` is unset; call directly when multiple DTDs are running or to inspect stale candidates (`includeStale:true`). |
 | **HTTP** | | |
 | `network_list` | ✅ | Browse recent HTTP requests by metadata: host, method, status, time. Cursor-paged. |
 | `network_get` | ✅ | Read full details of ONE request — headers + body + lifecycle events. Use after `network_list` or `network_search` finds the id. |
