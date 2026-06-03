@@ -1,13 +1,18 @@
+import 'dart:async' show unawaited;
 import 'dart:io' as io;
 
 import 'package:args/args.dart';
 import 'package:flutter_network_mcp/src/auto_attach.dart';
 import 'package:flutter_network_mcp/src/config/capabilities.dart';
 import 'package:flutter_network_mcp/src/install/install.dart';
+import 'package:flutter_network_mcp/src/install/update.dart';
 import 'package:flutter_network_mcp/src/server.dart';
 import 'package:flutter_network_mcp/src/storage/database.dart';
 import 'package:flutter_network_mcp/src/tools/alert_patterns.dart' as alert_patterns;
+import 'package:flutter_network_mcp/src/update/update_check.dart';
+import 'package:flutter_network_mcp/src/version.dart';
 import 'package:flutter_network_mcp/src/vm/dtd_discovery.dart';
+import 'package:path/path.dart' as p;
 
 // TODO(crash-telemetry): wrap main() in runZonedGuarded to capture uncaught
 // exceptions + POST anonymized (version, OS, error class, stack head — no
@@ -23,6 +28,8 @@ Future<void> main(List<String> args) async {
     switch (args.first) {
       case 'install':
         return runInstall(args.skip(1).toList());
+      case 'update':
+        return runUpdate(args.skip(1).toList());
     }
   }
 
@@ -214,6 +221,16 @@ Future<void> main(List<String> args) async {
   } catch (_) {/* table may be empty / freshly migrated */}
 
   FlutterNetworkMcpServer.stdio(defaultDtdUri: dtdUri);
+
+  // Background "is there a newer version?" probe. Daily-cached, opt-out
+  // via FLUTTER_NETWORK_MCP_NO_UPDATE_CHECK=true. Fire-and-forget — never
+  // blocks the MCP-host JSON-RPC handshake, never disturbs startup.
+  unawaited(
+    UpdateCheck.maybeCheck(
+      currentVersion: packageVersion,
+      dataDir: p.dirname(CapturesDatabase.instance.path),
+    ),
+  );
 
   // Optional: watch DTD for new apps and auto-attach. CLI flag takes
   // priority; env var fallback is FLUTTER_NETWORK_MCP_AUTO_ATTACH=app1,app2.

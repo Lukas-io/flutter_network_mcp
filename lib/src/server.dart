@@ -4,6 +4,7 @@ import 'package:dart_mcp/server.dart';
 import 'package:dart_mcp/stdio.dart';
 
 import 'config/capabilities.dart';
+import 'version.dart';
 import 'tools/alert_patterns.dart';
 import 'tools/alerts_clear.dart';
 import 'tools/alerts_config.dart';
@@ -49,7 +50,7 @@ base class FlutterNetworkMcpServer extends MCPServer with ToolsSupport {
   }) : super.fromStreamChannel(
           implementation: Implementation(
             name: 'flutter_network_mcp',
-            version: '0.6.2',
+            version: packageVersion,
           ),
           instructions:
               'Read HTTP, sockets, and logs from a running Flutter/Dart app, '
