@@ -25,11 +25,11 @@ import 'tools/network_attach.dart' show performAttach;
 /// stderr note + are added to the known-URI set so they don't retry
 /// every tick (acts as both rate-limit and audit trail).
 ///
-/// Existing apps visible at startup are NOT auto-attached — they're seeded
-/// into the "known" set on the first tick. This avoids surprise-attaching
-/// to whatever was already running when the user enabled the flag, and
-/// matches the principle of explicit-first behaviour (no silent grab of
-/// state the user didn't ask for).
+/// Existing apps visible at startup ARE auto-attached when they match the
+/// allowlist (0.6.2 change — the allowlist is the explicit opt-in, no need
+/// to also wait for a Flutter restart). On the first tick, every running
+/// app goes through the same allowlist + denylist gate as later ticks; the
+/// `_seenUris` set still de-dupes so each URI is attached at most once.
 ///
 /// Manual `network_detach` survives auto-attach: a detached app's URI
 /// stays in the known set, so the next poll tick won't re-attach it.
@@ -93,8 +93,8 @@ class AutoAttacher {
   bool get isRunning => _timer != null;
 
   /// Starts the polling watcher. No-op if [defaultDtdUri] is null (we have
-  /// nothing to poll). Fires the first tick immediately so the seed phase
-  /// doesn't wait `pollInterval`.
+  /// nothing to poll). Fires the first tick immediately so allowlisted
+  /// already-running apps attach without waiting `pollInterval`.
   void start() {
     if (defaultDtdUri == null) {
       io.stderr.writeln(
@@ -111,8 +111,8 @@ class AutoAttacher {
     io.stderr.writeln(
       'flutter_network_mcp: auto-attach watcher started '
       '(poll ${pollInterval.inMilliseconds}ms; allowlist: '
-      '${allowedAppPatterns.join(", ")}$denyLine; first tick seeds the '
-      'known set, subsequent ticks attach NEW allowlisted apps only).',
+      '${allowedAppPatterns.join(", ")}$denyLine; allowlisted apps already '
+      'running attach on the first tick).',
     );
     unawaited(_tick());
   }
@@ -201,20 +201,18 @@ class AutoAttacher {
     }
     final currentUris = currentByUri.keys.toSet();
 
-    // First tick: seed the known set without attaching. Apps that were
-    // already running when the watcher started are NOT auto-grabbed.
-    if (!_seedComplete) {
-      _seenUris.addAll(currentUris);
-      _enforceSeenUrisCap();
-      _seedComplete = true;
-      if (currentUris.isNotEmpty) {
-        io.stderr.writeln(
-          'flutter_network_mcp: auto-attach seeded with ${currentUris.length} '
-          'existing app(s); will attach to NEW allowlisted apps that '
-          'appear after this.',
-        );
-      }
-      return;
+    // First tick: log intent then fall through. 0.6.2 dropped the old
+    // "seed without attaching" behaviour — the allowlist is the explicit
+    // opt-in, so allowlisted apps already running should attach now, not
+    // wait for the user to flutter-restart.
+    final isFirstTick = !_seedComplete;
+    _seedComplete = true;
+    if (isFirstTick && currentUris.isNotEmpty) {
+      io.stderr.writeln(
+        'flutter_network_mcp: auto-attach first tick — evaluating '
+        '${currentUris.length} currently-running app(s) against allowlist '
+        '${allowedAppPatterns.join(", ")}. Matching apps attach immediately.',
+      );
     }
 
     final newUris = currentUris.difference(_seenUris);

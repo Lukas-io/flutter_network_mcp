@@ -3,12 +3,47 @@ import 'dart:io' as io;
 import 'package:args/args.dart';
 import 'package:flutter_network_mcp/src/auto_attach.dart';
 import 'package:flutter_network_mcp/src/config/capabilities.dart';
+import 'package:flutter_network_mcp/src/install/install.dart';
 import 'package:flutter_network_mcp/src/server.dart';
 import 'package:flutter_network_mcp/src/storage/database.dart';
 import 'package:flutter_network_mcp/src/tools/alert_patterns.dart' as alert_patterns;
 import 'package:flutter_network_mcp/src/vm/dtd_discovery.dart';
 
+// TODO(crash-telemetry): wrap main() in runZonedGuarded to capture uncaught
+// exceptions + POST anonymized (version, OS, error class, stack head — no
+// source paths, no app data, no headers) to a maintainer-controlled
+// collector endpoint. Opt-IN via FLUTTER_NETWORK_MCP_CRASH_REPORT=true.
+// See docs/CRASH_REPORTING.md for the full design sketch. NOT IMPLEMENTED
+// in 0.6.2 — placeholder only.
+
 Future<void> main(List<String> args) async {
+  // Subcommands short-circuit ArgParser. Keep this dispatch FIRST so a
+  // typo on the main flags doesn't pre-empt `install` / `update`.
+  if (args.isNotEmpty) {
+    switch (args.first) {
+      case 'install':
+        return runInstall(args.skip(1).toList());
+    }
+  }
+
+  // JIT-mode startup nudge. The standard `dart pub global activate -s git`
+  // install ships a snapshot wrapper that recompiles on every spawn (~1–2s
+  // cold), which the MCP host can race and mark the server "Failed to
+  // connect". `bool.fromEnvironment('dart.vm.product')` is the canonical
+  // AOT-vs-JIT check — true only when compiled with `dart compile exe`.
+  const bool isAotBuild = bool.fromEnvironment('dart.vm.product');
+  final envForNudge = io.Platform.environment;
+  if (!isAotBuild &&
+      envForNudge['FLUTTER_NETWORK_MCP_NO_JIT_NUDGE']?.toLowerCase() != 'true') {
+    io.stderr.writeln(
+      'flutter_network_mcp: running in JIT mode — slow cold-start may '
+      'cause MCP host handshake timeouts ("Failed to connect" on first '
+      'attach, then success on the next probe). Run '
+      '`flutter_network_mcp install` once for sub-100ms native startup. '
+      '(Set FLUTTER_NETWORK_MCP_NO_JIT_NUDGE=true to silence.)',
+    );
+  }
+
   final parser = ArgParser()
     ..addOption(
       'dtd-uri',
@@ -62,9 +97,11 @@ Future<void> main(List<String> args) async {
           '--auto-attach=sanga_mobile,sanga_driver. There is NO bool '
           'form — to enable auto-attach you MUST specify which apps. '
           'Absent or empty value disables. Apps already running at '
-          'startup are NOT auto-attached (seed-and-skip). Manual '
-          'network_detach survives — detached apps stay in the known '
-          'set. Poll interval: FLUTTER_NETWORK_MCP_AUTO_ATTACH_POLL_MS '
+          'startup that match the allowlist ARE auto-attached on the '
+          'first tick (0.6.2 change — the allowlist is the explicit '
+          'opt-in). Manual network_detach survives — detached apps '
+          'stay in the known set so they won\'t re-attach. '
+          'Poll interval: FLUTTER_NETWORK_MCP_AUTO_ATTACH_POLL_MS '
           '(default 5000, clamped 1000–60000). Requires --dtd-uri or '
           'FLUTTER_NETWORK_MCP_DTD_URI. Env-var fallback: '
           'FLUTTER_NETWORK_MCP_AUTO_ATTACH=app1,app2.',
