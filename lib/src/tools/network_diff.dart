@@ -107,8 +107,10 @@ FutureOr<CallToolResult> networkDiff(CallToolRequest request) async {
     final ctB = b['content_type'] as String?;
     final bodyA = dao.getBody(sessionId, idA, 'response');
     final bodyB = dao.getBody(sessionId, idB, 'response');
-    final textA = bodyA == null ? null : decodeBody(bodyA, ctA, maxBytes: -1);
-    final textB = bodyB == null ? null : decodeBody(bodyB, ctB, maxBytes: -1);
+    // network_diff compares bodies line-by-line — semantic truncation would
+    // reformat the JSON and produce noisy spurious diffs. Force byte-exact.
+    final textA = bodyA == null ? null : decodeBody(bodyA, ctA, maxBytes: -1, semantic: false);
+    final textB = bodyB == null ? null : decodeBody(bodyB, ctB, maxBytes: -1, semantic: false);
 
     Map<String, Object?>? bodyDiff;
     if (textA?.encoding == 'utf8' && textB?.encoding == 'utf8') {
