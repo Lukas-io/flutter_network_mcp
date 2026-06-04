@@ -119,7 +119,10 @@ class HarExporter {
   }
 
   Map<String, Object?> _postData(Uint8List body, String? mimeType) {
-    final decoded = decodeBody(body, mimeType, maxBytes: -1);
+    // HAR export must reproduce the captured payload byte-for-byte so
+    // tools (Chrome DevTools, Insomnia) can replay it. Semantic truncation
+    // would alter formatting.
+    final decoded = decodeBody(body, mimeType, maxBytes: -1, semantic: false);
     if (decoded == null) {
       return {
         'mimeType': mimeType ?? 'application/octet-stream',
@@ -147,7 +150,7 @@ class HarExporter {
         'text': '',
       };
     }
-    final decoded = decodeBody(body, mimeType, maxBytes: -1);
+    final decoded = decodeBody(body, mimeType, maxBytes: -1, semantic: false);
     if (decoded == null) {
       return {'size': body.length, 'mimeType': mimeType ?? '', 'text': ''};
     }

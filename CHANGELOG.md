@@ -4,6 +4,79 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.7.0] — 2026-06-04
+
+Context economy. Two changes that each cut the bytes a typical
+debugging turn burns in the agent's context window, without
+losing actionable signal.
+
+### Added — `network_summarize` tool
+
+New `http` capability tool. Returns one digest row per
+`(method, host, pathTemplate)` bucket over a time window:
+
+```jsonc
+> network_summarize sinceMs:600000
+< {
+    count: 5,
+    endpoints: [
+      {endpoint:"GET api.example.com/api/users/N", count:198,
+       statusDist:{"200":187,"404":10,"500":1},
+       p50LatencyMs:145, p95LatencyMs:820, errorRate:0.056},
+      ...
+    ]
+  }
+```
+
+Path templates collapse dynamic ids via the new
+`lib/src/util/path_template.dart` helper: pure-integer segments → `N`,
+8+ hex chars → `H`, full 8-4-4-4-12 UUID → `UUID`. Mixed-content
+segments (`abc-123`, `v2-final`) stay verbatim. Query strings +
+fragments stripped (endpoint identity is routing-level, not
+parameter-level).
+
+The "what's wrong with my API" first call. Doubles as a shape
+overview of the captured session in ~500 bytes — typically far
+cheaper than `network_list + manual bucketing`.
+
+Inputs: `sinceMs` (default 1 h, 0 = entire session), `hostContains`,
+`limit` (default 50, hard cap 200), `minCount` (default 1).
+
+Reads from DB regardless of live/history scope; raw-row cap of 10 000
+with `rawRowsCapHit` flag when hit.
+
+### Added — semantic body truncation
+
+`decodeBody` (used by `network_get`) now content-type-aware truncates:
+
+- **JSON**: arrays past 5 elements collapse to first 5 + marker
+  `{"_truncated":"42 more, 5 of 47 shown"}`. String leaves over 200
+  chars clip with `…(<n> chars)`. Object keys all preserved (the
+  agent wants the SHAPE).
+- **HTML**: `<script>` + `<style>` contents stripped, comments
+  removed, whitespace collapsed.
+- Output hard-capped at the caller's `bodyTruncateBytes` (default
+  4 KB) regardless of mode. Fall-through to byte-cap when input
+  unparseable or > 256 KB.
+
+Each response carries `truncationMode: "semantic" | "byte" | null`
+so the agent can tell what happened. A typical "list of 100 users"
+response now lands at ~1 KB with all keys + 5 sample rows visible,
+instead of a half-mangled 4 KB byte slice. The agent reads the same
+information AND can parse it.
+
+`network_diff`, `network_body`, and `har_exporter` opt out (force
+`semantic: false`) — they need byte-exact contracts (line-by-line
+diff, byte-range paging, HAR replay).
+
+### Notes
+
+- Tool count: 34 → **35** (`network_summarize` added under HTTP).
+- Schema unchanged from 0.6.3 (v5). No migration.
+- First time the repo gets a `test/` directory. 46 unit tests across
+  `pathTemplate`, `summarizeRequests`, and `truncateJson` /
+  `truncateHtml`. `dart test` clean.
+
 ## [0.6.3] — 2026-06-04
 
 Alert deduplication by signature. A single Flutter `RenderFlex` overflow on an item that's repeated 200 times in a list used to produce 200 nearly-identical alert rows — the existing `UNIQUE(session_id, kind, source_id)` constraint dedupes the SAME source event but doesn't know that 200 distinct log row ids reflect ONE underlying bug. Same problem for HTTP: 50 5xx responses from different request ids on `/api/users/N` were 50 separate rows. The agent ended up surfacing 200 alerts for what was, semantically, one issue.

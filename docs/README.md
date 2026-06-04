@@ -24,6 +24,7 @@ The index below is by **use case** ("I want to do X — which tool?"). Some tool
 ### [Finding a request](tools/finding/)
 - [`network_list`](tools/finding/network_list.md) — by metadata (host, method, status, time). Cursor-based.
 - [`network_search`](tools/finding/network_search.md) — by content (text in url or body). BM25-ranked.
+- [`network_summarize`](tools/finding/network_summarize.md) — one digest row per endpoint (count, statusDist, p50/p95, errorRate). Cheaper than `network_list` for shape-of-session orientation (0.7.0+).
 
 ### [Inspecting one request](tools/inspecting/)
 - [`network_get`](tools/inspecting/network_get.md) — full headers + truncated body for one id.
