@@ -4,6 +4,68 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.7.3] — 2026-06-04
+
+Smarter signals + continuity. Two changes that each take signal the MCP already has and use it more intelligently: baseline-relative anomaly detection replaces a noise-prone static threshold, and session continuation makes the MCP remember what you were debugging across host restarts.
+
+### Added — baseline-relative anomaly alerts
+
+Static thresholds (`http_slow` at fixed 3000 ms) miss real regressions on endpoints that are normally either much faster or much slower. A login endpoint that's normally 200 ms going to 1500 ms is the signal; the same 1500 ms on a CSV-export endpoint that's usually 5000 ms is just normal traffic.
+
+New `AnomalyDetector` singleton with a 30 s polling tick. For each attached session per tick:
+
+1. Pull HTTP rows from last 5 min 30 s.
+2. Split into current (last 30 s) + baseline (preceding 5 min).
+3. Group by `(method, host, pathTemplate)` — same normalization as `network_summarize`.
+4. For each endpoint with ≥ 10 requests in BOTH windows:
+   - **Latency**: fire `http_anomaly` (warning) when current p95 > **2× baseline p95**.
+   - **Error rate**: fire `http_anomaly_errors` (error) when current error rate > **5× baseline AND above 10% absolute floor**.
+
+The floor prevents noise on near-zero baselines (`0% → 0.1%` is infinite multiplier); the multiplier prevents noise on already-high baselines.
+
+Alerts dedupe through the 0.6.3 signature pipeline — a burst of 50 anomaly events on the same endpoint collapses to one row with `occurrenceCount` rolling up.
+
+**Lifecycle**: singleton, lazily started on first attach, stopped when registry hits zero. No background work while detached.
+
+**Disable**: `AlertRules.anomalyEnabled` exposed alongside the existing rule toggles. `alerts_config rules.http_anomaly:false` turns it off. Default: true.
+
+New alert kinds: `http_anomaly` (warning) + `http_anomaly_errors` (error). Both new to the `alert_detector`'s kind taxonomy. The existing `http_slow` static rule stays — anomaly detection complements it.
+
+### Added — session continuation memory
+
+Every Claude Code reload, machine reboot, or MCP-host crash today loses the attachment state. The agent's first `network_status` comes back empty, the user re-types "attach to sanga_mobile", etc. This release makes the next launch say "you were on sanga_mobile 47 min ago, here's the reattach command" — zero friction.
+
+New `<data-dir>/last-session.json`:
+
+```jsonc
+{
+  "writtenAtMs": 1780462000000,
+  "attachments": [
+    {
+      "vmServiceUri": "ws://127.0.0.1:54450/abc=",
+      "appName": "sanga_mobile",
+      "attachedAtMs": 1780461000000
+    }
+  ]
+}
+```
+
+Multi-attach friendly — all currently-attached sessions get recorded. Written on every successful attach + detach; cleared when nothing is attached.
+
+`network_status` surfaces a `continuation` block at the top level (when `attachedCount == 0` and a record exists), and adds a `nextStep` of the form:
+
+```
+network_attach vmServiceUri:"ws://..." — reattach to sanga_mobile (~47m ago); previous attachment recorded by 0.7.3 continuation
+```
+
+Explicit detach removes the continuation so a clean teardown doesn't haunt the next session.
+
+### Notes
+
+- Tool count unchanged from 0.7.2 (still 36).
+- Schema unchanged from 0.6.3 (v5).
+- 13 new unit tests (4 session continuation round-trip + 9 anomaly detector via `detectAnomalies` pure function). Total: 103.
+
 ## [0.7.2] — 2026-06-04
 
 Maintainer loop + project memory. Two changes that each take a manual step the user used to do — composing a bug report from scratch, and re-discovering a recurring bug they fixed weeks ago — and convert it into a single tool call or a free side-effect of an alert drain.

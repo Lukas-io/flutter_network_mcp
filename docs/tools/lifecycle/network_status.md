@@ -71,6 +71,23 @@ When `attachIfOne:true` AND `attached:false` AND `knownApps.length == 1` AND `de
 
 **The `alerts` block (0.6.3+).** `pendingTotal` is the count of DISTINCT signatures — what you branch on for "should I drain?". `pendingEvents` is the SUM of `occurrence_count` across pending rows — what you'd quote when telling the user "there's a burst of 200 events queued, 1 distinct issue." They diverge whenever any single alert collapsed multiple source events into one row (the typical RenderFlex-overflow-in-a-list case). `critical` counts distinct signatures whose escalated severity has reached `critical`. The multi-attach `perAttached` block gets `pendingEvents` too, mirroring the same shape per-session.
 
+**The `continuation` block (0.7.3+).** Appears only when `attachedCount == 0` AND a prior attachment was recorded by a previous MCP-host process. Shape:
+
+```jsonc
+"continuation": {
+  "writtenAtMs": 1780462000000,
+  "attachments": [
+    {
+      "vmServiceUri": "ws://127.0.0.1:54450/abc=",
+      "appName": "sanga_mobile",
+      "attachedAtMs": 1780461000000
+    }
+  ]
+}
+```
+
+When present, the FIRST `nextSteps` line is a reattach hint with a coarse "~47m ago" relative timestamp. Picking up where the previous session left off is usually the right move — explicit detach removes the continuation, so its presence means the prior session ended via host restart / crash / reload, not user intent. Multi-attach friendly: all previously-attached sessions appear in the array.
+
 ## Pairs well with
 
 - `network_attach` — `nextSteps` usually points here.

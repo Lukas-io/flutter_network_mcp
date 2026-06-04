@@ -73,7 +73,7 @@ Selects undrained rows from `alerts` filtered by `severityMin` (info < warning <
 }
 ```
 
-Per-alert `detail`/`sourceKind`/`sourceId` are omitted when null. Alert `kind` values: `http_5xx`, `http_4xx`, `http_error`, `http_slow`, `log_keyword`, `flutter_error`, plus any user-defined kinds via `alert_patterns`. The dedup fields (0.6.3+) — `occurrenceCount`, `firstSeenMs`, `lastSeenMs`, `lastSourceId`, `signature` — are always present on new rows; legacy rows (pre-v5 migration) default `occurrenceCount` to 1 and omit `lastSourceId` / `signature`.
+Per-alert `detail`/`sourceKind`/`sourceId` are omitted when null. Alert `kind` values: `http_5xx`, `http_4xx`, `http_error`, `http_slow`, `log_keyword`, `flutter_error`, `http_anomaly` (0.7.3+, baseline-relative latency regression), `http_anomaly_errors` (0.7.3+, baseline-relative error-rate spike), plus any user-defined kinds via `alert_patterns`. The dedup fields (0.6.3+) — `occurrenceCount`, `firstSeenMs`, `lastSeenMs`, `lastSourceId`, `signature` — are always present on new rows; legacy rows (pre-v5 migration) default `occurrenceCount` to 1 and omit `lastSourceId` / `signature`.
 
 ## Pairs well with
 
