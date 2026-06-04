@@ -1,6 +1,6 @@
 name: flutter_network_mcp
 description: MCP server exposing Flutter DevTools Network tab data to LLM agents via the Dart VM service.
-version: 0.6.2
+version: 0.6.3
 publish_to: none
 repository: https://github.com/Lukas-io/flutter_network_mcp
 homepage: https://github.com/Lukas-io/flutter_network_mcp
@@ -22,6 +22,7 @@ dependencies:
   dtd: ^4.0.0
   vm_service: ^15.0.0
   args: ^2.5.0
+  crypto: ^3.0.0
   sqlite3: ^3.0.0
   path: ^1.9.0
 

@@ -119,12 +119,17 @@ FutureOr<CallToolResult> networkStatus(
           dao.rawSelect('SELECT COUNT(*) AS n FROM sessions').first['n'];
       out['sessionCount'] = sessions;
       if (caps.isEnabled(Category.alerts)) {
+        // 0.6.3 surfaces TWO counts: pendingTotal = distinct signatures
+        // (what the agent branches on for "should I drain?"),
+        // pendingEvents = raw event volume (helpful when a burst happens
+        // and the agent should mention the magnitude without flooding the
+        // alert list). They diverge whenever any single alert has
+        // occurrence_count > 1.
         final alertsBlock = <String, Object?>{
           'pendingTotal': dao.pendingAlertCount(),
+          'pendingEvents': dao.pendingAlertEventCount(),
           'critical': dao.pendingAlertCount(severityMin: 'critical'),
         };
-        // Per-session breakdown only when 2+ attached (otherwise redundant
-        // with pendingTotal).
         if (registry.attachedCount >= 2) {
           alertsBlock['perAttached'] = [
             for (final a in registry.attached.values)
@@ -132,6 +137,7 @@ FutureOr<CallToolResult> networkStatus(
                 'sessionId': a.id,
                 if (a.appName != null) 'appName': a.appName,
                 'pending': dao.pendingAlertCount(sessionId: a.id),
+                'pendingEvents': dao.pendingAlertEventCount(sessionId: a.id),
               },
           ];
         }

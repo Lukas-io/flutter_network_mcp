@@ -382,30 +382,101 @@ class CapturesDao {
 
   // ----- alerts -----
 
-  /// Inserts an alert if one with the same (session_id, kind, source_id)
-  /// doesn't already exist. Returns true when a new row was inserted.
+  /// Inserts or merges an alert.
+  ///
+  /// Dedup happens by [signature]: if a pending (non-drained) alert with
+  /// the same `(session_id, signature)` already exists, that row's
+  /// `occurrence_count` is incremented, `last_seen_ms` advanced, and
+  /// `last_source_id` updated to the new event's source. Severity is
+  /// bumped only when the new event is more severe than the existing
+  /// row (highest-seen wins).
+  ///
+  /// If no pending alert with this signature exists, a fresh row is
+  /// inserted at `occurrence_count = 1`. Drained rows don't merge — once
+  /// the agent has acknowledged a batch, a new occurrence starts a new
+  /// row, so the count semantically means "events seen since last drain."
+  ///
+  /// Returns `true` when a NEW row was inserted, `false` when an existing
+  /// row was incremented OR when the legacy
+  /// `UNIQUE(session_id, kind, source_id)` constraint deduped a literal
+  /// duplicate source event.
   bool insertAlert({
     required int sessionId,
     required String severity,
     required String kind,
     required String title,
+    required String signature,
     String? detail,
     String? sourceKind,
     String? sourceId,
     int? tsMs,
   }) {
     final ts = tsMs ?? DateTime.now().millisecondsSinceEpoch;
-    final before = _db.select(
-      'SELECT id FROM alerts WHERE session_id=? AND kind=? AND source_id IS ?',
-      [sessionId, kind, sourceId],
+
+    final existing = _db.select(
+      'SELECT id, severity FROM alerts '
+      'WHERE session_id = ? AND signature = ? AND drained = 0 LIMIT 1',
+      [sessionId, signature],
     );
-    if (before.isNotEmpty) return false;
-    _db.execute(
-      'INSERT INTO alerts(session_id, ts_ms, severity, kind, title, detail, source_kind, source_id) '
-      'VALUES (?,?,?,?,?,?,?,?)',
-      [sessionId, ts, severity, kind, title, detail, sourceKind, sourceId],
+
+    if (existing.isNotEmpty) {
+      final row = existing.first;
+      final existingSeverity = row['severity'] as String;
+      final escalated =
+          _severityRank(severity) > _severityRank(existingSeverity)
+              ? severity
+              : existingSeverity;
+      _db.execute(
+        'UPDATE alerts SET '
+        '  occurrence_count = occurrence_count + 1, '
+        '  last_seen_ms = ?, '
+        '  last_source_id = ?, '
+        '  severity = ? '
+        'WHERE id = ?',
+        [ts, sourceId, escalated, row['id']],
+      );
+      return false;
+    }
+
+    try {
+      _db.execute(
+        'INSERT INTO alerts(session_id, ts_ms, severity, kind, title, '
+        'detail, source_kind, source_id, signature, occurrence_count, '
+        'last_seen_ms, last_source_id) '
+        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)',
+        [sessionId, ts, severity, kind, title, detail, sourceKind,
+         sourceId, signature, ts, sourceId],
+      );
+      return true;
+    } on sql.SqliteException catch (e) {
+      // The legacy UNIQUE(session_id, kind, source_id) constraint catches
+      // the rare race where the same source event delivers twice (e.g. a
+      // duplicate VM-service tick). Treat as already-handled.
+      if (e.extendedResultCode == 2067) return false;
+      rethrow;
+    }
+  }
+
+  /// Sum of `occurrence_count` across pending alerts matching the filter.
+  /// Differs from [pendingAlertCount] which returns DISTINCT-row count —
+  /// `pendingAlertEventCount` reflects raw event volume.
+  int pendingAlertEventCount({int? sessionId, String? severityMin}) {
+    final clauses = <String>['drained=0'];
+    final params = <Object?>[];
+    if (sessionId != null) {
+      clauses.add('session_id = ?');
+      params.add(sessionId);
+    }
+    if (severityMin != null) {
+      final rank = _severityRank(severityMin);
+      clauses.add(_severityRankSql('severity', '>=', rank));
+    }
+    final rows = _db.select(
+      'SELECT COALESCE(SUM(occurrence_count), 0) AS n FROM alerts '
+      'WHERE ${clauses.join(' AND ')}',
+      params,
     );
-    return true;
+    return (rows.first['n'] as int?) ?? 0;
   }
 
   List<Map<String, Object?>> peekAlerts({
