@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:dart_mcp/server.dart';
 
+import '../state/continuation.dart';
 import '../state/session.dart';
 import '../storage/captures_db.dart';
 import 'result.dart';
@@ -186,6 +187,15 @@ FutureOr<CallToolResult> networkDetach(CallToolRequest request) async {
   // Disconnect DTD when no sessions remain attached.
   if (registry.attachedCount == 0 && session.dtd.isConnected) {
     await session.dtd.disconnect();
+  }
+
+  // 0.7.3: update the continuation record so a future MCP-host restart
+  // sees only the still-attached sessions (or no continuation at all
+  // when the user has explicitly detached everything).
+  if (registry.attachedCount == 0) {
+    SessionContinuation.clear();
+  } else {
+    SessionContinuation.record(registry.attached.values);
   }
 
   final remaining = registry.attachedCount;
