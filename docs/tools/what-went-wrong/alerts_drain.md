@@ -23,6 +23,8 @@ Selects undrained rows from `alerts` filtered by `severityMin` (info < warning <
 
 **Deduplication by signature (0.6.3+).** Repeat events that reflect the same underlying issue collapse into a single row with `occurrenceCount` incremented. A `RenderFlex` overflow that fires 200 times because the offending widget is repeated 200 times in a list shows up as ONE row with `occurrenceCount: 200`, not 200 rows. Severity is bumped to the highest seen across the burst (a single critical inside 199 warnings escalates the row to critical). The `firstSeenMs` / `lastSeenMs` / `sourceId` / `lastSourceId` fields bracket the burst — pass `lastSourceId` to `network_get` to drill into the most recent event, `sourceId` for the first. Drained alerts don't merge with subsequent events; once acknowledged, a fresh occurrence starts a new row at count 1.
 
+**Cross-session pattern memory (0.7.2+).** Each alert row that has a signature now carries a `priorOccurrences: [...]` array listing past sessions where the same signature fired. Each entry has `sessionId`, `startedAtMs`, `appName`, and the session's `note` (if the user wrote one). Per-project bug recurrence becomes the agent's memory: "you hit this RenderFlex overflow 3 days ago and your note says it was a missing Expanded." Default limit 3 past sessions, newest-first. Absent when no prior occurrences exist OR when the alert has no signature (legacy row).
+
 ## Args
 
 - `sessionId` (int, optional) — defaults to current (live or viewed) session.
@@ -54,6 +56,14 @@ Selects undrained rows from `alerts` filtered by `severityMin` (info < warning <
       "sourceId": "log:101",
       "tsMs": 1780462000000,
       "occurrenceCount": 200,
+      "priorOccurrences": [
+        {
+          "sessionId": 14,
+          "startedAtMs": 1780462000000,
+          "appName": "sanga_mobile",
+          "note": "fixed by adding Expanded — lib/view/widgets/cart.dart"
+        }
+      ],
       "firstSeenMs": 1780462000000,
       "lastSeenMs": 1780462678000,
       "lastSourceId": "log:341",

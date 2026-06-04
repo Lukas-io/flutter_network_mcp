@@ -4,6 +4,66 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.7.2] — 2026-06-04
+
+Maintainer loop + project memory. Two changes that each take a manual step the user used to do — composing a bug report from scratch, and re-discovering a recurring bug they fixed weeks ago — and convert it into a single tool call or a free side-effect of an alert drain.
+
+### Added — `report_issue` tool
+
+New always-on lifecycle tool. Lets agents file GitHub issues against this MCP from inside a turn:
+
+```
+> report_issue type:"bug" title:"network_summarize p95 is null when only 1 request"
+   body:"network_summarize with one captured request returns p95LatencyMs..."
+< {filed: true, url: "https://github.com/Lukas-io/flutter_network_mcp/issues/47", ...}
+```
+
+Two types — `bug` (code issue, wrong output, crash) and `ux` (works but feels awkward / confusing / slow / unclear). When `gh` CLI is installed (and `auto:true`, the default), shells `gh issue create --repo Lukas-io/flutter_network_mcp --title ... --body ... --label ...`. Otherwise returns a GitHub deep-link URL with `title=`, `body=`, `labels=` pre-filled in the query string — the user opens it in a browser and the new-issue form arrives ready to submit.
+
+Labels:
+
+- `bug` → `[bug, agent-filed]`
+- `ux` → `[ux-friction, agent-filed]`
+
+The `agent-filed` label lets the maintainer triage agent-vs-human reports at a glance.
+
+**Path-redacted by default.** Title + body run through the same redactor that scrubs telemetry stack frames (`<project:X>/...`, `<home>/...`, Windows equivalents). Defense-in-depth — agents should still avoid putting paths in issue text.
+
+The existing `instructions` field already directed agents to file proactively; this tool removes the "copy-paste body into GitHub" friction from that flow.
+
+### Added — cross-session pattern memory
+
+When `alerts_drain` (or `alerts_peek`) emits a row with a signature, the response now includes `priorOccurrences` listing past sessions where the same signature fired:
+
+```jsonc
+{
+  "id": 42,
+  "kind": "flutter_error",
+  "title": "RenderFlex overflowed by 14 pixels on the right",
+  "signature": "a3f7c8d219b4",
+  "occurrenceCount": 200,
+  "priorOccurrences": [
+    {
+      "sessionId": 14,
+      "startedAtMs": 1780462000000,
+      "appName": "sanga_mobile",
+      "note": "fixed by adding Expanded — lib/view/widgets/cart.dart"
+    }
+  ]
+}
+```
+
+The agent now sees "you hit this RenderFlex overflow 3 days ago and your note says it was a missing Expanded" — for free, on every drain. Per-project debugging conversations become a knowledge artifact instead of evaporating.
+
+**Implementation:** new `CapturesDao.priorOccurrencesForSignature` query joins `alerts` and `sessions`, groups by session, orders newest-first, excludes the current session. Default limit 3. The existing 0.6.3 signature is the join key — no new schema, no migration.
+
+### Notes
+
+- Tool count: 35 → **36** (`report_issue` added under lifecycle).
+- Schema unchanged from 0.6.3 (v5).
+- 14 new unit tests (7 prior-occurrences DAO + 7 report_issue URL composition). Total: 90.
+- The `gh` CLI path isn't unit-tested (would need process mocking); the always-available paste-ready fallback has full coverage.
+
 ## [0.7.1] — 2026-06-04
 
 Crash telemetry. Default-on with a tamper-evident local audit log, opt-out via `FLUTTER_NETWORK_MCP_NO_TELEMETRY=true`.
