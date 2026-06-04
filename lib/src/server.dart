@@ -6,6 +6,7 @@ import 'package:dart_mcp/stdio.dart';
 import 'config/capabilities.dart';
 import 'version.dart';
 import 'tools/alert_patterns.dart';
+import 'tools/auto_attach_config_tool.dart';
 import 'tools/alerts_clear.dart';
 import 'tools/alerts_config.dart';
 import 'tools/alerts_drain.dart';
@@ -81,6 +82,7 @@ base class FlutterNetworkMcpServer extends MCPServer with ToolsSupport {
     registerTool(networkDetachTool, networkDetach);
     registerTool(networkDiscoverDtdTool, networkDiscoverDtd);
     registerTool(reportIssueTool, reportIssue);
+    registerTool(autoAttachConfigTool, autoAttachConfig);
 
     if (caps.isEnabled(Category.http)) {
       registerTool(networkListTool, networkList);
