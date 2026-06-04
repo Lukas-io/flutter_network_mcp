@@ -4,6 +4,105 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.7.1] — 2026-06-04
+
+Crash telemetry. Default-on with a tamper-evident local audit log, opt-out via `FLUTTER_NETWORK_MCP_NO_TELEMETRY=true`.
+
+**The trust pact.** More signal for the maintainer (silent crashes become signal we can act on within days instead of dying unreported), in exchange for full transparency to the user about what we know — every byte sent off-machine is also written to a hash-chained local log the user can verify or inspect at any time.
+
+### Added — runZonedGuarded reports crashes
+
+The top-level zone guard (in place since 0.6.2) now also calls `TelemetryReporter.maybeReport` on uncaught errors. The reporter:
+
+1. Skips entirely when `FLUTTER_NETWORK_MCP_NO_TELEMETRY=true`.
+2. Builds an anonymized payload (schema below).
+3. Appends a tamper-evident audit log entry FIRST.
+4. POSTs the same payload to a maintainer-controlled collector with a 3 s deadline (when configured — see "Collector status" below).
+
+Fire-and-forget. Never blocks shutdown. All errors swallowed.
+
+### Added — tamper-evident audit log
+
+`<data-dir>/telemetry-audit.log`. One line per report:
+
+```
+<ts>|<prev_hash>|<payload_b64>|<this_hash>
+```
+
+`this_hash = sha256(ts + prev_hash + payload_b64)`. `prev_hash` links each line to the previous (64 zeros for the first). The chain catches any silent edit OR removal — three scenarios verified by unit tests:
+
+- Payload edit: `this_hash` recomputation fails on that line.
+- Line removal: the next line's `prev_hash` no longer matches the chain.
+- Malformed line: parsed as null at its index.
+
+**Tamper-EVIDENT, not tamper-PROOF.** The user owns the file. Same trust model as `git log`.
+
+### Added — `audit` subcommand
+
+```
+flutter_network_mcp audit verify
+flutter_network_mcp audit show
+flutter_network_mcp audit show --since 7d
+flutter_network_mcp audit show --signature <sig>
+```
+
+`verify` walks the chain and prints `N entries, chain intact` + first/last timestamps OR `chain broken at entry K (reason)`. Exit code 70 on broken chain so CI scripts can detect tampering.
+
+`show` decodes the payloads and pretty-prints each entry. `--since` filters by relative duration (`Nd | Nh | Nm`). `--signature` filters to the 12-char dedupe key in the payload.
+
+### Payload schema
+
+```jsonc
+{
+  "version": "0.7.1",
+  "commit": "4aa550c...",        // 12 hex chars
+  "isAot": true,
+  "os": "macos 14.6",
+  "dart": "3.5.0",
+  "errorClass": "StateError",
+  "errorMessage": "DTD is not connected.",
+  "stackHead": [
+    "#0 DtdClient._requireConnected (package:flutter_network_mcp/src/vm/dtd_client.dart:36)",
+    "..."
+  ],
+  "signature": "a3f7c8d219b4",    // sha256(errorClass + top-3-frames)[:12]
+  "machineHash": "f1a823bc91...", // HMAC(dataDir, kPublicSalt)[:24]
+  "reportedAt": "2026-06-04T12:34:56Z"
+}
+```
+
+### NOT in the payload
+
+The path redactor strips before anything is recorded:
+
+- `$HOME`, `cwd`, the target Flutter project path, any `/Users/<name>/…` or `C:\Users\<name>\…`
+- The target app's `vmServiceUri` / DTD URI / connection token
+- Any captured HTTP body, header, URL
+- Env-var contents (only `FLUTTER_NETWORK_MCP_NO_TELEMETRY` presence is read, never logged)
+- `captures.db` row contents
+
+14 fuzz-corpus tests in `test/telemetry/path_redactor_test.dart` verify the redaction across POSIX + Windows shapes including the "anti-leak" check (no username string appears anywhere in the payload).
+
+### Collector status — path B (local-only) for 0.7.1
+
+`kCollectorEndpoint` is empty in this release. The binary writes the audit log but doesn't POST. The trust pact's LOCAL half works today; the central signal layer ships in 0.7.1.x once the Cloudflare deploy lands. See `docs/MAINTAINER_SETUP.md` path A for the deploy steps.
+
+This split was deliberate: it lets us ship the user-facing transparency (audit log + `audit verify` + opt-out) without waiting on infrastructure deploy. When the collector URL is ready, a small follow-up patch flips the constant and the existing payload + opt-out + audit log all carry over.
+
+### Opt-out
+
+```bash
+export FLUTTER_NETWORK_MCP_NO_TELEMETRY=true
+```
+
+Set this and the telemetry code never runs. No audit write, no network attempt. Recommended for SOC 2 / regulated environments.
+
+### Notes
+
+- 30 new unit tests (path redactor 14 + audit log 8 + payload builder 8). Total: 76 tests, all passing.
+- `lib/src/util/data_dir.dart` refactored out of `install.dart` so install + audit log + DB all agree on the user's state directory.
+- Tool count + schema unchanged from 0.7.0 — telemetry is bin/runtime infrastructure, not an MCP tool.
+
 ## [0.7.0] — 2026-06-04
 
 Context economy. Two changes that each cut the bytes a typical
