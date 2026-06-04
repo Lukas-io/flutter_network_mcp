@@ -2,6 +2,7 @@ import 'dart:io' as io;
 
 import 'package:path/path.dart' as p;
 
+import '../util/data_dir.dart';
 import '../version.dart';
 
 /// `flutter_network_mcp install` subcommand: AOT-compiles this package's
@@ -182,24 +183,10 @@ void _writeCompiledMarker() {
   } catch (_) {/* silent — marker is best-effort */}
 }
 
-/// Mirrors `CapturesDatabase._candidateDataDirs` first-choice. Used by the
-/// install marker + the update subcommand. Kept inline to avoid an
-/// unnecessary cross-file dependency for two helpers.
-String? _resolveDataDir() {
-  final env = io.Platform.environment;
-  final override = env['FLUTTER_NETWORK_MCP_DATA_DIR'];
-  if (override != null && override.isNotEmpty) return override;
-  final home = env['HOME'];
-  if (home == null || home.isEmpty) return null;
-  if (io.Platform.isMacOS) {
-    return p.join(home, 'Library', 'Application Support', 'flutter_network_mcp');
-  }
-  final xdg = env['XDG_DATA_HOME'];
-  if (xdg != null && xdg.isNotEmpty) {
-    return p.join(xdg, 'flutter_network_mcp');
-  }
-  return p.join(home, '.local', 'share', 'flutter_network_mcp');
-}
+/// Returns the canonical data-dir path. Delegates to the shared util in
+/// `lib/src/util/data_dir.dart` so install + telemetry + DB all agree on
+/// where the user's state lives.
+String? _resolveDataDir() => resolveCandidateDataDir();
 
 /// Public for the `update` subcommand: returns true iff the user previously
 /// ran `install` (so update should re-compile after re-activating).
