@@ -26,7 +26,16 @@ Live mode: calls `getHttpProfileRequest` on the VM service.
 
 History mode: reads from `http_requests` + `http_bodies` for the viewed session. If bodies aren't persisted yet (writer hasn't backfilled — happens within ~2s of request completion), the response includes a `warnings` entry saying so.
 
-Bodies decode as UTF-8 for json/text/xml/form content types, base64 otherwise. Truncated payloads carry `{truncated:true, totalSize}` in the body sub-object AND a top-level `warnings[]` entry pointing at `network_body`.
+Bodies decode as UTF-8 for json/text/xml/form content types, base64 otherwise. Truncated payloads carry `{truncated:true, totalSize, truncationMode}` in the body sub-object AND a top-level `warnings[]` entry pointing at `network_body`.
+
+**Semantic truncation (0.7.0+).** For JSON and HTML bodies, truncation now preserves STRUCTURE instead of slicing at the byte cap:
+
+- **JSON**: arrays past 5 elements collapse to first 5 + a `{"_truncated":"42 more, 5 of 47 shown"}` marker. String leaves > 200 chars clip with `…(<n> chars)` suffix. Object keys are all preserved (the shape is what the agent needs). The output is pretty-printed with 2-space indent for readability.
+- **HTML**: `<script>` + `<style>` contents stripped, comments removed, whitespace collapsed.
+
+The `truncationMode` field tells you which path ran: `"semantic"` (JSON/HTML structural), `"byte"` (legacy byte-cap fallback for non-text or > 256 KB bodies), or omitted when nothing was truncated. A typical "list of 100 users" response now lands at ~1 KB with all keys + 5 sample rows visible, instead of a half-mangled 4 KB byte slice. The agent reads the same information AND can parse it.
+
+For byte-exact paging of the full untruncated payload — `network_body` (which always returns byte-exact content regardless of mode).
 
 Header values longer than `headerTruncateBytes` become `{value, truncated, totalLength}` objects so a 4 KB JWT doesn't drown the payload.
 

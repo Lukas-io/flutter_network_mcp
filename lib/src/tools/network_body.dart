@@ -212,7 +212,10 @@ FutureOr<CallToolResult> networkBody(CallToolRequest request) async {
     final start = offset < 0 ? 0 : (offset > total ? total : offset);
     final end = (start + length) > total ? total : (start + length);
     final slice = Uint8List.sublistView(bytes, start, end);
-    final decoded = decodeBody(slice, mimeType, decode: decode, maxBytes: -1);
+    // network_body is the byte-range API — caller's offset/length must map
+    // 1:1 to the captured bytes. Semantic truncation would break the
+    // contract.
+    final decoded = decodeBody(slice, mimeType, decode: decode, maxBytes: -1, semantic: false);
     final returnedSize = end - start;
     final nextOffset = end < total ? end : null;
 
