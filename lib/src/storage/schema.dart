@@ -3,7 +3,7 @@
 // Bump [currentVersion] when changing this file and add a migration block in
 // the migration switch in database.dart.
 
-const int currentVersion = 4;
+const int currentVersion = 5;
 
 const List<String> initialSchema = [
   '''
@@ -90,19 +90,28 @@ const List<String> initialSchema = [
   ''',
   '''
   CREATE TABLE alerts (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    session_id   INTEGER NOT NULL,
-    ts_ms        INTEGER NOT NULL,
-    severity     TEXT NOT NULL,
-    kind         TEXT NOT NULL,
-    title        TEXT NOT NULL,
-    detail       TEXT,
-    source_kind  TEXT,
-    source_id    TEXT,
-    drained      INTEGER NOT NULL DEFAULT 0,
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id        INTEGER NOT NULL,
+    ts_ms             INTEGER NOT NULL,
+    severity          TEXT NOT NULL,
+    kind              TEXT NOT NULL,
+    title             TEXT NOT NULL,
+    detail            TEXT,
+    source_kind       TEXT,
+    source_id         TEXT,
+    signature         TEXT,
+    occurrence_count  INTEGER NOT NULL DEFAULT 1,
+    last_seen_ms      INTEGER,
+    last_source_id    TEXT,
+    drained           INTEGER NOT NULL DEFAULT 0,
     FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,
     UNIQUE(session_id, kind, source_id)
   )
+  ''',
+  '''
+  CREATE UNIQUE INDEX idx_alerts_pending_signature
+    ON alerts(session_id, signature)
+    WHERE drained = 0 AND signature IS NOT NULL
   ''',
   '''
   CREATE TABLE ignored_hosts (
@@ -228,4 +237,27 @@ const List<String> migrationV3toV4 = [
   'ALTER TABLE http_search_map ADD COLUMN isolate_id TEXT',
   'CREATE INDEX IF NOT EXISTS idx_http_isolate ON http_requests(session_id, isolate_id)',
   'CREATE INDEX IF NOT EXISTS idx_logs_isolate ON log_records(session_id, isolate_id)',
+];
+
+/// v4 → v5: alert deduplication by signature. Collapses N events with the
+/// same underlying issue into one row with `occurrence_count`, advancing
+/// `last_seen_ms` + `last_source_id` instead of inserting a new row.
+///
+/// Backfill: existing rows get `signature = NULL` (we don't try to
+/// recompute for old data — they drain through the same path as fresh
+/// rows, just without a dedup key). `last_seen_ms` defaults to `ts_ms`
+/// for legacy rows so the new field is always populated. The partial
+/// unique index applies only to `signature IS NOT NULL`, so legacy NULLs
+/// don't trip on the constraint.
+const List<String> migrationV4toV5 = [
+  'ALTER TABLE alerts ADD COLUMN signature TEXT',
+  'ALTER TABLE alerts ADD COLUMN occurrence_count INTEGER NOT NULL DEFAULT 1',
+  'ALTER TABLE alerts ADD COLUMN last_seen_ms INTEGER',
+  'ALTER TABLE alerts ADD COLUMN last_source_id TEXT',
+  'UPDATE alerts SET last_seen_ms = ts_ms WHERE last_seen_ms IS NULL',
+  '''
+  CREATE UNIQUE INDEX idx_alerts_pending_signature
+    ON alerts(session_id, signature)
+    WHERE drained = 0 AND signature IS NOT NULL
+  ''',
 ];

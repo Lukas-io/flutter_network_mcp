@@ -2,6 +2,7 @@ import 'package:vm_service/vm_service.dart';
 
 import '../storage/captures_db.dart';
 import 'alert_rules.dart';
+import 'signature.dart';
 
 /// Evaluates capture events against [AlertRules] and writes any alerts that
 /// fire into the DB. Idempotent — relies on the UNIQUE(session_id, kind,
@@ -22,11 +23,13 @@ class AlertDetector {
 
     if (hasError && _rules.httpErrorEnabled) {
       final msg = r.response?.error ?? r.request?.error ?? 'dart:io error';
+      final title = '${r.method} ${r.uri} — request failed';
       _dao.insertAlert(
         sessionId: sessionId,
         severity: 'error',
         kind: 'http_error',
-        title: '${r.method} ${r.uri} — request failed',
+        title: title,
+        signature: computeAlertSignature(kind: 'http_error', title: title),
         detail: msg,
         sourceKind: 'http',
         sourceId: id,
@@ -35,21 +38,25 @@ class AlertDetector {
 
     if (status != null) {
       if (status >= 500 && status <= 599 && _rules.http5xxEnabled) {
+        final title = '$status on ${r.method} ${_compact(r.uri)}';
         _dao.insertAlert(
           sessionId: sessionId,
           severity: 'error',
           kind: 'http_5xx',
-          title: '$status on ${r.method} ${_compact(r.uri)}',
+          title: title,
+          signature: computeAlertSignature(kind: 'http_5xx', title: title),
           detail: r.response?.reasonPhrase,
           sourceKind: 'http',
           sourceId: id,
         );
       } else if (status >= 400 && status <= 499 && _rules.http4xxEnabled) {
+        final title = '$status on ${r.method} ${_compact(r.uri)}';
         _dao.insertAlert(
           sessionId: sessionId,
           severity: 'warning',
           kind: 'http_4xx',
-          title: '$status on ${r.method} ${_compact(r.uri)}',
+          title: title,
+          signature: computeAlertSignature(kind: 'http_4xx', title: title),
           detail: r.response?.reasonPhrase,
           sourceKind: 'http',
           sourceId: id,
@@ -60,11 +67,13 @@ class AlertDetector {
     if (_rules.httpSlowEnabled && r.endTime != null) {
       final ms = r.endTime!.difference(r.startTime).inMilliseconds;
       if (ms > _rules.slowThresholdMs) {
+        final title = '${ms}ms on ${r.method} ${_compact(r.uri)}';
         _dao.insertAlert(
           sessionId: sessionId,
           severity: 'warning',
           kind: 'http_slow',
-          title: '${ms}ms on ${r.method} ${_compact(r.uri)}',
+          title: title,
+          signature: computeAlertSignature(kind: 'http_slow', title: title),
           detail: 'Slow request (threshold ${_rules.slowThresholdMs}ms).',
           sourceKind: 'http',
           sourceId: id,
@@ -89,11 +98,13 @@ class AlertDetector {
     // Flutter-specific takes priority — it's the most actionable.
     if (_rules.flutterErrorEnabled &&
         AlertRules.flutterErrorPatterns.any((p) => p.hasMatch(message))) {
+      final title = _firstLine(message);
       _dao.insertAlert(
         sessionId: sessionId,
         severity: 'critical',
         kind: 'flutter_error',
-        title: _firstLine(message),
+        title: title,
+        signature: computeAlertSignature(kind: 'flutter_error', title: title),
         detail: message.length > 4096 ? message.substring(0, 4096) : message,
         sourceKind: 'log',
         sourceId: 'log:$logRowId',
@@ -105,11 +116,13 @@ class AlertDetector {
     if (_rules.logKeywordEnabled &&
         AlertRules.logKeywordRegex.hasMatch(message)) {
       final severe = (level ?? 0) >= 1200;
+      final title = _firstLine(message);
       _dao.insertAlert(
         sessionId: sessionId,
         severity: severe ? 'error' : 'warning',
         kind: 'log_keyword',
-        title: _firstLine(message),
+        title: title,
+        signature: computeAlertSignature(kind: 'log_keyword', title: title),
         detail: message.length > 2048 ? message.substring(0, 2048) : message,
         sourceKind: 'log',
         sourceId: 'log:$logRowId',
@@ -121,11 +134,13 @@ class AlertDetector {
     // built-in flutter_error path, but they CAN fire alongside log_keyword.
     for (final pattern in _rules.customPatterns) {
       if (pattern.regex.hasMatch(message)) {
+        final title = pattern.label ?? _firstLine(message);
         _dao.insertAlert(
           sessionId: sessionId,
           severity: pattern.severity,
           kind: pattern.kind,
-          title: pattern.label ?? _firstLine(message),
+          title: title,
+          signature: computeAlertSignature(kind: pattern.kind, title: title),
           detail: message.length > 2048 ? message.substring(0, 2048) : message,
           sourceKind: 'log',
           sourceId: 'log:$logRowId:${pattern.id}',
