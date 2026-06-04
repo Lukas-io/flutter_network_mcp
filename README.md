@@ -93,6 +93,68 @@ Beyond capability gating, these env vars tune runtime behavior:
 | `FLUTTER_NETWORK_MCP_DISABLE` | — | — | Denylist (see below). |
 | `FLUTTER_NETWORK_MCP_NO_JIT_NUDGE` | — | `true` to silence | Suppresses the "running in JIT mode" stderr nudge that suggests `flutter_network_mcp install`. Set after you've decided you're fine with JIT startup. |
 | `FLUTTER_NETWORK_MCP_NO_UPDATE_CHECK` | — | `true` to silence | Skips the daily background version check entirely (no network access to GitHub raw on startup). |
+| `FLUTTER_NETWORK_MCP_NO_TELEMETRY` | — | `true` to silence | Opts OUT of crash telemetry (0.7.1+). With this set, the audit log is never written and no POST is attempted. See the [Telemetry](#telemetry-071) section for the full schema + opt-out rationale. |
+
+## Telemetry (0.7.1+)
+
+Crash telemetry is **on by default**, with one opt-out env var. In exchange, the MCP writes a **tamper-evident local audit log** of every byte it would send off-machine, hash-chained so any silent edit is detectable. Run `flutter_network_mcp audit verify` to walk the chain and prove nothing was sent without your knowledge.
+
+### What gets sent
+
+Only on uncaught errors (the runZonedGuarded handler catches them). One POST per crash. Payload:
+
+```jsonc
+{
+  "version": "0.7.1",
+  "commit": "4aa550c...",       // 12-char SHA, when known
+  "isAot": true,
+  "os": "macos 14.6",
+  "dart": "3.5.0",
+  "errorClass": "StateError",
+  "errorMessage": "DTD is not connected.",
+  "stackHead": [                // top 8 frames, paths redacted
+    "#0 DtdClient._requireConnected (package:flutter_network_mcp/src/vm/dtd_client.dart:36)"
+  ],
+  "signature": "a3f7c8d219b4",    // sha256(errorClass + top-3-frames)[:12]
+  "machineHash": "f1a823bc91...", // HMAC of your data-dir path
+  "reportedAt": "2026-06-04T12:34:56Z"
+}
+```
+
+### What's NOT sent
+
+The path redactor strips everything user-identifying before recording. Never sent:
+
+- `$HOME`, `cwd`, the target Flutter project path
+- The target app's `vmServiceUri` / DTD URI / connection token
+- Any captured HTTP body, header, URL
+- Env-var contents
+- `captures.db` row contents
+
+### Audit log
+
+Every report is recorded at `<data-dir>/telemetry-audit.log` — same payload, byte-for-byte, in a hash-chained append-only format. Inspect any time:
+
+```bash
+flutter_network_mcp audit verify              # walk the chain
+flutter_network_mcp audit show                # decode + pretty-print
+flutter_network_mcp audit show --since 7d     # last 7 days
+flutter_network_mcp audit show --signature S  # specific crash group
+```
+
+Tamper-evident, not tamper-proof — you own the file. The chain catches any silent edit OR line removal, same model as `git log`.
+
+### Opt out
+
+```bash
+export FLUTTER_NETWORK_MCP_NO_TELEMETRY=true
+```
+
+Set this and the telemetry code never runs. No audit write, no network attempt. Recommended for SOC 2 / regulated environments.
+
+### Collector status
+
+`kCollectorEndpoint` is currently empty (path B). 0.7.1 ships with audit-log-only mode — the binary writes the audit log so the trust pact's local half works, but the POST is stubbed pending maintainer-side Cloudflare deploy. When the URL is ready, a 0.7.1.x follow-up flips the constant and the same payload + opt-out + audit log all carry over.
 
 ## Capability gating (control your context budget)
 
