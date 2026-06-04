@@ -259,12 +259,25 @@ Future<void> _runMain(List<String> args) async {
   // Value is a comma-separated allowlist of substring patterns. Empty /
   // absent disables. No bool form — to enable auto-attach you must say
   // which apps it's allowed to grab.
-  final autoAttachRaw = (results['auto-attach'] as String?) ??
-      env['FLUTTER_NETWORK_MCP_AUTO_ATTACH'];
-  final autoAttachAllowlist = _parseAllowlist(autoAttachRaw);
-  final autoAttachDenyRaw = (results['auto-attach-deny'] as String?) ??
-      env['FLUTTER_NETWORK_MCP_AUTO_ATTACH_DENY'];
-  final autoAttachDenylist = _parseAllowlist(autoAttachDenyRaw);
+  // 0.7.4: resolution order is file → env var → CLI flag, each step
+  // overriding the previous. The file is the persistent default the user
+  // sets via the agent-callable `auto_attach_config` tool; env vars and
+  // flags are per-launch overrides.
+  final fileConfig = AutoAttachConfig.loadFromFile();
+  final envAllowRaw = env['FLUTTER_NETWORK_MCP_AUTO_ATTACH'];
+  final flagAllowRaw = results['auto-attach'] as String?;
+  final autoAttachAllowlist = flagAllowRaw != null
+      ? _parseAllowlist(flagAllowRaw)
+      : envAllowRaw != null
+          ? _parseAllowlist(envAllowRaw)
+          : fileConfig.allowed;
+  final envDenyRaw = env['FLUTTER_NETWORK_MCP_AUTO_ATTACH_DENY'];
+  final flagDenyRaw = results['auto-attach-deny'] as String?;
+  final autoAttachDenylist = flagDenyRaw != null
+      ? _parseAllowlist(flagDenyRaw)
+      : envDenyRaw != null
+          ? _parseAllowlist(envDenyRaw)
+          : fileConfig.denied;
 
   // Publish the resolved config so non-bin/ tools (network_attach's
   // autoAttachSuggestion hint) can read it without re-parsing.
