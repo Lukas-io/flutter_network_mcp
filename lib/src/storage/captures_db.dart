@@ -553,6 +553,34 @@ class CapturesDao {
     return rows.map(_rowToMap).toList();
   }
 
+  /// Cross-session lookup for the dedup signature. Returns prior
+  /// occurrences of [signature] in OTHER sessions (excluding the current
+  /// one), newest-first. Each entry exposes `sessionId`, `startedAtMs`,
+  /// `appName`, and the session's `note` so the agent can surface a
+  /// "you've seen this before, here's what you wrote about it"
+  /// breadcrumb on a new alert.
+  ///
+  /// [limit] caps the result so a long-running install with a recurring
+  /// bug doesn't return a hundred prior occurrences.
+  List<Map<String, Object?>> priorOccurrencesForSignature({
+    required String signature,
+    required int excludeSessionId,
+    int limit = 3,
+  }) {
+    final rows = _db.select(
+      'SELECT a.session_id AS session_id, s.started_at AS started_at, '
+      '       s.app_name AS app_name, s.note AS note '
+      'FROM alerts a '
+      'JOIN sessions s ON a.session_id = s.id '
+      'WHERE a.signature = ? AND a.session_id != ? '
+      'GROUP BY a.session_id '
+      'ORDER BY s.started_at DESC '
+      'LIMIT ?',
+      [signature, excludeSessionId, limit],
+    );
+    return rows.map(_rowToMap).toList();
+  }
+
   static int _severityRank(String s) {
     switch (s.toLowerCase()) {
       case 'info':
