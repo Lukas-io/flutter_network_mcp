@@ -145,7 +145,12 @@ Map<String, Object?> buildAlertsResponse({
     nextSteps.add('alerts_config — tune thresholds if these are noisy');
   }
 
-  // Per-row null omission.
+  // Per-row null omission. 0.6.3 added the dedup fields (occurrenceCount,
+  // firstSeenMs, lastSeenMs, lastSourceId, signature). firstSeenMs is an
+  // alias of tsMs exposed for clarity — agents working with the count
+  // shouldn't have to know tsMs HAPPENS to be first-seen. Legacy rows
+  // (pre-v5 migration) have NULL signature / last_seen_ms / last_source_id;
+  // we synthesize sensible defaults so the response shape is consistent.
   final alerts = [
     for (final r in rows)
       {
@@ -158,6 +163,11 @@ Map<String, Object?> buildAlertsResponse({
         if (r['detail'] != null) 'detail': r['detail'],
         if (r['source_kind'] != null) 'sourceKind': r['source_kind'],
         if (r['source_id'] != null) 'sourceId': r['source_id'],
+        'occurrenceCount': (r['occurrence_count'] as int?) ?? 1,
+        'firstSeenMs': r['ts_ms'],
+        'lastSeenMs': r['last_seen_ms'] ?? r['ts_ms'],
+        if (r['last_source_id'] != null) 'lastSourceId': r['last_source_id'],
+        if (r['signature'] != null) 'signature': r['signature'],
       },
   ];
 
