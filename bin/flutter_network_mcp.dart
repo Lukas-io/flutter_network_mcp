@@ -6,6 +6,7 @@ import 'package:flutter_network_mcp/src/auto_attach.dart';
 import 'package:flutter_network_mcp/src/config/auto_attach_config.dart';
 import 'package:flutter_network_mcp/src/config/capabilities.dart';
 import 'package:flutter_network_mcp/src/install/install.dart';
+import 'package:flutter_network_mcp/src/install/setup.dart';
 import 'package:flutter_network_mcp/src/install/update.dart';
 import 'package:flutter_network_mcp/src/server.dart';
 import 'package:flutter_network_mcp/src/storage/database.dart';
@@ -53,6 +54,8 @@ Future<void> _runMain(List<String> args) async {
         return runUpdate(args.skip(1).toList());
       case 'audit':
         return runAudit(args.skip(1).toList());
+      case 'setup':
+        return runSetup(args.skip(1).toList());
     }
   }
 
