@@ -4,6 +4,63 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6.3] — 2026-06-04
+
+Alert deduplication by signature. A single Flutter `RenderFlex` overflow on an item that's repeated 200 times in a list used to produce 200 nearly-identical alert rows — the existing `UNIQUE(session_id, kind, source_id)` constraint dedupes the SAME source event but doesn't know that 200 distinct log row ids reflect ONE underlying bug. Same problem for HTTP: 50 5xx responses from different request ids on `/api/users/N` were 50 separate rows. The agent ended up surfacing 200 alerts for what was, semantically, one issue.
+
+0.6.3 groups by SIGNATURE — a stable hash over `kind + normalized title` that's identical across events reflecting the same issue. The agent now sees ONE alert with `occurrenceCount: 200`, not 200 alerts. Severity escalates to the highest seen across the burst.
+
+### Added — `lib/src/alerts/signature.dart`
+
+`computeAlertSignature(kind, title)` returns `sha256(kind + ':' + normalized)[:12]`. Normalization lowercases, redacts `$HOME` / `StudioProjects/<x>/` paths, collapses digit runs to `N`, hex runs (8+ chars) to `H`, whitespace to single spaces. Lossy on purpose — two events that differ only in pixel counts / line numbers / ids collapse into the same signature. Adds `package:crypto` (5 KB, maintained by Google's Dart team).
+
+### Changed — `alerts` schema v4 → v5
+
+Four new nullable columns: `signature`, `occurrence_count` (default 1), `last_seen_ms`, `last_source_id`. New partial unique index `(session_id, signature) WHERE drained=0 AND signature IS NOT NULL` enforces "at most one pending alert per signature per session" without tripping on legacy NULL-signature rows. Existing `UNIQUE(session_id, kind, source_id)` kept as a safety net for the rare duplicate-source-delivery race.
+
+Backfill: legacy rows get `last_seen_ms = ts_ms`; signature stays NULL so they drain through the normal path as before. No data loss; no breaking change to existing 0.6.2 DBs.
+
+### Changed — `insertAlert` is now upsert-by-signature
+
+`captures_db.dart` `insertAlert` gained a required `signature:` arg and a SELECT-then-(UPDATE-or-INSERT) flow:
+
+- If a pending row with the same signature exists for the same session: increment `occurrence_count`, advance `last_seen_ms` + `last_source_id`, bump severity if the new event is more severe (highest-seen wins). Returns `false` (no new row).
+- Otherwise: INSERT fresh row at `occurrence_count = 1`. Returns `true`.
+- Legacy `UNIQUE` constraint (sqlite extended error 2067) caught and treated as already-handled.
+
+New DAO method `pendingAlertEventCount` returns `SUM(occurrence_count)` for matching pending rows (the raw event count, vs `pendingAlertCount` which returns DISTINCT-row count).
+
+### Changed — `alerts_drain` / `alerts_peek` output shape
+
+Each alert row now carries:
+
+- `occurrenceCount: int` — how many events collapsed into this row
+- `firstSeenMs: int` — alias of `tsMs` exposed for clarity
+- `lastSeenMs: int` — most recent event ms
+- `lastSourceId: string?` — `source_id` of the most recent event (drill into the latest via `network_get`)
+- `signature: string?` — 12-char hex grouping key (useful for debugging / cross-referencing)
+
+Legacy rows default `occurrenceCount` to 1 and omit `lastSourceId` / `signature`. `tsMs` and `sourceId` keep their original meaning (first-seen) — agents don't need to migrate.
+
+### Changed — `network_status.alerts` surfaces both counts
+
+```jsonc
+"alerts": {
+  "pendingTotal": 1,      // distinct signatures — what to branch on
+  "pendingEvents": 200,   // sum of occurrence_count — raw volume
+  "critical": 0
+}
+```
+
+`pendingTotal` is the actionable count ("should I drain?"). `pendingEvents` is the noise metric ("there's a burst happening" without flooding the alerts list). Multi-attach `perAttached` block gets `pendingEvents` too.
+
+### Notes
+
+- **Drain resets the counter.** Once an agent has acknowledged a burst, a fresh occurrence of the same signature creates a NEW row at count 1. The `occurrence_count` is "events seen since the last drain," not lifetime.
+- **Severity escalation = highest seen.** One critical buried in 199 warnings escalates the row to critical; the agent sees "200 occurrences, critical" and acts on the worst case.
+- **Signature is intentionally lossy.** A bug that's "the same except for one detail" SHOULD collapse — the user wants one alert per underlying issue, not 200 variations. Drill into the specifics via `network_get id:"<sourceId>"` (first event) or `<lastSourceId>` (most recent).
+- **Per-session scoped.** Two attached sessions producing the same signature each get their own row — no cross-session merging.
+
 ## [0.6.2] — 2026-06-03
 
 Zero-config DTD discovery. Before 0.6.2 the typical onboarding flow was: launch `flutter run`, copy the printed `ws://...` URI from the IDE console, paste it into `.mcp.json`, restart Claude Code. Agents working in fresh sessions ended up running `lsof + ps` to find the port and still failed because they couldn't get the security token. 0.6.2 reads the canonical `package:dtd` discovery files directly — token included — so the MCP just works when launched in a project with a live `flutter run`.

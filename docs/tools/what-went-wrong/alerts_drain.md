@@ -21,6 +21,8 @@ when_to_use: At the start of any debugging turn — it surfaces issues the serve
 
 Selects undrained rows from `alerts` filtered by `severityMin` (info < warning < error < critical), marks them drained, returns. The summary line reports per-severity counts ("Drained 5 alert(s): 1 critical, 2 error, 2 warning"). `nextSteps` points at `network_get` for the first HTTP-source alert and `logs_tail` for the first log-source alert (capability-gated).
 
+**Deduplication by signature (0.6.3+).** Repeat events that reflect the same underlying issue collapse into a single row with `occurrenceCount` incremented. A `RenderFlex` overflow that fires 200 times because the offending widget is repeated 200 times in a list shows up as ONE row with `occurrenceCount: 200`, not 200 rows. Severity is bumped to the highest seen across the burst (a single critical inside 199 warnings escalates the row to critical). The `firstSeenMs` / `lastSeenMs` / `sourceId` / `lastSourceId` fields bracket the burst — pass `lastSourceId` to `network_get` to drill into the most recent event, `sourceId` for the first. Drained alerts don't merge with subsequent events; once acknowledged, a fresh occurrence starts a new row at count 1.
+
 ## Args
 
 - `sessionId` (int, optional) — defaults to current (live or viewed) session.
@@ -41,14 +43,27 @@ Selects undrained rows from `alerts` filtered by `severityMin` (info < warning <
     "alerts_config — tune thresholds if these are noisy"
   ],
   "alerts": [
-    {"id":42, "severity":"critical", "kind":"flutter_error",
-     "title":"Null check operator used on a null value",
-     "detail":"...", "sourceKind":"log", "sourceId":"log:101", "tsMs":...}
+    {
+      "id": 42,
+      "sessionId": 14,
+      "severity": "critical",
+      "kind": "flutter_error",
+      "title": "RenderFlex overflowed by 14 pixels on the right",
+      "detail": "...",
+      "sourceKind": "log",
+      "sourceId": "log:101",
+      "tsMs": 1780462000000,
+      "occurrenceCount": 200,
+      "firstSeenMs": 1780462000000,
+      "lastSeenMs": 1780462678000,
+      "lastSourceId": "log:341",
+      "signature": "a3f7c8d219b4"
+    }
   ]
 }
 ```
 
-Per-alert `detail`/`sourceKind`/`sourceId` are omitted when null. Alert `kind` values: `http_5xx`, `http_4xx`, `http_error`, `http_slow`, `log_keyword`, `flutter_error`, plus any user-defined kinds via `alert_patterns`.
+Per-alert `detail`/`sourceKind`/`sourceId` are omitted when null. Alert `kind` values: `http_5xx`, `http_4xx`, `http_error`, `http_slow`, `log_keyword`, `flutter_error`, plus any user-defined kinds via `alert_patterns`. The dedup fields (0.6.3+) — `occurrenceCount`, `firstSeenMs`, `lastSeenMs`, `lastSourceId`, `signature` — are always present on new rows; legacy rows (pre-v5 migration) default `occurrenceCount` to 1 and omit `lastSourceId` / `signature`.
 
 ## Pairs well with
 
