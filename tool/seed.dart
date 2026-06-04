@@ -8,6 +8,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter_network_mcp/src/alerts/alert_rules.dart';
+import 'package:flutter_network_mcp/src/alerts/signature.dart';
 import 'package:flutter_network_mcp/src/storage/captures_db.dart';
 import 'package:flutter_network_mcp/src/storage/database.dart';
 
@@ -105,21 +106,25 @@ void main(List<String> args) {
 
     // Manually run the alert detector logic since we're bypassing the live VM.
     if (r.status >= 500) {
+      final title = '${r.status} on ${r.method} ${r.url}';
       dao.insertAlert(
         sessionId: sid,
         severity: 'error',
         kind: 'http_5xx',
-        title: '${r.status} on ${r.method} ${r.url}',
+        title: title,
+        signature: computeAlertSignature(kind: 'http_5xx', title: title),
         detail: r.reason,
         sourceKind: 'http',
         sourceId: r.id,
       );
     } else if (r.status >= 400) {
+      final title = '${r.status} on ${r.method} ${r.url}';
       dao.insertAlert(
         sessionId: sid,
         severity: 'warning',
         kind: 'http_4xx',
-        title: '${r.status} on ${r.method} ${r.url}',
+        title: title,
+        signature: computeAlertSignature(kind: 'http_4xx', title: title),
         detail: r.reason,
         sourceKind: 'http',
         sourceId: r.id,
@@ -127,11 +132,13 @@ void main(List<String> args) {
     }
     final durMs = (r.endUs - r.startUs) ~/ 1000;
     if (durMs > AlertRules.instance.slowThresholdMs) {
+      final title = '${durMs}ms on ${r.method} ${r.url}';
       dao.insertAlert(
         sessionId: sid,
         severity: 'warning',
         kind: 'http_slow',
-        title: '${durMs}ms on ${r.method} ${r.url}',
+        title: title,
+        signature: computeAlertSignature(kind: 'http_slow', title: title),
         detail: 'Slow request.',
         sourceKind: 'http',
         sourceId: r.id,
@@ -153,6 +160,10 @@ void main(List<String> args) {
     severity: 'warning',
     kind: 'log_keyword',
     title: 'login request failed: invalid_token',
+    signature: computeAlertSignature(
+      kind: 'log_keyword',
+      title: 'login request failed: invalid_token',
+    ),
     detail: 'login request failed: invalid_token',
     sourceKind: 'log',
     sourceId: 'log:$logId1',
@@ -173,6 +184,10 @@ void main(List<String> args) {
     severity: 'critical',
     kind: 'flutter_error',
     title: '══════ EXCEPTION CAUGHT BY WIDGETS LIBRARY ═══════',
+    signature: computeAlertSignature(
+      kind: 'flutter_error',
+      title: '══════ EXCEPTION CAUGHT BY WIDGETS LIBRARY ═══════',
+    ),
     detail:
         'Null check operator used on a null value at _MyHomePageState.build (line 42)',
     sourceKind: 'log',
