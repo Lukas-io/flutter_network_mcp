@@ -18,7 +18,7 @@ when_to_use: To see what's queued when you aren't ready to commit to "I've handl
 
 ## How it works
 
-Same builder as `alerts_drain` but doesn't update `drained`. Response shape is identical (summary, breakdown, nextSteps point at drill-in tools + "alerts_drain — same data but marks them seen").
+Same builder as `alerts_drain` but doesn't update `drained`. Response shape is identical (summary, breakdown, nextSteps point at drill-in tools + "alerts_drain — same data but marks them seen"). Each row carries the same dedup fields as `alerts_drain` — `occurrenceCount`, `firstSeenMs`, `lastSeenMs`, `lastSourceId`, `signature` — so a peek shows you the same burst-collapsed view a drain would. See the `alerts_drain` doc for the signature-based dedup design (RenderFlex × 200 → one row with `occurrenceCount: 200`).
 
 ## Args
 
