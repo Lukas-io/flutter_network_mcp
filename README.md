@@ -96,7 +96,7 @@ Beyond capability gating, these env vars tune runtime behavior:
 
 ## Capability gating (control your context budget)
 
-Thirty-four tools is a lot of schema for the agent to load. Disable the categories you don't use:
+Thirty-five tools is a lot of schema for the agent to load. Disable the categories you don't use:
 
 ```json
 {
@@ -214,7 +214,7 @@ Key behaviour:
 
 DTD reports app names like `Flutter - iPhone 17 - Package: sanga_mobile` — so substring patterns can target either the package (`sanga_mobile`) or the device (`iPhone 17`, `Android emulator`, `iOS Simulator`). Example: `--auto-attach=sanga_mobile --auto-attach-deny="Android emulator"` auto-attaches sanga_mobile only on physical iOS + iOS Simulator.
 
-## The 34 tools
+## The 35 tools
 
 Each tool's MCP `description` (loaded into every agent at handshake) tells the agent WHEN to reach for it. This table is the same information at a glance — useful when you want to remind an agent that a tool exists, or when picking the right one yourself.
 
@@ -229,7 +229,8 @@ Each tool's MCP `description` (loaded into every agent at handshake) tells the a
 | `network_discover_dtd` | — | List DTDs on this machine from the standard `package:dtd` discovery dir. Auto-runs at startup when `--dtd-uri` is unset; call directly when multiple DTDs are running or to inspect stale candidates (`includeStale:true`). |
 | **HTTP** | | |
 | `network_list` | ✅ | Browse recent HTTP requests by metadata: host, method, status, time. Cursor-paged. |
-| `network_get` | ✅ | Read full details of ONE request — headers + body + lifecycle events. Use after `network_list` or `network_search` finds the id. |
+| `network_summarize` | ✅ | One digest row per endpoint over a time window: count, statusDist, p50/p95 latency, errorRate. Path templates collapse dynamic ids (`/api/users/N`). Cheaper than `network_list + manual bucketing` (0.7.0). |
+| `network_get` | ✅ | Read full details of ONE request — headers + body + lifecycle events. Use after `network_list` or `network_search` finds the id. **0.7.0:** JSON/HTML bodies now semantic-truncate (arrays collapsed, scripts stripped) preserving structure. |
 | `network_body` | ✅ | Fetch the rest of a truncated body. Call when `network_get` reports `truncated:true`. |
 | `network_clear` | ✅ | Wipe the LIVE in-memory HTTP buffer for one session (DB untouched). |
 | `network_diff` | ✅ | Compare two requests side-by-side to spot what changed — for regression hunting or confirming two are identical. |
