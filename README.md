@@ -158,7 +158,7 @@ Set this and the telemetry code never runs. No audit write, no network attempt. 
 
 ## Capability gating (control your context budget)
 
-Thirty-six tools is a lot of schema for the agent to load. Disable the categories you don't use:
+Thirty-seven tools is a lot of schema for the agent to load. Disable the categories you don't use:
 
 ```json
 {
@@ -175,7 +175,7 @@ Thirty-six tools is a lot of schema for the agent to load. Disable the categorie
 }
 ```
 
-The opposite is `--disable sockets,sql,admin` — start from "all on" and remove. Lifecycle (`network_status`, `network_attach`, `network_detach`, `network_discover_dtd`, `report_issue`) is always on.
+The opposite is `--disable sockets,sql,admin` — start from "all on" and remove. Lifecycle (`network_status`, `network_attach`, `network_detach`, `network_discover_dtd`, `report_issue`, `auto_attach_config`) is always on.
 
 Categories: `http` · `sockets` · `logs` · `alerts` · `search` · `sessions` · `sql` · `admin`. Env vars: `FLUTTER_NETWORK_MCP_CAPABILITIES`, `FLUTTER_NETWORK_MCP_DISABLE`.
 
@@ -276,7 +276,7 @@ Key behaviour:
 
 DTD reports app names like `Flutter - iPhone 17 - Package: sanga_mobile` — so substring patterns can target either the package (`sanga_mobile`) or the device (`iPhone 17`, `Android emulator`, `iOS Simulator`). Example: `--auto-attach=sanga_mobile --auto-attach-deny="Android emulator"` auto-attaches sanga_mobile only on physical iOS + iOS Simulator.
 
-## The 36 tools
+## The 37 tools
 
 Each tool's MCP `description` (loaded into every agent at handshake) tells the agent WHEN to reach for it. This table is the same information at a glance — useful when you want to remind an agent that a tool exists, or when picking the right one yourself.
 
@@ -290,6 +290,7 @@ Each tool's MCP `description` (loaded into every agent at handshake) tells the a
 | `network_detach` | ✅ + `all:true` | End one capture session (sessionId / appNameContains), or `all:true` for every attached. DTD disconnects only when nothing remains attached. |
 | `network_discover_dtd` | — | List DTDs on this machine from the standard `package:dtd` discovery dir. Auto-runs at startup when `--dtd-uri` is unset; call directly when multiple DTDs are running or to inspect stale candidates (`includeStale:true`). |
 | `report_issue` | — | File a GitHub issue against this MCP from inside an agent turn (`type:"bug"` or `type:"ux"`). Uses `gh` CLI if available, else returns a paste-ready deep-link URL. Title + body path-redacted before submission (0.7.2). |
+| `auto_attach_config` | — | Read + mutate the persistent auto-attach allowlist/denylist at `<data-dir>/auto-attach.json`. Lets the agent honor `autoAttachSuggestion` (from `network_attach`) without asking the user to edit shell rc. Always ask the user before calling (0.7.4). |
 | **HTTP** | | |
 | `network_list` | ✅ | Browse recent HTTP requests by metadata: host, method, status, time. Cursor-paged. |
 | `network_summarize` | ✅ | One digest row per endpoint over a time window: count, statusDist, p50/p95 latency, errorRate. Path templates collapse dynamic ids (`/api/users/N`). Cheaper than `network_list + manual bucketing` (0.7.0). |

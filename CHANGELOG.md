@@ -4,6 +4,64 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.7.4] — 2026-06-04
+
+Onboarding + persistence. Closes the `claude mcp remove + claude mcp add --auto-attach=...` cycle the user flagged back in 0.6.2 and replaces the multi-step "first launch" dance with one command.
+
+### Added — writable auto-attach config
+
+New persistent file `<data-dir>/auto-attach.json`:
+
+```jsonc
+{
+  "allowed": ["sanga_mobile", "sanga_driver"],
+  "denied": ["iPhone 7"],
+  "writtenAtMs": 1780462000000
+}
+```
+
+**Resolution order at next launch:**
+
+1. Read `<data-dir>/auto-attach.json` as the BASE.
+2. Apply `FLUTTER_NETWORK_MCP_AUTO_ATTACH` / `FLUTTER_NETWORK_MCP_AUTO_ATTACH_DENY` env vars (if set) as overrides.
+3. Apply `--auto-attach` / `--auto-attach-deny` CLI flags (if set) as final overrides.
+
+The file is the persistent default; env vars + flags stay as per-launch overrides.
+
+### Added — `auto_attach_config` tool
+
+New always-on lifecycle tool. Single tool with `action` argument:
+
+```
+auto_attach_config action:"add" app:"sanga_mobile"
+  → writes the file, updates in-memory config, returns persisted:bool
+```
+
+Actions: `list` (default — read current state), `add`, `remove`, `clear`. The `autoAttachSuggestion` field on `network_attach` (shipped in 0.6.2) gives the user-friendly path; this tool lets the agent persist the user's confirmation directly without asking them to edit shell rc.
+
+**The agent must ASK THE USER first.** The doc + the upstream `autoAttachSuggestion.agentAction` both emphasize that this tool is gated on explicit user confirmation.
+
+### Added — `setup` wizard subcommand
+
+`flutter_network_mcp setup` is an interactive first-run wizard. Six steps, each opt-in via y/N prompt:
+
+1. Welcome + overview.
+2. Detect Claude Code MCP host config (`~/.claude.json` or project-level `.mcp.json`); offer to scaffold the `flutter-network` entry.
+3. List currently-running DTDs via the 0.6.2 discovery directory; offer auto-attach for each by inferred package name.
+4. Offer `install` (AOT compile) for sub-100 ms startup.
+5. Summary + "restart your MCP host" hint.
+
+Each filesystem write is confirmed before it happens. The wizard never silently changes anything. Empty enter = step's default (usually yes); EOF (non-interactive) skips every step defensively.
+
+**Scope: Claude Code only** per the maintainer setup decision. Cursor / Windsurf / Zed are listed in the wizard output as "roadmap; add manually for now" so users know the limitation up front.
+
+### Notes
+
+- Tool count: 36 → **37** (`auto_attach_config` added under lifecycle).
+- Schema unchanged from 0.6.3 (v5).
+- `setup` is a bin/ subcommand (alongside `install` / `update` / `audit`), not an MCP tool.
+- 6 new unit tests on `AutoAttachConfig` file persistence (round-trip, malformed JSON resilience, type-resilience, empty-string filter). Total: 109.
+
 ## [0.7.3] — 2026-06-04
 
 Smarter signals + continuity. Two changes that each take signal the MCP already has and use it more intelligently: baseline-relative anomaly detection replaces a noise-prone static threshold, and session continuation makes the MCP remember what you were debugging across host restarts.
