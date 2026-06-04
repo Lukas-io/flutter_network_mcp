@@ -3,6 +3,7 @@ import 'dart:io' as io;
 
 import 'package:dart_mcp/server.dart';
 
+import '../alerts/anomaly_detector.dart';
 import '../config/auto_attach_config.dart';
 import '../config/capabilities.dart';
 import '../state/continuation.dart';
@@ -294,6 +295,10 @@ Future<Map<String, Object?>> performAttach({
     // 0.7.3: persist the current attachment set so a future Claude Code
     // reload can surface "you were on sanga_mobile 47 min ago — reattach?"
     SessionContinuation.record(registry.attached.values);
+
+    // 0.7.3: lazily start the anomaly detector now that we have at least
+    // one session to watch. Idempotent — no-op when already running.
+    AnomalyDetector.instance.startIfNeeded();
 
     // Synthesize warnings for partial degradation.
     final warnings = <String>[];

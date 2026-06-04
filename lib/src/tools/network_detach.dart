@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:dart_mcp/server.dart';
 
+import '../alerts/anomaly_detector.dart';
 import '../state/continuation.dart';
 import '../state/session.dart';
 import '../storage/captures_db.dart';
@@ -197,6 +198,10 @@ FutureOr<CallToolResult> networkDetach(CallToolRequest request) async {
   } else {
     SessionContinuation.record(registry.attached.values);
   }
+
+  // 0.7.3: shut down the anomaly detector when no sessions remain — no
+  // work to do until the next attach.
+  AnomalyDetector.instance.stopIfNoSessions();
 
   final remaining = registry.attachedCount;
   final summary = targets.length == 1

@@ -33,6 +33,12 @@ class AlertRules {
   bool logKeywordEnabled = true;
   bool flutterErrorEnabled = true;
 
+  /// 0.7.3: baseline-relative anomaly detection on HTTP endpoints. Fires
+  /// `http_anomaly` (latency) and `http_anomaly_errors` (error rate) when
+  /// current behavior diverges from the established baseline. See
+  /// `AnomalyDetector` for thresholds.
+  bool anomalyEnabled = true;
+
   /// Generic error-keyword regex used against log messages.
   static final logKeywordRegex = RegExp(
     r'error|exception|failed|denied|timeout|refused|crash',
@@ -64,6 +70,7 @@ class AlertRules {
           'http_slow': httpSlowEnabled,
           'log_keyword': logKeywordEnabled,
           'flutter_error': flutterErrorEnabled,
+          'http_anomaly': anomalyEnabled,
         },
       };
 
@@ -82,6 +89,7 @@ class AlertRules {
       logKeywordEnabled = (rules['log_keyword'] as bool?) ?? logKeywordEnabled;
       flutterErrorEnabled =
           (rules['flutter_error'] as bool?) ?? flutterErrorEnabled;
+      anomalyEnabled = (rules['http_anomaly'] as bool?) ?? anomalyEnabled;
     }
   }
 }
