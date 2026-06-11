@@ -11,9 +11,28 @@ import '../state/log_buffer.dart';
 import '../state/session.dart';
 import '../storage/capture_writer.dart';
 import '../storage/captures_db.dart';
+import '../vm/dtd_probe.dart';
 import '../vm/log_stream.dart';
 import '../vm/vm_client.dart';
 import 'result.dart';
+
+/// One connected app flattened out of a [DtdProbe] listing, tagged with the
+/// DTD that owns it. Used to resolve `appNameContains` across every DTD.
+typedef DtdAppCandidate = ({String? name, String uri, Uri dtdUri});
+
+/// Returns every [apps] entry whose name contains [needle] (case-insensitive).
+/// Pulled out of [networkAttach] so the cross-DTD resolution that fixes issue
+/// #14 can be unit-tested without live DTD infrastructure.
+List<DtdAppCandidate> matchAppsAcrossDtds(
+  List<DtdAppCandidate> apps,
+  String needle,
+) {
+  final n = needle.toLowerCase();
+  return [
+    for (final a in apps)
+      if ((a.name ?? '').toLowerCase().contains(n)) a,
+  ];
+}
 
 final networkAttachTool = Tool(
   name: 'network_attach',
@@ -125,6 +144,64 @@ Future<Map<String, Object?>> performAttach({
 
     if (vmServiceUri != null) {
       resolvedVmServiceUri = vmServiceUri;
+    } else if (appNameContains != null &&
+        appNameContains.isNotEmpty &&
+        dtdUri == null) {
+      // #14: network_status.knownApps aggregates apps across EVERY discovered
+      // DTD (each `flutter run` spawns its own), but a single-DTD
+      // getConnectedApps() only sees apps under the default DTD. Resolving
+      // appNameContains against just the default DTD made attach fail for an
+      // app that was clearly listed in knownApps but owned by another DTD.
+      // Match across all DTDs so attach agrees with what network_status shows.
+      final listings = await DtdProbe.probeAll();
+      final apps = <DtdAppCandidate>[
+        for (final l in listings)
+          for (final a in l.apps)
+            (name: a.name, uri: a.uri, dtdUri: l.dtdUri),
+      ];
+      final allNames = [for (final a in apps) a.name ?? '(unnamed)'];
+      final matches = matchAppsAcrossDtds(apps, appNameContains);
+      if (matches.isEmpty) {
+        return {
+          'error': allNames.isEmpty
+              ? 'No apps are connected to any running DTD. Is a Flutter app '
+                  'running in debug mode?'
+              : 'No app name contains "$appNameContains" on any running DTD. '
+                  'Visible apps: ${allNames.join(', ')}.',
+          'apps': [
+            for (final a in apps)
+              {'name': a.name, 'uri': a.uri, 'dtdUri': a.dtdUri.toString()},
+          ],
+          'nextSteps': const [
+            'network_status — see the current knownApps list across all DTDs',
+            'Re-check the appNameContains substring',
+            'Pass an explicit vmServiceUri from knownApps[].uri',
+          ],
+        };
+      }
+      if (matches.length > 1) {
+        return {
+          'error': 'Multiple apps across DTDs match "$appNameContains"; pass a '
+              'more specific substring or an explicit `vmServiceUri`.',
+          'apps': [
+            for (final m in matches)
+              {'name': m.name, 'uri': m.uri, 'dtdUri': m.dtdUri.toString()},
+          ],
+          'nextSteps': const [
+            'network_attach appNameContains:"<unique substring>"',
+            'network_attach vmServiceUri:"<from apps[].uri>"',
+          ],
+        };
+      }
+      final match = matches.single;
+      resolvedVmServiceUri = match.uri;
+      appName = match.name;
+      // Parity with the single-DTD path: point the session DTD at the DTD
+      // that actually owns this app (best-effort — the VM attach below is
+      // what the capture pipeline depends on).
+      try {
+        await session.dtd.connect(match.dtdUri);
+      } catch (_) {/* non-fatal: capture uses the VM service URI directly */}
     } else {
       final useDtd = dtdUri ?? defaultDtdUri;
       if (useDtd == null) {
@@ -342,6 +419,16 @@ Future<Map<String, Object?>> performAttach({
 
     final autoAttachSuggestion = _buildAutoAttachSuggestion(appName);
 
+    // #17: structured per-session capability health so degradation is hard to
+    // miss (warnings alone get scanned past). socket_* / logs_* tools key off
+    // the same flags and return a real error when their capability is
+    // `unavailable` rather than an empty array.
+    final capState = sessionCapabilities(
+      httpOk: httpEnabled,
+      socketOk: socketEnabled,
+      logsOk: logStream.isActive,
+    );
+
     return {
       'attached': true,
       'summary': summary,
@@ -351,6 +438,8 @@ Future<Map<String, Object?>> performAttach({
       'isolateId': isolateId,
       'liveSessionId': sid,
       'socketProfilingEnabled': socketEnabled,
+      'capabilities': capState.capabilities,
+      if (capState.degraded.isNotEmpty) 'degraded': capState.degraded,
       'attachedCount': registry.attachedCount,
       if (warnings.isNotEmpty) 'warnings': warnings,
       if (autoAttachSuggestion != null)

@@ -15,6 +15,30 @@ import '../vm/dtd_probe.dart';
 import 'network_attach.dart' as attach_helper;
 import 'result.dart';
 
+/// Per-session entry for `network_status.attached[]`. Carries structured
+/// capability health (issue #17) so socket/log degradation shows up as a
+/// `capabilities` field + `degraded` list, not just a transient attach-time
+/// warning the agent may have scrolled past.
+Map<String, Object?> attachedStatusEntry(AttachedSession a) {
+  final capState = sessionCapabilities(
+    httpOk: a.httpProfilingEnabled,
+    socketOk: a.socketProfilingEnabled,
+    logsOk: a.logStream.isActive,
+  );
+  return {
+    'sessionId': a.id,
+    if (a.appName != null) 'appName': a.appName,
+    'vmServiceUri': a.vmServiceUri,
+    if (a.isolateId != null) 'isolateId': a.isolateId,
+    'isolates': [for (final iso in a.isolates) iso.toJson()],
+    'attachedAtMs': a.attachedAt.millisecondsSinceEpoch,
+    'httpProfilingEnabled': a.httpProfilingEnabled,
+    if (a.socketProfilingEnabled) 'socketProfilingEnabled': true,
+    'capabilities': capState.capabilities,
+    if (capState.degraded.isNotEmpty) 'degraded': capState.degraded,
+  };
+}
+
 final networkStatusTool = Tool(
   name: 'network_status',
   description:
@@ -64,17 +88,7 @@ FutureOr<CallToolResult> networkStatus(
   // see a one-element list; apps spawning workers see more (and grow as
   // the writer's periodic re-scan picks up new isolates).
   final attachedList = <Map<String, Object?>>[
-    for (final a in registry.attached.values)
-      {
-        'sessionId': a.id,
-        if (a.appName != null) 'appName': a.appName,
-        'vmServiceUri': a.vmServiceUri,
-        if (a.isolateId != null) 'isolateId': a.isolateId,
-        'isolates': [for (final iso in a.isolates) iso.toJson()],
-        'attachedAtMs': a.attachedAt.millisecondsSinceEpoch,
-        'httpProfilingEnabled': a.httpProfilingEnabled,
-        if (a.socketProfilingEnabled) 'socketProfilingEnabled': true,
-      },
+    for (final a in registry.attached.values) attachedStatusEntry(a),
   ];
 
   final out = <String, Object?>{
@@ -225,16 +239,7 @@ FutureOr<CallToolResult> networkStatus(
         out['attachedCount'] = registry.attachedCount;
         (out['attached'] as List).clear();
         for (final a in registry.attached.values) {
-          (out['attached'] as List).add({
-            'sessionId': a.id,
-            if (a.appName != null) 'appName': a.appName,
-            'vmServiceUri': a.vmServiceUri,
-            if (a.isolateId != null) 'isolateId': a.isolateId,
-            'isolates': [for (final iso in a.isolates) iso.toJson()],
-            'attachedAtMs': a.attachedAt.millisecondsSinceEpoch,
-            'httpProfilingEnabled': a.httpProfilingEnabled,
-            if (a.socketProfilingEnabled) 'socketProfilingEnabled': true,
-          });
+          (out['attached'] as List).add(attachedStatusEntry(a));
         }
       }
     }

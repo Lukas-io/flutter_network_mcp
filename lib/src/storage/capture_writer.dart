@@ -158,8 +158,23 @@ class CaptureWriter {
     }
   }
 
+  /// Grace window before a response-incomplete request becomes eligible for a
+  /// body-backfill attempt, plus the attempt cap after which the writer gives
+  /// up. See [CapturesDao.pendingBodyFetches] and schema v6 — this is what
+  /// rescues chunked / gzip responses the dart:io profiler never marks
+  /// complete (issue #13) without re-polling body-less requests forever.
+  static const int _bodyBackfillGraceUs = 3 * 1000 * 1000; // 3s
+  static const int _maxBodyFetchAttempts = 3;
+
   Future<void> _backfillBodies(VmClient vm, int sid) async {
-    final pending = _dao.pendingBodyFetches(sid, limit: 10);
+    final staleBeforeUs =
+        DateTime.now().microsecondsSinceEpoch - _bodyBackfillGraceUs;
+    final pending = _dao.pendingBodyFetches(
+      sid,
+      limit: 10,
+      staleBeforeUs: staleBeforeUs,
+      maxAttempts: _maxBodyFetchAttempts,
+    );
     final searchOn = CapabilityConfig.instance.isEnabled(Category.search);
     for (final entry in pending) {
       // Use the recorded isolate id when known; fall back to the first
@@ -172,10 +187,23 @@ class CaptureWriter {
           isolateId,
           entry.vmId,
         );
-        _dao.storeBodies(sid, detail);
-        if (searchOn) _indexForSearch(sid, detail, isolateId: isolateId);
+        final hasBody = (detail.requestBody?.isNotEmpty ?? false) ||
+            (detail.responseBody?.isNotEmpty ?? false);
+        if (hasBody) {
+          _dao.storeBodies(sid, detail);
+          if (searchOn) _indexForSearch(sid, detail, isolateId: isolateId);
+        } else if (entry.isComplete) {
+          // Complete and genuinely body-less (204 / HEAD / empty) — terminal.
+          _dao.markBodiesFetched(sid, entry.vmId);
+        } else {
+          // Response-incomplete, no body yet — count the attempt so the gate
+          // eventually drops it instead of re-polling forever.
+          _dao.bumpBodyFetchAttempt(sid, entry.vmId);
+        }
       } catch (_) {
-        // Request id might have been cleared; retry next tick.
+        // Request id might have been cleared from the VM ring buffer. For
+        // incomplete rows, count it so they age out; complete rows retry.
+        if (!entry.isComplete) _dao.bumpBodyFetchAttempt(sid, entry.vmId);
       }
     }
   }
