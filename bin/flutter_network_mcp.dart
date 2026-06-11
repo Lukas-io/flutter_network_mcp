@@ -6,21 +6,17 @@ import 'package:flutter_network_mcp/src/auto_attach.dart';
 import 'package:flutter_network_mcp/src/config/auto_attach_config.dart';
 import 'package:flutter_network_mcp/src/config/capabilities.dart';
 import 'package:flutter_network_mcp/src/install/install.dart';
+import 'package:flutter_network_mcp/src/install/setup.dart';
 import 'package:flutter_network_mcp/src/install/update.dart';
 import 'package:flutter_network_mcp/src/server.dart';
 import 'package:flutter_network_mcp/src/storage/database.dart';
+import 'package:flutter_network_mcp/src/telemetry/audit_subcommand.dart';
+import 'package:flutter_network_mcp/src/telemetry/telemetry_reporter.dart';
 import 'package:flutter_network_mcp/src/tools/alert_patterns.dart' as alert_patterns;
 import 'package:flutter_network_mcp/src/update/update_check.dart';
 import 'package:flutter_network_mcp/src/version.dart';
 import 'package:flutter_network_mcp/src/vm/dtd_discovery.dart';
 import 'package:path/path.dart' as p;
-
-// TODO(crash-telemetry): wrap main() in runZonedGuarded to capture uncaught
-// exceptions + POST anonymized (version, OS, error class, stack head — no
-// source paths, no app data, no headers) to a maintainer-controlled
-// collector endpoint. Opt-IN via FLUTTER_NETWORK_MCP_CRASH_REPORT=true.
-// See docs/CRASH_REPORTING.md for the full design sketch. NOT IMPLEMENTED
-// in 0.6.2 — placeholder only.
 
 Future<void> main(List<String> args) async {
   // Top-level zone guard. Anything that escapes the per-call try/catches
@@ -28,15 +24,20 @@ Future<void> main(List<String> args) async {
   // it cleanly to stderr (so the MCP host sees a closed channel, not a
   // raw Dart trace) and set exit code 70 (EX_SOFTWARE).
   //
-  // When crash telemetry lands (see docs/CRASH_REPORTING.md), the error
-  // handler will additionally POST an anonymized payload to the
-  // maintainer's collector — opt-IN only.
+  // 0.7.1: the handler also fires TelemetryReporter.maybeReport, which
+  // writes a tamper-evident audit log + (when configured) POSTs an
+  // anonymized payload to the maintainer's collector. Default-on with
+  // opt-out via FLUTTER_NETWORK_MCP_NO_TELEMETRY=true. See
+  // docs/CRASH_REPORTING.md for the full design.
   await runZonedGuarded(() => _runMain(args), (error, stack) {
     io.stderr.writeln(
       'flutter_network_mcp: UNCAUGHT ERROR ($error). The MCP host will see '
       'the stdio channel close — restart your MCP host to recover. Please '
       'report this at https://github.com/Lukas-io/flutter_network_mcp/issues '
       'with the trace below.\n$stack',
+    );
+    unawaited(
+      TelemetryReporter.maybeReport(error: error, stack: stack),
     );
     io.exitCode = 70;
   });
@@ -51,6 +52,10 @@ Future<void> _runMain(List<String> args) async {
         return runInstall(args.skip(1).toList());
       case 'update':
         return runUpdate(args.skip(1).toList());
+      case 'audit':
+        return runAudit(args.skip(1).toList());
+      case 'setup':
+        return runSetup(args.skip(1).toList());
     }
   }
 
@@ -257,12 +262,25 @@ Future<void> _runMain(List<String> args) async {
   // Value is a comma-separated allowlist of substring patterns. Empty /
   // absent disables. No bool form — to enable auto-attach you must say
   // which apps it's allowed to grab.
-  final autoAttachRaw = (results['auto-attach'] as String?) ??
-      env['FLUTTER_NETWORK_MCP_AUTO_ATTACH'];
-  final autoAttachAllowlist = _parseAllowlist(autoAttachRaw);
-  final autoAttachDenyRaw = (results['auto-attach-deny'] as String?) ??
-      env['FLUTTER_NETWORK_MCP_AUTO_ATTACH_DENY'];
-  final autoAttachDenylist = _parseAllowlist(autoAttachDenyRaw);
+  // 0.7.4: resolution order is file → env var → CLI flag, each step
+  // overriding the previous. The file is the persistent default the user
+  // sets via the agent-callable `auto_attach_config` tool; env vars and
+  // flags are per-launch overrides.
+  final fileConfig = AutoAttachConfig.loadFromFile();
+  final envAllowRaw = env['FLUTTER_NETWORK_MCP_AUTO_ATTACH'];
+  final flagAllowRaw = results['auto-attach'] as String?;
+  final autoAttachAllowlist = flagAllowRaw != null
+      ? _parseAllowlist(flagAllowRaw)
+      : envAllowRaw != null
+          ? _parseAllowlist(envAllowRaw)
+          : fileConfig.allowed;
+  final envDenyRaw = env['FLUTTER_NETWORK_MCP_AUTO_ATTACH_DENY'];
+  final flagDenyRaw = results['auto-attach-deny'] as String?;
+  final autoAttachDenylist = flagDenyRaw != null
+      ? _parseAllowlist(flagDenyRaw)
+      : envDenyRaw != null
+          ? _parseAllowlist(envDenyRaw)
+          : fileConfig.denied;
 
   // Publish the resolved config so non-bin/ tools (network_attach's
   // autoAttachSuggestion hint) can read it without re-parsing.

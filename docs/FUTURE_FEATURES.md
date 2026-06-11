@@ -23,6 +23,45 @@ Use that data to:
 2. Drop items that no longer match user need.
 3. Add new items surfaced by telemetry/issues that don't appear here.
 
+## Realtime traffic capture (WebSocket + gRPC + HTTP/2) — 0.9.x line
+
+**Status: architecture proposal landed; implementation TBD.** The 0.8.0
+release was scoped to "investigation-first" per the original roadmap.
+Findings in [`docs/0.8.0-realtime-investigation.md`](0.8.0-realtime-investigation.md):
+
+- `package:vm_service` exposes NOTHING usable for WebSocket frames,
+  HTTP/2 streams, or gRPC messages. Confirmed via comprehensive grep
+  across versions 14.2.1 through 15.2.0.
+- The existing `getHttpProfile` is HTTP/1.1 only (via
+  `dart:io HttpClient`). `getSocketProfile` is byte counters only.
+- Three architectural alternatives evaluated; **companion package**
+  (`flutter_network_mcp_hooks`) chosen as recommended path. User adds
+  one dev_dependency + one-line `install()` in `main()`; hooks
+  intercept `WebSocket` / `package:grpc` / `package:http2` runtime
+  surfaces; events drained via a new VM service extension method the
+  MCP polls alongside `getHttpProfile`.
+
+Proposed phasing:
+
+- **0.9.0** — Companion package v0.1 on pub.dev, WebSocket capture,
+  schema v8, `ws_list` + `ws_get` tools.
+- **0.9.1** — gRPC via `package:grpc` channel hooks, `grpc_list` +
+  `grpc_get`, schema v9.
+- **0.9.2** — HTTP/2 capture for non-gRPC HTTP/2 traffic via
+  `package:http2`.
+- **1.0.0** — `realtime` capability category stable; opt-out + capability
+  gating polished.
+
+Pre-requisites before scoping the 0.9.x line:
+1. Survey of how many users actually need realtime capture (telemetry
+   + GitHub issue analysis once a corpus exists).
+2. Decision on companion-package distribution model (pub.dev under
+   the same `Lukas-io` org? Dependency footprint impact for users not
+   using realtime?).
+3. Companion-package security review (the extension-method drain has
+   a wide surface — auth + body-redaction must mirror what telemetry
+   does in 0.7.1).
+
 ## Backlog
 
 ### 1. Session replay → test scaffold
