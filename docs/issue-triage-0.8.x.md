@@ -99,7 +99,8 @@ the early "no connected apps yet" return.
 
 ## #15 — `logs_tail` needs `messageContains`  ·  UX · small
 
-**Status: OPEN.** `logs_tail` filters only by `levelMin` + `loggerContains`
+**Status: SHIPPED in 0.8.1** (`messageContains` server-side filter).
+`logs_tail` filters only by `levelMin` + `loggerContains`
 + source (logs_tail.dart:77-78). Roqqu's `rqLog` calls have empty
 `loggerName`, so the only useful filter doesn't apply → repeated
 `limit:500` pulls that busted Claude's 25k output cap.
@@ -192,7 +193,8 @@ in so we don't regress.
 
 ## #20 — Make the `instructions` field give agents concrete triggers + a script  ·  Meta
 
-**Status: PARTIALLY FIXED.**
+**Status: SHIPPED in 0.8.1** (instructions rewritten with triggers + offer
+script; `agent-filed` label already in 0.7.2).
 
 - [x] Auto `agent-filed` label on agent-filed issues — done in 0.7.2
       `report_issue` (`_labelsForType`, report_issue.dart:159-161:
@@ -212,7 +214,8 @@ in so we don't regress.
 
 ## #21 — Configurable log ring buffer  ·  UX · partially done
 
-**Status: PARTIALLY FIXED.**
+**Status: SHIPPED in 0.8.1** (env var + alias, per-attach `logBufferSize`,
+status surfacing, capacity-aware warning replacing the hardcoded `/500`).
 
 - [x] Env-var configurable buffer — done: `FLUTTER_NETWORK_MCP_LOG_BUFFER`
       (default 500, clamped 50–10000), log_buffer.dart:48

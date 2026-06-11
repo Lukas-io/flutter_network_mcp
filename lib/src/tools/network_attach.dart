@@ -63,6 +63,13 @@ final networkAttachTool = Tool(
             'Case-insensitive substring match on the DTD app name (from '
             'network_status.knownApps[].name). Use when DTD has multiple apps.',
       ),
+      'logBufferSize': Schema.int(
+        description:
+            'Optional per-session log ring-buffer capacity (50–10000). '
+            'Overrides FLUTTER_NETWORK_MCP_LOG_BUFFER for THIS session only; '
+            'bump it for chatty apps whose logs rotate out before you read '
+            'them. Omit to use the env / default (500).',
+      ),
     },
   ),
 );
@@ -86,6 +93,7 @@ FutureOr<CallToolResult> networkAttach(
     dtdUri: args['dtdUri'] as String?,
     vmServiceUri: args['vmServiceUri'] as String?,
     appNameContains: args['appNameContains'] as String?,
+    logBufferSize: args['logBufferSize'] as int?,
     defaultDtdUri: defaultDtdUri,
   );
   return jsonResult(result, isError: result['error'] != null);
@@ -104,6 +112,7 @@ Future<Map<String, Object?>> performAttach({
   String? dtdUri,
   String? vmServiceUri,
   String? appNameContains,
+  int? logBufferSize,
   String? defaultDtdUri,
 }) async {
   final session = Session.instance;
@@ -173,7 +182,7 @@ Future<Map<String, Object?>> performAttach({
               {'name': a.name, 'uri': a.uri, 'dtdUri': a.dtdUri.toString()},
           ],
           'nextSteps': const [
-            'network_status — see the current knownApps list across all DTDs',
+            'network_status to see the current knownApps list across all DTDs',
             'Re-check the appNameContains substring',
             'Pass an explicit vmServiceUri from knownApps[].uri',
           ],
@@ -197,7 +206,7 @@ Future<Map<String, Object?>> performAttach({
       resolvedVmServiceUri = match.uri;
       appName = match.name;
       // Parity with the single-DTD path: point the session DTD at the DTD
-      // that actually owns this app (best-effort — the VM attach below is
+      // that actually owns this app (best-effort; the VM attach below is
       // what the capture pipeline depends on).
       try {
         await session.dtd.connect(match.dtdUri);
@@ -289,7 +298,9 @@ Future<Map<String, Object?>> performAttach({
     // sessions can poll independently.
     final vm = localVm = VmClient();
     final captureWriter = localCaptureWriter = CaptureWriter();
-    final logBuffer = LogBuffer();
+    final logBuffer = LogBuffer(
+      capacity: logBufferSize?.clamp(50, 10000),
+    );
     final logStream = localLogStream = LogStreamSubscriber();
 
     await vm.connect(Uri.parse(resolvedVmServiceUri));
