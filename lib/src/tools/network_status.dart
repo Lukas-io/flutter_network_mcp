@@ -5,6 +5,7 @@ import 'package:path/path.dart' as p;
 
 import '../config/capabilities.dart';
 import '../state/session.dart';
+import '../state/continuation.dart';
 import '../storage/captures_db.dart';
 import '../storage/database.dart';
 import '../update/update_check.dart';
@@ -239,9 +240,31 @@ FutureOr<CallToolResult> networkStatus(
     }
   }
 
+  // 0.7.3: session continuation. When nothing is currently attached, look
+  // at the last-session.json record from a prior MCP-host run and surface
+  // it as a `continuation` block so the agent can offer "you were on
+  // sanga_mobile 47 min ago — reattach?" — zero user friction across
+  // Claude Code reloads / machine reboots.
+  if (registry.attachedCount == 0) {
+    final cont = SessionContinuation.read();
+    if (cont != null) {
+      out['continuation'] = cont;
+    }
+  }
+
   out['nextSteps'] = _suggestNextSteps(registry, session, out);
 
   return jsonResult(out);
+}
+
+/// Human-readable relative age for a millisecond epoch. "47m" / "3h" /
+/// "2d" — coarse on purpose since the agent surfaces this to the user.
+String _formatAgo(int tsMs) {
+  final delta = DateTime.now().millisecondsSinceEpoch - tsMs;
+  if (delta < 60000) return '${(delta / 1000).round()}s';
+  if (delta < 3600000) return '${(delta / 60000).round()}m';
+  if (delta < 86400000) return '${(delta / 3600000).round()}h';
+  return '${(delta / 86400000).round()}d';
 }
 
 /// Builds the `mcp` block — agent-readable identity for the running
@@ -326,6 +349,26 @@ List<String> _suggestNextSteps(
   final dtd = out['dtd'] as Map<String, Object?>;
   final dtdConnected = (dtd['connected'] as bool?) ?? false;
   final defaultUri = dtd['defaultUri'] as String?;
+
+  // 0.7.3: surface the continuation hint FIRST when present — picking up
+  // where the previous session left off is usually the right move.
+  final cont = out['continuation'] as Map<String, Object?>?;
+  final continuationAttachments = cont?['attachments'] as List?;
+  if (continuationAttachments != null && continuationAttachments.isNotEmpty) {
+    final last = continuationAttachments.first as Map<String, Object?>;
+    final lastUri = last['vmServiceUri'] as String?;
+    final lastApp = last['appName'] as String? ?? 'previous app';
+    final attachedAtMs = last['attachedAtMs'] as int?;
+    final ageDesc = attachedAtMs == null
+        ? ''
+        : ' (~${_formatAgo(attachedAtMs)} ago)';
+    if (lastUri != null) {
+      steps.add(
+        'network_attach vmServiceUri:"$lastUri" — reattach to $lastApp '
+        '$ageDesc; previous attachment recorded by 0.7.3 continuation',
+      );
+    }
+  }
 
   if (!dtdConnected && defaultUri == null) {
     // Before falling back to "ask the user for a URI", peek at the

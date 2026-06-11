@@ -151,6 +151,12 @@ Map<String, Object?> buildAlertsResponse({
   // shouldn't have to know tsMs HAPPENS to be first-seen. Legacy rows
   // (pre-v5 migration) have NULL signature / last_seen_ms / last_source_id;
   // we synthesize sensible defaults so the response shape is consistent.
+  //
+  // 0.7.2: when a row has a signature, look up prior occurrences in OTHER
+  // sessions — institutional memory across debugging conversations. If the
+  // user wrote a session_note on the past occurrence, the agent now has
+  // "you saw this before, here's what you noted" context for free.
+  final dao = CapturesDao();
   final alerts = [
     for (final r in rows)
       {
@@ -168,6 +174,12 @@ Map<String, Object?> buildAlertsResponse({
         'lastSeenMs': r['last_seen_ms'] ?? r['ts_ms'],
         if (r['last_source_id'] != null) 'lastSourceId': r['last_source_id'],
         if (r['signature'] != null) 'signature': r['signature'],
+        if (r['signature'] != null)
+          ..._priorOccurrencesIfAny(
+            dao,
+            signature: r['signature'] as String,
+            currentSessionId: r['session_id'] as int,
+          ),
       },
   ];
 
@@ -185,5 +197,38 @@ Map<String, Object?> buildAlertsResponse({
       },
     'nextSteps': nextSteps,
     'alerts': alerts,
+  };
+}
+
+/// Returns a single-entry map keyed by `priorOccurrences` (so it spreads
+/// cleanly into the alert literal via `...`) when 1+ prior occurrence of
+/// [signature] exists in another session. Empty map otherwise — read-and-
+/// query errors stay silent so a transient DB hiccup doesn't break the
+/// drain response.
+Map<String, Object?> _priorOccurrencesIfAny(
+  CapturesDao dao, {
+  required String signature,
+  required int currentSessionId,
+}) {
+  final List<Map<String, Object?>> prior;
+  try {
+    prior = dao.priorOccurrencesForSignature(
+      signature: signature,
+      excludeSessionId: currentSessionId,
+    );
+  } catch (_) {
+    return const {};
+  }
+  if (prior.isEmpty) return const {};
+  return {
+    'priorOccurrences': [
+      for (final p in prior)
+        {
+          'sessionId': p['session_id'],
+          'startedAtMs': p['started_at'],
+          if (p['app_name'] != null) 'appName': p['app_name'],
+          if (p['note'] != null) 'note': p['note'],
+        },
+    ],
   };
 }

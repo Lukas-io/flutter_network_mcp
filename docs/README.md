@@ -20,6 +20,8 @@ The index below is by **use case** ("I want to do X — which tool?"). Some tool
 - [`network_status`](tools/lifecycle/network_status.md) — what's reachable, what's pending, what's enabled. Auto-connects DTD.
 - [`network_discover_dtd`](tools/lifecycle/network_discover_dtd.md) — list DTDs on this machine from the standard `package:dtd` directory. Useful when multiple `flutter run` instances are active or when startup auto-discovery picked the wrong one (0.6.2+).
 - [`network_attach`](tools/lifecycle/network_attach.md) — open a capture session against a running app.
+- [`report_issue`](tools/lifecycle/report_issue.md) — file a GitHub issue against this MCP from inside an agent turn. `gh` CLI or paste-ready URL fallback (0.7.2+).
+- [`auto_attach_config`](tools/lifecycle/auto_attach_config.md) — persist auto-attach allowlist changes from agent + user confirmation; closes the `mcp remove/add` cycle (0.7.4+).
 
 ### [Finding a request](tools/finding/)
 - [`network_list`](tools/finding/network_list.md) — by metadata (host, method, status, time). Cursor-based.

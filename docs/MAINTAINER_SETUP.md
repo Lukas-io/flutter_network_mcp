@@ -75,6 +75,8 @@ Labels to auto-apply on filed issues:
 
 ## Crash telemetry collector (0.7.1)
 
+> **Update (post-0.7.1):** 0.7.1 shipped with **path B** (audit-log-only, collector POST stubbed). The trust pact's LOCAL half is live. To activate the central collector, follow the path A steps below — when the Cloudflare URL is ready, a tiny 0.7.1.x patch flips `kCollectorEndpoint` in `lib/src/telemetry/telemetry_constants.dart` and the binary starts POSTing. Same payload, same opt-out, same audit log — only the network path changes.
+
 Pick one of two paths.
 
 ### Path A: Deploy the collector now (~30 min)

@@ -4,6 +4,285 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.7.4] — 2026-06-04
+
+Onboarding + persistence. Closes the `claude mcp remove + claude mcp add --auto-attach=...` cycle the user flagged back in 0.6.2 and replaces the multi-step "first launch" dance with one command.
+
+### Added — writable auto-attach config
+
+New persistent file `<data-dir>/auto-attach.json`:
+
+```jsonc
+{
+  "allowed": ["sanga_mobile", "sanga_driver"],
+  "denied": ["iPhone 7"],
+  "writtenAtMs": 1780462000000
+}
+```
+
+**Resolution order at next launch:**
+
+1. Read `<data-dir>/auto-attach.json` as the BASE.
+2. Apply `FLUTTER_NETWORK_MCP_AUTO_ATTACH` / `FLUTTER_NETWORK_MCP_AUTO_ATTACH_DENY` env vars (if set) as overrides.
+3. Apply `--auto-attach` / `--auto-attach-deny` CLI flags (if set) as final overrides.
+
+The file is the persistent default; env vars + flags stay as per-launch overrides.
+
+### Added — `auto_attach_config` tool
+
+New always-on lifecycle tool. Single tool with `action` argument:
+
+```
+auto_attach_config action:"add" app:"sanga_mobile"
+  → writes the file, updates in-memory config, returns persisted:bool
+```
+
+Actions: `list` (default — read current state), `add`, `remove`, `clear`. The `autoAttachSuggestion` field on `network_attach` (shipped in 0.6.2) gives the user-friendly path; this tool lets the agent persist the user's confirmation directly without asking them to edit shell rc.
+
+**The agent must ASK THE USER first.** The doc + the upstream `autoAttachSuggestion.agentAction` both emphasize that this tool is gated on explicit user confirmation.
+
+### Added — `setup` wizard subcommand
+
+`flutter_network_mcp setup` is an interactive first-run wizard. Six steps, each opt-in via y/N prompt:
+
+1. Welcome + overview.
+2. Detect Claude Code MCP host config (`~/.claude.json` or project-level `.mcp.json`); offer to scaffold the `flutter-network` entry.
+3. List currently-running DTDs via the 0.6.2 discovery directory; offer auto-attach for each by inferred package name.
+4. Offer `install` (AOT compile) for sub-100 ms startup.
+5. Summary + "restart your MCP host" hint.
+
+Each filesystem write is confirmed before it happens. The wizard never silently changes anything. Empty enter = step's default (usually yes); EOF (non-interactive) skips every step defensively.
+
+**Scope: Claude Code only** per the maintainer setup decision. Cursor / Windsurf / Zed are listed in the wizard output as "roadmap; add manually for now" so users know the limitation up front.
+
+### Notes
+
+- Tool count: 36 → **37** (`auto_attach_config` added under lifecycle).
+- Schema unchanged from 0.6.3 (v5).
+- `setup` is a bin/ subcommand (alongside `install` / `update` / `audit`), not an MCP tool.
+- 6 new unit tests on `AutoAttachConfig` file persistence (round-trip, malformed JSON resilience, type-resilience, empty-string filter). Total: 109.
+
+## [0.7.3] — 2026-06-04
+
+Smarter signals + continuity. Two changes that each take signal the MCP already has and use it more intelligently: baseline-relative anomaly detection replaces a noise-prone static threshold, and session continuation makes the MCP remember what you were debugging across host restarts.
+
+### Added — baseline-relative anomaly alerts
+
+Static thresholds (`http_slow` at fixed 3000 ms) miss real regressions on endpoints that are normally either much faster or much slower. A login endpoint that's normally 200 ms going to 1500 ms is the signal; the same 1500 ms on a CSV-export endpoint that's usually 5000 ms is just normal traffic.
+
+New `AnomalyDetector` singleton with a 30 s polling tick. For each attached session per tick:
+
+1. Pull HTTP rows from last 5 min 30 s.
+2. Split into current (last 30 s) + baseline (preceding 5 min).
+3. Group by `(method, host, pathTemplate)` — same normalization as `network_summarize`.
+4. For each endpoint with ≥ 10 requests in BOTH windows:
+   - **Latency**: fire `http_anomaly` (warning) when current p95 > **2× baseline p95**.
+   - **Error rate**: fire `http_anomaly_errors` (error) when current error rate > **5× baseline AND above 10% absolute floor**.
+
+The floor prevents noise on near-zero baselines (`0% → 0.1%` is infinite multiplier); the multiplier prevents noise on already-high baselines.
+
+Alerts dedupe through the 0.6.3 signature pipeline — a burst of 50 anomaly events on the same endpoint collapses to one row with `occurrenceCount` rolling up.
+
+**Lifecycle**: singleton, lazily started on first attach, stopped when registry hits zero. No background work while detached.
+
+**Disable**: `AlertRules.anomalyEnabled` exposed alongside the existing rule toggles. `alerts_config rules.http_anomaly:false` turns it off. Default: true.
+
+New alert kinds: `http_anomaly` (warning) + `http_anomaly_errors` (error). Both new to the `alert_detector`'s kind taxonomy. The existing `http_slow` static rule stays — anomaly detection complements it.
+
+### Added — session continuation memory
+
+Every Claude Code reload, machine reboot, or MCP-host crash today loses the attachment state. The agent's first `network_status` comes back empty, the user re-types "attach to sanga_mobile", etc. This release makes the next launch say "you were on sanga_mobile 47 min ago, here's the reattach command" — zero friction.
+
+New `<data-dir>/last-session.json`:
+
+```jsonc
+{
+  "writtenAtMs": 1780462000000,
+  "attachments": [
+    {
+      "vmServiceUri": "ws://127.0.0.1:54450/abc=",
+      "appName": "sanga_mobile",
+      "attachedAtMs": 1780461000000
+    }
+  ]
+}
+```
+
+Multi-attach friendly — all currently-attached sessions get recorded. Written on every successful attach + detach; cleared when nothing is attached.
+
+`network_status` surfaces a `continuation` block at the top level (when `attachedCount == 0` and a record exists), and adds a `nextStep` of the form:
+
+```
+network_attach vmServiceUri:"ws://..." — reattach to sanga_mobile (~47m ago); previous attachment recorded by 0.7.3 continuation
+```
+
+Explicit detach removes the continuation so a clean teardown doesn't haunt the next session.
+
+### Notes
+
+- Tool count unchanged from 0.7.2 (still 36).
+- Schema unchanged from 0.6.3 (v5).
+- 13 new unit tests (4 session continuation round-trip + 9 anomaly detector via `detectAnomalies` pure function). Total: 103.
+
+## [0.7.2] — 2026-06-04
+
+Maintainer loop + project memory. Two changes that each take a manual step the user used to do — composing a bug report from scratch, and re-discovering a recurring bug they fixed weeks ago — and convert it into a single tool call or a free side-effect of an alert drain.
+
+### Added — `report_issue` tool
+
+New always-on lifecycle tool. Lets agents file GitHub issues against this MCP from inside a turn:
+
+```
+> report_issue type:"bug" title:"network_summarize p95 is null when only 1 request"
+   body:"network_summarize with one captured request returns p95LatencyMs..."
+< {filed: true, url: "https://github.com/Lukas-io/flutter_network_mcp/issues/47", ...}
+```
+
+Two types — `bug` (code issue, wrong output, crash) and `ux` (works but feels awkward / confusing / slow / unclear). When `gh` CLI is installed (and `auto:true`, the default), shells `gh issue create --repo Lukas-io/flutter_network_mcp --title ... --body ... --label ...`. Otherwise returns a GitHub deep-link URL with `title=`, `body=`, `labels=` pre-filled in the query string — the user opens it in a browser and the new-issue form arrives ready to submit.
+
+Labels:
+
+- `bug` → `[bug, agent-filed]`
+- `ux` → `[ux-friction, agent-filed]`
+
+The `agent-filed` label lets the maintainer triage agent-vs-human reports at a glance.
+
+**Path-redacted by default.** Title + body run through the same redactor that scrubs telemetry stack frames (`<project:X>/...`, `<home>/...`, Windows equivalents). Defense-in-depth — agents should still avoid putting paths in issue text.
+
+The existing `instructions` field already directed agents to file proactively; this tool removes the "copy-paste body into GitHub" friction from that flow.
+
+### Added — cross-session pattern memory
+
+When `alerts_drain` (or `alerts_peek`) emits a row with a signature, the response now includes `priorOccurrences` listing past sessions where the same signature fired:
+
+```jsonc
+{
+  "id": 42,
+  "kind": "flutter_error",
+  "title": "RenderFlex overflowed by 14 pixels on the right",
+  "signature": "a3f7c8d219b4",
+  "occurrenceCount": 200,
+  "priorOccurrences": [
+    {
+      "sessionId": 14,
+      "startedAtMs": 1780462000000,
+      "appName": "sanga_mobile",
+      "note": "fixed by adding Expanded — lib/view/widgets/cart.dart"
+    }
+  ]
+}
+```
+
+The agent now sees "you hit this RenderFlex overflow 3 days ago and your note says it was a missing Expanded" — for free, on every drain. Per-project debugging conversations become a knowledge artifact instead of evaporating.
+
+**Implementation:** new `CapturesDao.priorOccurrencesForSignature` query joins `alerts` and `sessions`, groups by session, orders newest-first, excludes the current session. Default limit 3. The existing 0.6.3 signature is the join key — no new schema, no migration.
+
+### Notes
+
+- Tool count: 35 → **36** (`report_issue` added under lifecycle).
+- Schema unchanged from 0.6.3 (v5).
+- 14 new unit tests (7 prior-occurrences DAO + 7 report_issue URL composition). Total: 90.
+- The `gh` CLI path isn't unit-tested (would need process mocking); the always-available paste-ready fallback has full coverage.
+
+## [0.7.1] — 2026-06-04
+
+Crash telemetry. Default-on with a tamper-evident local audit log, opt-out via `FLUTTER_NETWORK_MCP_NO_TELEMETRY=true`.
+
+**The trust pact.** More signal for the maintainer (silent crashes become signal we can act on within days instead of dying unreported), in exchange for full transparency to the user about what we know — every byte sent off-machine is also written to a hash-chained local log the user can verify or inspect at any time.
+
+### Added — runZonedGuarded reports crashes
+
+The top-level zone guard (in place since 0.6.2) now also calls `TelemetryReporter.maybeReport` on uncaught errors. The reporter:
+
+1. Skips entirely when `FLUTTER_NETWORK_MCP_NO_TELEMETRY=true`.
+2. Builds an anonymized payload (schema below).
+3. Appends a tamper-evident audit log entry FIRST.
+4. POSTs the same payload to a maintainer-controlled collector with a 3 s deadline (when configured — see "Collector status" below).
+
+Fire-and-forget. Never blocks shutdown. All errors swallowed.
+
+### Added — tamper-evident audit log
+
+`<data-dir>/telemetry-audit.log`. One line per report:
+
+```
+<ts>|<prev_hash>|<payload_b64>|<this_hash>
+```
+
+`this_hash = sha256(ts + prev_hash + payload_b64)`. `prev_hash` links each line to the previous (64 zeros for the first). The chain catches any silent edit OR removal — three scenarios verified by unit tests:
+
+- Payload edit: `this_hash` recomputation fails on that line.
+- Line removal: the next line's `prev_hash` no longer matches the chain.
+- Malformed line: parsed as null at its index.
+
+**Tamper-EVIDENT, not tamper-PROOF.** The user owns the file. Same trust model as `git log`.
+
+### Added — `audit` subcommand
+
+```
+flutter_network_mcp audit verify
+flutter_network_mcp audit show
+flutter_network_mcp audit show --since 7d
+flutter_network_mcp audit show --signature <sig>
+```
+
+`verify` walks the chain and prints `N entries, chain intact` + first/last timestamps OR `chain broken at entry K (reason)`. Exit code 70 on broken chain so CI scripts can detect tampering.
+
+`show` decodes the payloads and pretty-prints each entry. `--since` filters by relative duration (`Nd | Nh | Nm`). `--signature` filters to the 12-char dedupe key in the payload.
+
+### Payload schema
+
+```jsonc
+{
+  "version": "0.7.1",
+  "commit": "4aa550c...",        // 12 hex chars
+  "isAot": true,
+  "os": "macos 14.6",
+  "dart": "3.5.0",
+  "errorClass": "StateError",
+  "errorMessage": "DTD is not connected.",
+  "stackHead": [
+    "#0 DtdClient._requireConnected (package:flutter_network_mcp/src/vm/dtd_client.dart:36)",
+    "..."
+  ],
+  "signature": "a3f7c8d219b4",    // sha256(errorClass + top-3-frames)[:12]
+  "machineHash": "f1a823bc91...", // HMAC(dataDir, kPublicSalt)[:24]
+  "reportedAt": "2026-06-04T12:34:56Z"
+}
+```
+
+### NOT in the payload
+
+The path redactor strips before anything is recorded:
+
+- `$HOME`, `cwd`, the target Flutter project path, any `/Users/<name>/…` or `C:\Users\<name>\…`
+- The target app's `vmServiceUri` / DTD URI / connection token
+- Any captured HTTP body, header, URL
+- Env-var contents (only `FLUTTER_NETWORK_MCP_NO_TELEMETRY` presence is read, never logged)
+- `captures.db` row contents
+
+14 fuzz-corpus tests in `test/telemetry/path_redactor_test.dart` verify the redaction across POSIX + Windows shapes including the "anti-leak" check (no username string appears anywhere in the payload).
+
+### Collector status — path B (local-only) for 0.7.1
+
+`kCollectorEndpoint` is empty in this release. The binary writes the audit log but doesn't POST. The trust pact's LOCAL half works today; the central signal layer ships in 0.7.1.x once the Cloudflare deploy lands. See `docs/MAINTAINER_SETUP.md` path A for the deploy steps.
+
+This split was deliberate: it lets us ship the user-facing transparency (audit log + `audit verify` + opt-out) without waiting on infrastructure deploy. When the collector URL is ready, a small follow-up patch flips the constant and the existing payload + opt-out + audit log all carry over.
+
+### Opt-out
+
+```bash
+export FLUTTER_NETWORK_MCP_NO_TELEMETRY=true
+```
+
+Set this and the telemetry code never runs. No audit write, no network attempt. Recommended for SOC 2 / regulated environments.
+
+### Notes
+
+- 30 new unit tests (path redactor 14 + audit log 8 + payload builder 8). Total: 76 tests, all passing.
+- `lib/src/util/data_dir.dart` refactored out of `install.dart` so install + audit log + DB all agree on the user's state directory.
+- Tool count + schema unchanged from 0.7.0 — telemetry is bin/runtime infrastructure, not an MCP tool.
+
 ## [0.7.0] — 2026-06-04
 
 Context economy. Two changes that each cut the bytes a typical

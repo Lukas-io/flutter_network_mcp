@@ -93,10 +93,72 @@ Beyond capability gating, these env vars tune runtime behavior:
 | `FLUTTER_NETWORK_MCP_DISABLE` | — | — | Denylist (see below). |
 | `FLUTTER_NETWORK_MCP_NO_JIT_NUDGE` | — | `true` to silence | Suppresses the "running in JIT mode" stderr nudge that suggests `flutter_network_mcp install`. Set after you've decided you're fine with JIT startup. |
 | `FLUTTER_NETWORK_MCP_NO_UPDATE_CHECK` | — | `true` to silence | Skips the daily background version check entirely (no network access to GitHub raw on startup). |
+| `FLUTTER_NETWORK_MCP_NO_TELEMETRY` | — | `true` to silence | Opts OUT of crash telemetry (0.7.1+). With this set, the audit log is never written and no POST is attempted. See the [Telemetry](#telemetry-071) section for the full schema + opt-out rationale. |
+
+## Telemetry (0.7.1+)
+
+Crash telemetry is **on by default**, with one opt-out env var. In exchange, the MCP writes a **tamper-evident local audit log** of every byte it would send off-machine, hash-chained so any silent edit is detectable. Run `flutter_network_mcp audit verify` to walk the chain and prove nothing was sent without your knowledge.
+
+### What gets sent
+
+Only on uncaught errors (the runZonedGuarded handler catches them). One POST per crash. Payload:
+
+```jsonc
+{
+  "version": "0.7.1",
+  "commit": "4aa550c...",       // 12-char SHA, when known
+  "isAot": true,
+  "os": "macos 14.6",
+  "dart": "3.5.0",
+  "errorClass": "StateError",
+  "errorMessage": "DTD is not connected.",
+  "stackHead": [                // top 8 frames, paths redacted
+    "#0 DtdClient._requireConnected (package:flutter_network_mcp/src/vm/dtd_client.dart:36)"
+  ],
+  "signature": "a3f7c8d219b4",    // sha256(errorClass + top-3-frames)[:12]
+  "machineHash": "f1a823bc91...", // HMAC of your data-dir path
+  "reportedAt": "2026-06-04T12:34:56Z"
+}
+```
+
+### What's NOT sent
+
+The path redactor strips everything user-identifying before recording. Never sent:
+
+- `$HOME`, `cwd`, the target Flutter project path
+- The target app's `vmServiceUri` / DTD URI / connection token
+- Any captured HTTP body, header, URL
+- Env-var contents
+- `captures.db` row contents
+
+### Audit log
+
+Every report is recorded at `<data-dir>/telemetry-audit.log` — same payload, byte-for-byte, in a hash-chained append-only format. Inspect any time:
+
+```bash
+flutter_network_mcp audit verify              # walk the chain
+flutter_network_mcp audit show                # decode + pretty-print
+flutter_network_mcp audit show --since 7d     # last 7 days
+flutter_network_mcp audit show --signature S  # specific crash group
+```
+
+Tamper-evident, not tamper-proof — you own the file. The chain catches any silent edit OR line removal, same model as `git log`.
+
+### Opt out
+
+```bash
+export FLUTTER_NETWORK_MCP_NO_TELEMETRY=true
+```
+
+Set this and the telemetry code never runs. No audit write, no network attempt. Recommended for SOC 2 / regulated environments.
+
+### Collector status
+
+`kCollectorEndpoint` is currently empty (path B). 0.7.1 ships with audit-log-only mode — the binary writes the audit log so the trust pact's local half works, but the POST is stubbed pending maintainer-side Cloudflare deploy. When the URL is ready, a 0.7.1.x follow-up flips the constant and the same payload + opt-out + audit log all carry over.
 
 ## Capability gating (control your context budget)
 
-Thirty-five tools is a lot of schema for the agent to load. Disable the categories you don't use:
+Thirty-seven tools is a lot of schema for the agent to load. Disable the categories you don't use:
 
 ```json
 {
@@ -113,7 +175,7 @@ Thirty-five tools is a lot of schema for the agent to load. Disable the categori
 }
 ```
 
-The opposite is `--disable sockets,sql,admin` — start from "all on" and remove. Lifecycle (`network_status`, `network_attach`, `network_detach`, `network_discover_dtd`) is always on.
+The opposite is `--disable sockets,sql,admin` — start from "all on" and remove. Lifecycle (`network_status`, `network_attach`, `network_detach`, `network_discover_dtd`, `report_issue`, `auto_attach_config`) is always on.
 
 Categories: `http` · `sockets` · `logs` · `alerts` · `search` · `sessions` · `sql` · `admin`. Env vars: `FLUTTER_NETWORK_MCP_CAPABILITIES`, `FLUTTER_NETWORK_MCP_DISABLE`.
 
@@ -214,7 +276,7 @@ Key behaviour:
 
 DTD reports app names like `Flutter - iPhone 17 - Package: sanga_mobile` — so substring patterns can target either the package (`sanga_mobile`) or the device (`iPhone 17`, `Android emulator`, `iOS Simulator`). Example: `--auto-attach=sanga_mobile --auto-attach-deny="Android emulator"` auto-attaches sanga_mobile only on physical iOS + iOS Simulator.
 
-## The 35 tools
+## The 37 tools
 
 Each tool's MCP `description` (loaded into every agent at handshake) tells the agent WHEN to reach for it. This table is the same information at a glance — useful when you want to remind an agent that a tool exists, or when picking the right one yourself.
 
@@ -227,6 +289,8 @@ Each tool's MCP `description` (loaded into every agent at handshake) tells the a
 | `network_attach` | — | Connect to a running Flutter/Dart app to start capturing HTTP, sockets, and logs into a new session. **0.6.0:** can be called multiple times for different apps; per-vmServiceUri duplicate guard prevents accidental same-app re-attach. |
 | `network_detach` | ✅ + `all:true` | End one capture session (sessionId / appNameContains), or `all:true` for every attached. DTD disconnects only when nothing remains attached. |
 | `network_discover_dtd` | — | List DTDs on this machine from the standard `package:dtd` discovery dir. Auto-runs at startup when `--dtd-uri` is unset; call directly when multiple DTDs are running or to inspect stale candidates (`includeStale:true`). |
+| `report_issue` | — | File a GitHub issue against this MCP from inside an agent turn (`type:"bug"` or `type:"ux"`). Uses `gh` CLI if available, else returns a paste-ready deep-link URL. Title + body path-redacted before submission (0.7.2). |
+| `auto_attach_config` | — | Read + mutate the persistent auto-attach allowlist/denylist at `<data-dir>/auto-attach.json`. Lets the agent honor `autoAttachSuggestion` (from `network_attach`) without asking the user to edit shell rc. Always ask the user before calling (0.7.4). |
 | **HTTP** | | |
 | `network_list` | ✅ | Browse recent HTTP requests by metadata: host, method, status, time. Cursor-paged. |
 | `network_summarize` | ✅ | One digest row per endpoint over a time window: count, statusDist, p50/p95 latency, errorRate. Path templates collapse dynamic ids (`/api/users/N`). Cheaper than `network_list + manual bucketing` (0.7.0). |

@@ -1,10 +1,30 @@
-# Crash + bug telemetry (design, NOT IMPLEMENTED)
+# Crash + bug telemetry (design + status)
 
-> Status: design spec only. There is no telemetry code in
-> `flutter_network_mcp` as of 0.6.2. This file is the agreed design
-> for the implementation that will land in a later release. The
-> `TODO(crash-telemetry)` marker in `bin/flutter_network_mcp.dart`
-> points here. Pick this up when you're ready to implement.
+> Status: **shipped in 0.7.1** (audit-log + payload + opt-out wired
+> up; collector POST stubbed pending Cloudflare deploy — see
+> "Collector status" below). The `TODO(crash-telemetry)` marker
+> from 0.6.2 has been resolved; the runZonedGuarded handler in
+> `bin/flutter_network_mcp.dart` now calls
+> `TelemetryReporter.maybeReport`. This file is kept as the
+> design spec + status tracker; see CHANGELOG `[0.7.1]` for the
+> shipped-feature summary.
+
+## Collector status (as of 0.7.1)
+
+The trust-pact's LOCAL half (audit log + `audit verify` / `show` +
+opt-out env var) is fully shipped. The REMOTE half (POST to
+maintainer-controlled collector) is stubbed — `kCollectorEndpoint`
+in `lib/src/telemetry/telemetry_constants.dart` is empty.
+
+This split was deliberate: it lets us ship the user-facing
+transparency surface today without waiting on infrastructure
+deploy. When the Cloudflare URL is ready, a small follow-up patch
+(0.7.1.x) flips the constant. Same payload, same audit log, same
+opt-out — only the network path changes.
+
+Deploy steps for the maintainer: see `docs/MAINTAINER_SETUP.md`
+path A. The Worker + D1 schema in that doc match the wire payload
+documented below.
 
 ## The trust pact
 
