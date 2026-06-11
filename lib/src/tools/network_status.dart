@@ -40,6 +40,9 @@ Map<String, Object?> attachedStatusEntry(AttachedSession a) {
     // rotation proactively (and knows to read now / bump the buffer).
     'logBufferUsed': a.logBuffer.length,
     'logBufferCapacity': a.logBuffer.capacity,
+    // #16: this session id was carried across a hot restart.
+    if (a.lastReattachAt != null)
+      'lastReattachAtMs': a.lastReattachAt!.millisecondsSinceEpoch,
   };
 }
 

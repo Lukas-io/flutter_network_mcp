@@ -34,6 +34,20 @@ class CapturesDao {
     );
   }
 
+  /// Repoints an existing session row at a new VM service URI / isolate after
+  /// a hot-restart reattach (issue #16), so captures keep flowing into the
+  /// same session id instead of starting a new row each restart.
+  void repointSession(
+    int id, {
+    required String? vmServiceUri,
+    required String? isolateId,
+  }) {
+    _db.execute(
+      'UPDATE sessions SET vm_service_uri=?, isolate_id=? WHERE id=?',
+      [vmServiceUri, isolateId, id],
+    );
+  }
+
   List<Map<String, Object?>> listSessions({
     String? projectPath,
     int? sinceMs,

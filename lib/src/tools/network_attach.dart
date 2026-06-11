@@ -34,6 +34,24 @@ List<DtdAppCandidate> matchAppsAcrossDtds(
   ];
 }
 
+/// Stable logical identity for an app across hot restarts (issue #16). Two
+/// attaches with the same identity are the same logical app even though
+/// their VM service URIs differ (every hot restart rotates the URI). Parses
+/// the DTD app-name shape "Kind: Flutter - Device: <device> - Package: <pkg>"
+/// into "<pkg>@<device>"; falls back to the whole lowercased name when the
+/// shape does not match. Returns null for an empty / null name.
+String? appSessionIdentity(String? appName) {
+  if (appName == null || appName.trim().isEmpty) return null;
+  final device =
+      RegExp(r'Device:\s*(.+?)\s*(?:-\s*\w+:|$)').firstMatch(appName)?.group(1);
+  final pkg =
+      RegExp(r'Package:\s*(.+?)\s*(?:-\s*\w+:|$)').firstMatch(appName)?.group(1);
+  if (device != null && pkg != null) {
+    return '${pkg.trim()}@${device.trim()}'.toLowerCase();
+  }
+  return appName.trim().toLowerCase();
+}
+
 final networkAttachTool = Tool(
   name: 'network_attach',
   description:
@@ -70,6 +88,15 @@ final networkAttachTool = Tool(
             'bump it for chatty apps whose logs rotate out before you read '
             'them. Omit to use the env / default (500).',
       ),
+      'reattach': Schema.bool(
+        description:
+            'Hot-restart continuity (0.8.2). When true and an already-attached '
+            'session for the SAME app (same package + device) is still bound '
+            'to a now-stale VM URI, reuse its sessionId: captures continue '
+            'under one session across restarts and the stale session is torn '
+            'down automatically. Pair with appNameContains. No-op when no '
+            'prior session matches (behaves as a normal attach).',
+      ),
     },
   ),
 );
@@ -94,6 +121,7 @@ FutureOr<CallToolResult> networkAttach(
     vmServiceUri: args['vmServiceUri'] as String?,
     appNameContains: args['appNameContains'] as String?,
     logBufferSize: args['logBufferSize'] as int?,
+    reattach: (args['reattach'] as bool?) ?? false,
     defaultDtdUri: defaultDtdUri,
   );
   return jsonResult(result, isError: result['error'] != null);
@@ -113,6 +141,7 @@ Future<Map<String, Object?>> performAttach({
   String? vmServiceUri,
   String? appNameContains,
   int? logBufferSize,
+  bool reattach = false,
   String? defaultDtdUri,
 }) async {
   final session = Session.instance;
@@ -341,13 +370,51 @@ Future<Map<String, Object?>> performAttach({
     final socketEnabled = anySocketEnabled;
     final isolateId = primaryIsolateId;
 
+    // #16: hot-restart reattach. If asked to reattach and a prior session for
+    // the SAME logical app (package + device) is still registered under a now
+    // stale VM URI, reuse its session id so captures continue under one
+    // sessionId across the restart, and tear the stale session down.
+    AttachedSession? reattachPrior;
+    if (reattach && appName != null) {
+      final identity = appSessionIdentity(appName);
+      if (identity != null) {
+        for (final s in registry.attached.values) {
+          if (s.vmServiceUri != resolvedVmServiceUri &&
+              appSessionIdentity(s.appName) == identity) {
+            reattachPrior = s;
+            break;
+          }
+        }
+      }
+    }
+
     final dao = CapturesDao();
-    final sid = dao.createSession(
-      appName: appName,
-      vmServiceUri: resolvedVmServiceUri,
-      isolateId: isolateId,
-      projectPath: io.Directory.current.path,
-    );
+    final int sid;
+    final String? previousVmServiceUri;
+    if (reattachPrior != null) {
+      sid = reattachPrior.id;
+      previousVmServiceUri = reattachPrior.vmServiceUri;
+      dao.repointSession(
+        sid,
+        vmServiceUri: resolvedVmServiceUri,
+        isolateId: isolateId,
+      );
+      // Dispose the stale session's resources (its VM is already gone after
+      // the restart, so disconnect is best-effort) and free the old URI key.
+      try {
+        await registry.detachOne(reattachPrior);
+      } catch (_) {
+        registry.unregister(reattachPrior.vmServiceUri);
+      }
+    } else {
+      previousVmServiceUri = null;
+      sid = dao.createSession(
+        appName: appName,
+        vmServiceUri: resolvedVmServiceUri,
+        isolateId: isolateId,
+        projectPath: io.Directory.current.path,
+      );
+    }
 
     if (caps.isEnabled(Category.logs)) {
       await logStream.start(
@@ -377,6 +444,8 @@ Future<Map<String, Object?>> performAttach({
         attachedAt: DateTime.now(),
         httpProfilingEnabled: httpEnabled,
         socketProfilingEnabled: socketEnabled,
+        lastReattachAt: reattachPrior != null ? DateTime.now() : null,
+        previousVmServiceUri: previousVmServiceUri,
       ),
     );
 
@@ -424,9 +493,18 @@ Future<Map<String, Object?>> performAttach({
     if (logStream.isActive) captured.add('logs');
     final what =
         captured.isEmpty ? 'no streams (degraded)' : captured.join('+');
-    final summary = registry.attachedCount > 1
-        ? 'Attached to ${appName ?? "app"} — capturing $what into session $sid. ${registry.attachedCount} sessions now attached.'
-        : 'Attached to ${appName ?? "app"} — capturing $what into session $sid.';
+    final String summary;
+    if (reattachPrior != null) {
+      summary = 'Reattached to ${appName ?? "app"} after a hot restart; '
+          'capturing $what into the same session $sid (stable across the '
+          'restart). The stale session was torn down.';
+    } else if (registry.attachedCount > 1) {
+      summary = 'Attached to ${appName ?? "app"}, capturing $what into session '
+          '$sid. ${registry.attachedCount} sessions now attached.';
+    } else {
+      summary =
+          'Attached to ${appName ?? "app"}, capturing $what into session $sid.';
+    }
 
     final autoAttachSuggestion = _buildAutoAttachSuggestion(appName);
 
@@ -448,6 +526,9 @@ Future<Map<String, Object?>> performAttach({
       'vmServiceUri': resolvedVmServiceUri,
       'isolateId': isolateId,
       'liveSessionId': sid,
+      if (reattachPrior != null) 'reattached': true,
+      if (previousVmServiceUri != null)
+        'previousVmServiceUri': previousVmServiceUri,
       'socketProfilingEnabled': socketEnabled,
       'capabilities': capState.capabilities,
       if (capState.degraded.isNotEmpty) 'degraded': capState.degraded,
