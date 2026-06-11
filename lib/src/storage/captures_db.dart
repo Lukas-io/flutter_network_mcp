@@ -177,26 +177,65 @@ class CapturesDao {
 
   /// One entry returned by [pendingBodyFetches] — carries the vm_id plus the
   /// isolate_id the request was originally captured from so the writer can
-  /// route the body backfill RPC to the right isolate (v4+).
+  /// route the body backfill RPC to the right isolate (v4+), and whether the
+  /// request was response-complete (`end_us` set) at query time.
   ///
   /// `isolateId` is nullable: pre-v4 rows and rows captured before isolate
   /// tagging stay NULL. The writer falls back to the first known isolate.
   /// (Record-typed alias so the public DAO surface stays explicit.)
+  ///
+  /// Complete requests (`end_us` set) are always eligible. Response-incomplete
+  /// requests become eligible once they are older than [staleBeforeUs] and
+  /// still under [maxAttempts] — this rescues chunked / gzip responses the
+  /// dart:io profiler never marks complete, without spinning forever on
+  /// genuinely body-less or transport-invisible ones. Pass `staleBeforeUs:
+  /// null` to restore the legacy "complete rows only" behaviour.
   // ignore: library_private_types_in_public_api
-  List<({String vmId, String? isolateId})> pendingBodyFetches(
+  List<({String vmId, String? isolateId, bool isComplete})> pendingBodyFetches(
     int sessionId, {
     int limit = 50,
+    int? staleBeforeUs,
+    int maxAttempts = 3,
   }) {
     final rows = _db.select(
-      'SELECT vm_id, isolate_id FROM http_requests '
-      'WHERE session_id=? AND bodies_fetched=0 AND end_us IS NOT NULL '
-      'ORDER BY end_us ASC LIMIT ?',
-      [sessionId, limit],
+      'SELECT vm_id, isolate_id, (end_us IS NOT NULL) AS is_complete '
+      'FROM http_requests '
+      'WHERE session_id=? AND bodies_fetched=0 AND ('
+      '  end_us IS NOT NULL '
+      '  OR (? IS NOT NULL AND start_us IS NOT NULL AND start_us < ? '
+      '      AND body_fetch_attempts < ?)'
+      ') '
+      'ORDER BY (end_us IS NULL), COALESCE(end_us, start_us) ASC LIMIT ?',
+      [sessionId, staleBeforeUs, staleBeforeUs, maxAttempts, limit],
     );
     return [
       for (final r in rows)
-        (vmId: r['vm_id'] as String, isolateId: r['isolate_id'] as String?),
+        (
+          vmId: r['vm_id'] as String,
+          isolateId: r['isolate_id'] as String?,
+          isComplete: (r['is_complete'] as int? ?? 0) != 0,
+        ),
     ];
+  }
+
+  /// Marks a request's bodies as terminally fetched (success, or a complete
+  /// request that genuinely has no body — e.g. 204 / HEAD) so it leaves the
+  /// backfill queue.
+  void markBodiesFetched(int sessionId, String vmId) {
+    _db.execute(
+      'UPDATE http_requests SET bodies_fetched=1 WHERE session_id=? AND vm_id=?',
+      [sessionId, vmId],
+    );
+  }
+
+  /// Records a failed/empty backfill attempt for a response-incomplete request
+  /// so [pendingBodyFetches] eventually stops re-polling it.
+  void bumpBodyFetchAttempt(int sessionId, String vmId) {
+    _db.execute(
+      'UPDATE http_requests SET body_fetch_attempts = body_fetch_attempts + 1 '
+      'WHERE session_id=? AND vm_id=?',
+      [sessionId, vmId],
+    );
   }
 
   List<Map<String, Object?>> queryHttpRequests({

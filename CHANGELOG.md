@@ -4,6 +4,45 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.8.0] — 2026-06-11
+
+Trust-breaking bug fixes from the first round of real dogfooding (issues #13, #14, #17). These three made the tool give wrong or empty answers without saying so, which is worse than failing loudly.
+
+### Fixed — response bodies stranded forever (#13)
+
+`network_get` returned `response: null` indefinitely for chunked / gzip responses, and `network_search` could not see their payloads, even after the app had clearly received and parsed the body.
+
+**Root cause:** the capture writer only backfilled bodies (and the FTS search index) for requests with `end_us` set. The dart:io HTTP profiler never marks chunked/gzip-streamed responses response-complete, so `end_us` stayed NULL and those requests were skipped permanently.
+
+**Fix:** the backfill gate now also picks up response-incomplete requests once they're older than a short grace window, capped by a new `body_fetch_attempts` counter (schema **v6**) so genuinely body-less or transport-invisible requests stop being re-polled instead of looping forever. The misleading `network_get` warning ("bodies may grow on a subsequent call") is replaced with an accurate one that tells the agent when a response is terminally unreachable via vm_service and to fall back to `logs_tail`.
+
+> Note: responses from transports that bypass `dart:io HttpClient` (custom `HttpClientAdapter`, native HTTP) remain invisible at the vm_service layer — that's the realtime-capture gap tracked for the 0.9.x companion package. This fix restores everything the profiler *does* capture.
+
+### Fixed — `network_attach appNameContains` failed across DTDs (#14)
+
+`network_attach appNameContains:"iPhone 16 Pro"` returned `"DTD is up but reports no connected apps yet."` even when `network_status.knownApps` listed exactly that app.
+
+**Root cause:** `network_status` aggregates apps across every discovered DTD (each `flutter run` spawns its own), but attach resolved the name filter against only the default DTD. An app owned by another DTD was invisible to the matcher.
+
+**Fix:** when `appNameContains` is given without an explicit `dtdUri`, attach now resolves across **all** discovered DTDs (same probe that powers `knownApps`) and connects to the owning DTD. Error messages are accurate per case: nothing running, no name match (with the visible-app list), or ambiguous match (with candidates) — no more "no apps yet" when a filter simply missed.
+
+### Changed — structured capability health on attach + status (#17)
+
+Partial degradation (e.g. socket profiling failing to enable) was only mentioned in a `warnings` string that agents tend to scroll past, then `socket_*` tools returned empty arrays.
+
+**Fix:** `network_attach` and each `network_status.attached[]` entry now carry a structured block:
+
+```jsonc
+"capabilities": { "http": "ok", "socket": "unavailable", "logs": "ok" },
+"degraded": ["socket"]
+```
+
+`disabled` (off in config) is distinguished from `unavailable` (enabled but failed to start) — only the latter counts as degraded. This is per-session runtime health, distinct from the top-level `capabilities` field that reports globally-enabled categories. (`socket_*` already return a real error rather than empty when their capability is unavailable, since 0.7.x.)
+
+### Schema
+
+- **v6:** `http_requests.body_fetch_attempts` column (backfill retry cap). Migration is additive; existing rows default to 0 and re-enter the backfill path on the next tick.
+
 ## [0.7.4] — 2026-06-04
 
 Onboarding + persistence. Closes the `claude mcp remove + claude mcp add --auto-attach=...` cycle the user flagged back in 0.6.2 and replaces the multi-step "first launch" dance with one command.
