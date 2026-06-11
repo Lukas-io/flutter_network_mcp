@@ -40,6 +40,7 @@ The index below is by **use case** ("I want to do X — which tool?"). Some tool
 - [`alerts_drain`](tools/what-went-wrong/alerts_drain.md) — read AND clear pending alerts. Per-severity breakdown.
 - [`alerts_peek`](tools/what-went-wrong/alerts_peek.md) — read without clearing.
 - [`logs_tail`](tools/what-went-wrong/logs_tail.md) — recent log/stdout/stderr records.
+- [`correlate_at`](tools/what-went-wrong/correlate_at.md) — logs + HTTP requests within ±windowMs of an anchor timestamp, nearest-first. "Which request fired closest to this log line?" (0.8.3+).
 
 ### [Investigating history](tools/history/)
 - [`session_list`](tools/history/session_list.md) — past capture sessions with counts.

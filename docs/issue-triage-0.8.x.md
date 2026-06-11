@@ -161,7 +161,8 @@ per-session `network_status`).
 
 ## #18 — Wishlist: live tail / log↔network correlation / sticky filters  ·  Feature
 
-**Status: mostly OPEN; one part is a deliberate non-goal.**
+**Status: PARTIALLY SHIPPED in 0.8.3** (correlation tool landed; live-tail is a
+non-goal; sticky filters deferred).
 
 - ~~Live tail subscription (`logs_subscribe` + push notifications)~~ —
   **NON-GOAL.** MCP has no server-initiated push; documented in
@@ -181,7 +182,8 @@ per-session `network_status`).
 
 ## #19 — Positive feedback  ·  no fix, convert to guards
 
-**Status: acknowledge.** Things that worked: `nextSteps` everywhere,
+**Status: ACKNOWLEDGED in 0.8.3** (CHANGELOG note; behaviours kept as
+intentional). Things that worked: `nextSteps` everywhere,
 `pendingAlerts.count` on every response, the overflow→file+jq escape
 hatch, replay/diff in `nextSteps`, transparent multi-attach. Lock them
 in so we don't regress.
