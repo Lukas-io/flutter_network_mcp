@@ -1,9 +1,11 @@
+import 'dart:async';
 import 'dart:io' as io;
 
 import 'package:dart_mcp/server.dart';
 import 'package:dart_mcp/stdio.dart';
 
 import 'config/capabilities.dart';
+import 'telemetry/usage_recorder.dart';
 import 'version.dart';
 import 'tools/alert_patterns.dart';
 import 'tools/auto_attach_config_tool.dart';
@@ -82,74 +84,104 @@ base class FlutterNetworkMcpServer extends MCPServer with ToolsSupport {
     final caps = CapabilityConfig.instance;
 
     // Lifecycle — always available.
-    registerTool(networkStatusTool, (req) => networkStatus(req, defaultDtdUri));
-    registerTool(networkAttachTool, (req) => networkAttach(req, defaultDtdUri));
-    registerTool(networkDetachTool, networkDetach);
-    registerTool(networkDiscoverDtdTool, networkDiscoverDtd);
-    registerTool(reportIssueTool, reportIssue);
-    registerTool(autoAttachConfigTool, autoAttachConfig);
+    _register(networkStatusTool, (req) => networkStatus(req, defaultDtdUri));
+    _register(networkAttachTool, (req) => networkAttach(req, defaultDtdUri));
+    _register(networkDetachTool, networkDetach);
+    _register(networkDiscoverDtdTool, networkDiscoverDtd);
+    _register(reportIssueTool, reportIssue);
+    _register(autoAttachConfigTool, autoAttachConfig);
 
     if (caps.isEnabled(Category.http)) {
-      registerTool(networkListTool, networkList);
-      registerTool(networkGetTool, networkGet);
-      registerTool(networkBodyTool, networkBody);
-      registerTool(networkClearTool, networkClear);
-      registerTool(networkDiffTool, networkDiff);
-      registerTool(networkReplayTool, networkReplay);
-      registerTool(networkSummarizeTool, networkSummarize);
+      _register(networkListTool, networkList);
+      _register(networkGetTool, networkGet);
+      _register(networkBodyTool, networkBody);
+      _register(networkClearTool, networkClear);
+      _register(networkDiffTool, networkDiff);
+      _register(networkReplayTool, networkReplay);
+      _register(networkSummarizeTool, networkSummarize);
     }
 
     if (caps.isEnabled(Category.sockets)) {
-      registerTool(socketListTool, socketList);
-      registerTool(socketGetTool, socketGet);
-      registerTool(socketClearTool, socketClear);
+      _register(socketListTool, socketList);
+      _register(socketGetTool, socketGet);
+      _register(socketClearTool, socketClear);
     }
 
     if (caps.isEnabled(Category.logs)) {
-      registerTool(logsTailTool, logsTail);
-      registerTool(logsClearTool, logsClear);
+      _register(logsTailTool, logsTail);
+      _register(logsClearTool, logsClear);
     }
 
     // #18: log<->network correlation bridges the http + logs surfaces, so it
     // is available whenever either side is on (it returns only the enabled
     // sides).
     if (caps.isEnabled(Category.http) || caps.isEnabled(Category.logs)) {
-      registerTool(correlateAtTool, correlateAt);
+      _register(correlateAtTool, correlateAt);
     }
 
     if (caps.isEnabled(Category.alerts)) {
-      registerTool(alertsDrainTool, alertsDrain);
-      registerTool(alertsPeekTool, alertsPeek);
-      registerTool(alertsConfigTool, alertsConfig);
-      registerTool(alertsClearTool, alertsClear);
-      registerTool(alertPatternsTool, alertPatterns);
+      _register(alertsDrainTool, alertsDrain);
+      _register(alertsPeekTool, alertsPeek);
+      _register(alertsConfigTool, alertsConfig);
+      _register(alertsClearTool, alertsClear);
+      _register(alertPatternsTool, alertPatterns);
     }
 
     if (caps.isEnabled(Category.search)) {
-      registerTool(networkSearchTool, networkSearch);
-      registerTool(networkCorrelateTool, networkCorrelate);
+      _register(networkSearchTool, networkSearch);
+      _register(networkCorrelateTool, networkCorrelate);
     }
 
     if (caps.isEnabled(Category.sessions)) {
-      registerTool(sessionListTool, sessionList);
-      registerTool(sessionOpenTool, sessionOpen);
-      registerTool(sessionCloseTool, sessionClose);
-      registerTool(sessionExportTool, sessionExport);
-      registerTool(sessionNoteTool, sessionNote);
-      registerTool(sessionDeleteTool, sessionDelete);
+      _register(sessionListTool, sessionList);
+      _register(sessionOpenTool, sessionOpen);
+      _register(sessionCloseTool, sessionClose);
+      _register(sessionExportTool, sessionExport);
+      _register(sessionNoteTool, sessionNote);
+      _register(sessionDeleteTool, sessionDelete);
     }
 
     if (caps.isEnabled(Category.sql)) {
-      registerTool(networkQueryTool, networkQuery);
+      _register(networkQueryTool, networkQuery);
     }
 
     if (caps.isEnabled(Category.admin)) {
-      registerTool(ignoredHostsTool, ignoredHosts);
-      registerTool(redactedHeadersTool, redactedHeaders);
-      registerTool(dbStatsTool, dbStats);
-      registerTool(dbVacuumTool, dbVacuum);
-      registerTool(bodiesPurgeTool, bodiesPurge);
+      _register(ignoredHostsTool, ignoredHosts);
+      _register(redactedHeadersTool, redactedHeaders);
+      _register(dbStatsTool, dbStats);
+      _register(dbVacuumTool, dbVacuum);
+      _register(bodiesPurgeTool, bodiesPurge);
     }
+  }
+
+  /// Registers [tool] and instruments it: every call records a privacy-safe
+  /// usage event (issue #79). The recorder swallows its own errors, so this
+  /// wrapper never changes a tool's behaviour or failure mode.
+  void _register(
+    Tool tool,
+    FutureOr<CallToolResult> Function(CallToolRequest) handler,
+  ) {
+    registerTool(tool, (req) async {
+      final sw = Stopwatch()..start();
+      try {
+        final result = await handler(req);
+        UsageRecorder.instance.record(
+          tool: tool.name,
+          request: req,
+          durationMs: sw.elapsedMilliseconds,
+          result: result,
+        );
+        return result;
+      } catch (_) {
+        UsageRecorder.instance.record(
+          tool: tool.name,
+          request: req,
+          durationMs: sw.elapsedMilliseconds,
+          result: null,
+        );
+        rethrow;
+      }
+    });
   }
 
   final String? defaultDtdUri;

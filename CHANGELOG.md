@@ -4,6 +4,46 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.8.4] — 2026-06-12
+
+Tool-usage analytics, **Phase 1: capture only** (issue #79). A local, privacy-safe record of which tools agents call, so the project can build the right features from real usage. Nothing is shipped anywhere in this phase.
+
+### Added — usage capture (schema v7)
+
+One instrumentation chokepoint wraps tool registration, so all 38 tools are measured with zero per-tool changes. Each call records to a new `tool_events` table:
+
+- `tool` name, `tsMs`
+- `correlationId` — gap-based "turn" grouping (a new id after `FLUTTER_NETWORK_MCP_USAGE_GAP_MS`, default 60s, of inactivity; MCP carries no conversation id, so this is the proxy)
+- `outcome` — `ok` / `error` / `empty` (`empty` is a best-effort `count:0` heuristic, refined in Phase 2)
+- `argKeys` — the parameter NAMES passed, **never their values**
+- `durationMs`, `resultBytes`
+
+**Privacy by construction:** no URLs, hosts, bodies, log text, or arg values ever touch it. Recording is wrapped so a failure can never break the tool call it measures.
+
+### Added — `flutter_network_mcp usage` subcommand
+
+The transparency surface (mirrors `audit show`): see exactly what's stored.
+
+```bash
+flutter_network_mcp usage              # per-tool summary + outcome breakdown
+flutter_network_mcp usage --show       # recent raw events
+flutter_network_mcp usage --since 7d   # window filter
+flutter_network_mcp usage --json       # machine-readable
+```
+
+### Opt-out
+
+On by default. `FLUTTER_NETWORK_MCP_NO_USAGE=true` disables usage capture only; the existing `FLUTTER_NETWORK_MCP_NO_TELEMETRY=true` disables usage **and** crash telemetry.
+
+### Roadmap
+
+- **Phase 2:** a `usage_stats` tool — per-tool counts, error/empty rates, p50/p95 latency, the tool→next-tool transition graph, `nextSteps` adoption.
+- **Phase 3:** ship aggregate rollups (histograms, not raw rows) to the collector under the existing hash-chained audit pact, once it's live.
+
+### Schema
+
+- **v7:** new `tool_events` table + indexes. Additive migration; no existing data touched.
+
 ## [0.8.3] — 2026-06-11
 
 Interactive-debugging wishlist (issue #18) plus the positive-feedback acknowledgement (#19). Closes out the dogfounding-round issue set (#13–#21).
