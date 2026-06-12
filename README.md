@@ -173,11 +173,13 @@ flutter_network_mcp usage --since 7d       # window filter
 flutter_network_mcp usage --json           # machine-readable
 ```
 
-On by default; opt out with `FLUTTER_NETWORK_MCP_NO_USAGE=true` (usage only) or `FLUTTER_NETWORK_MCP_NO_TELEMETRY=true` (everything). Roadmap: Phase 2 adds a `usage_stats` tool (transition graph, error/empty rates, latency); Phase 3 ships aggregate rollups to the collector under the same audit pact, once it is live.
+On by default; opt out with `FLUTTER_NETWORK_MCP_NO_USAGE=true` (usage only) or `FLUTTER_NETWORK_MCP_NO_TELEMETRY=true` (everything).
+
+**Phase 2 (0.8.5)** adds the `usage_stats` tool, so the aggregates are readable from inside an agent turn: per-tool counts, outcome rates (ok/error/empty), p50/p95 latency, and the tool→next-tool transition graph. Roadmap: **Phase 3** ships aggregate rollups to the collector under the same audit pact, once it is live.
 
 ## Capability gating (control your context budget)
 
-Thirty-eight tools is a lot of schema for the agent to load. Disable the categories you don't use:
+Thirty-nine tools is a lot of schema for the agent to load. Disable the categories you don't use:
 
 ```json
 {
@@ -295,7 +297,7 @@ Key behaviour:
 
 DTD reports app names like `Flutter - iPhone 17 - Package: sanga_mobile` — so substring patterns can target either the package (`sanga_mobile`) or the device (`iPhone 17`, `Android emulator`, `iOS Simulator`). Example: `--auto-attach=sanga_mobile --auto-attach-deny="Android emulator"` auto-attaches sanga_mobile only on physical iOS + iOS Simulator.
 
-## The 38 tools
+## The 39 tools
 
 Each tool's MCP `description` (loaded into every agent at handshake) tells the agent WHEN to reach for it. This table is the same information at a glance — useful when you want to remind an agent that a tool exists, or when picking the right one yourself.
 
@@ -310,6 +312,7 @@ Each tool's MCP `description` (loaded into every agent at handshake) tells the a
 | `network_discover_dtd` | — | List DTDs on this machine from the standard `package:dtd` discovery dir. Auto-runs at startup when `--dtd-uri` is unset; call directly when multiple DTDs are running or to inspect stale candidates (`includeStale:true`). |
 | `report_issue` | — | File a GitHub issue against this MCP from inside an agent turn (`type:"bug"` or `type:"ux"`). Uses `gh` CLI if available, else returns a paste-ready deep-link URL. Title + body path-redacted before submission (0.7.2). |
 | `auto_attach_config` | — | Read + mutate the persistent auto-attach allowlist/denylist at `<data-dir>/auto-attach.json`. Lets the agent honor `autoAttachSuggestion` (from `network_attach`) without asking the user to edit shell rc. Always ask the user before calling (0.7.4). |
+| `usage_stats` | — | Aggregate view of how agents use this MCP: per-tool counts, outcome rates (ok/error/empty), p50/p95 latency, and the tool→next-tool transition graph, from the local usage capture (0.8.5, #79 Phase 2). |
 | **HTTP** | | |
 | `network_list` | ✅ | Browse recent HTTP requests by metadata: host, method, status, time. Cursor-paged. |
 | `network_summarize` | ✅ | One digest row per endpoint over a time window: count, statusDist, p50/p95 latency, errorRate. Path templates collapse dynamic ids (`/api/users/N`). Cheaper than `network_list + manual bucketing` (0.7.0). |
