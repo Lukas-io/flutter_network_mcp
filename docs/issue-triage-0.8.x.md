@@ -117,7 +117,9 @@ the early "no connected apps yet" return.
 
 ## #16 — Hot restart spawns a new session; no stable app identity  ·  Feature · medium-large
 
-**Status: OPEN.** Sessions are keyed purely by `vmServiceUri`
+**Status: MVP SHIPPED in 0.8.2** (`reattach:true` reuses the sessionId across
+a hot restart via package+device identity; full auto-migration deferred).
+Sessions are keyed purely by `vmServiceUri`
 (session.dart:140). Each hot restart = new VM URI = new `sessionId`; dead
 sessions stay listed as "attached." NB: this is **distinct from** the
 0.7.3 continuation work (that's cross-conversation reattach; this is

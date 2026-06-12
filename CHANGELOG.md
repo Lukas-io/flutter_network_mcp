@@ -4,6 +4,27 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.8.2] — 2026-06-11
+
+Hot-restart session continuity (issue #16). Interactive debugging means hot-restarting every ~30 seconds; each restart rotated the VM service URI, spawned a brand-new `sessionId`, and left the dead session listed as attached. Agents burned turns re-attaching instead of debugging.
+
+### Added — `network_attach reattach:true`
+
+Recognises the same logical app across restarts and keeps one stable `sessionId`.
+
+```
+network_attach appNameContains:"iPhone 16 Pro" reattach:true
+→ { attached:true, reattached:true, liveSessionId:14,
+    previousVmServiceUri:"ws://old/ws" }
+```
+
+- **Logical identity** is `package + device`, parsed from the DTD app name (`"Kind: Flutter - Device: iPhone 16 Pro - Package: roqquapp"` → `roqquapp@iphone 16 pro`). `iPhone 16 Pro` and `iPhone 16` stay distinct; the same app on the same device across restarts collapses to one identity.
+- On a match, the existing `sessions` row is **repointed** at the new VM URI / isolate (so captures before and after the restart share one session id), and the stale session's resources are torn down and dropped from `network_status.attached`.
+- No-op when no prior session matches — behaves as a normal attach, so passing `reattach:true` is always safe.
+- `network_status.attached[]` gains `lastReattachAtMs` when a session was carried across a restart.
+
+This is the MVP that covers the ~90% case (the agent calls one tool instead of: notice URI changed → look up new URI → detach stale → re-attach). Fully automatic migration (no flag) is a future follow-up.
+
 ## [0.8.1] — 2026-06-11
 
 Quick wins from the dogfooding round (issues #15, #21, #20). Small, high-value, no new tools.
