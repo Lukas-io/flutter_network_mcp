@@ -93,7 +93,9 @@ Beyond capability gating, these env vars tune runtime behavior:
 | `FLUTTER_NETWORK_MCP_DISABLE` | — | — | Denylist (see below). |
 | `FLUTTER_NETWORK_MCP_NO_JIT_NUDGE` | — | `true` to silence | Suppresses the "running in JIT mode" stderr nudge that suggests `flutter_network_mcp install`. Set after you've decided you're fine with JIT startup. |
 | `FLUTTER_NETWORK_MCP_NO_UPDATE_CHECK` | — | `true` to silence | Skips the daily background version check entirely (no network access to GitHub raw on startup). |
-| `FLUTTER_NETWORK_MCP_NO_TELEMETRY` | — | `true` to silence | Opts OUT of crash telemetry (0.7.1+). With this set, the audit log is never written and no POST is attempted. See the [Telemetry](#telemetry-071) section for the full schema + opt-out rationale. |
+| `FLUTTER_NETWORK_MCP_NO_TELEMETRY` | — | `true` to silence | Opts OUT of crash telemetry (0.7.1+) AND usage analytics (0.8.4+). With this set, the audit log is never written, no POST is attempted, and no tool-usage events are recorded. |
+| `FLUTTER_NETWORK_MCP_NO_USAGE` | — | `true` to silence | Granular opt-out for tool-usage analytics only (0.8.4+), leaving crash telemetry on. See [Usage analytics](#usage-analytics-084). |
+| `FLUTTER_NETWORK_MCP_USAGE_GAP_MS` | 60000 | ≥1000 | Idle gap after which the usage correlation id rolls to a new "turn" (0.8.4+). |
 
 ## Telemetry (0.7.1+)
 
@@ -156,9 +158,26 @@ Set this and the telemetry code never runs. No audit write, no network attempt. 
 
 `kCollectorEndpoint` is currently empty (path B). 0.7.1 ships with audit-log-only mode — the binary writes the audit log so the trust pact's local half works, but the POST is stubbed pending maintainer-side Cloudflare deploy. When the URL is ready, a 0.7.1.x follow-up flips the constant and the same payload + opt-out + audit log all carry over.
 
+## Usage analytics (0.8.4+)
+
+Separate from crash telemetry: a **local, privacy-safe record of which tools agents call**, so the project can see how the MCP is actually used and build the right features. **Phase 1 is capture-only and local — nothing is shipped anywhere.**
+
+Each tool call records: the tool name, a gap-based **correlation id** (groups a burst of calls into one "turn"), an **outcome** (`ok` / `error` / `empty`), the arg **KEYS** the agent passed (never their values), a duration, and a result size. That is the whole record — **no URLs, hosts, bodies, log text, or arg values** ever touch it, so it is PII-free by construction.
+
+Inspect exactly what is stored at any time:
+
+```bash
+flutter_network_mcp usage                 # per-tool summary + outcome breakdown
+flutter_network_mcp usage --show          # recent raw events
+flutter_network_mcp usage --since 7d       # window filter
+flutter_network_mcp usage --json           # machine-readable
+```
+
+On by default; opt out with `FLUTTER_NETWORK_MCP_NO_USAGE=true` (usage only) or `FLUTTER_NETWORK_MCP_NO_TELEMETRY=true` (everything). Roadmap: Phase 2 adds a `usage_stats` tool (transition graph, error/empty rates, latency); Phase 3 ships aggregate rollups to the collector under the same audit pact, once it is live.
+
 ## Capability gating (control your context budget)
 
-Thirty-seven tools is a lot of schema for the agent to load. Disable the categories you don't use:
+Thirty-eight tools is a lot of schema for the agent to load. Disable the categories you don't use:
 
 ```json
 {

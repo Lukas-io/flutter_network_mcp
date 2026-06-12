@@ -11,6 +11,7 @@ import 'package:flutter_network_mcp/src/install/update.dart';
 import 'package:flutter_network_mcp/src/server.dart';
 import 'package:flutter_network_mcp/src/storage/database.dart';
 import 'package:flutter_network_mcp/src/telemetry/audit_subcommand.dart';
+import 'package:flutter_network_mcp/src/telemetry/usage_subcommand.dart';
 import 'package:flutter_network_mcp/src/telemetry/telemetry_reporter.dart';
 import 'package:flutter_network_mcp/src/tools/alert_patterns.dart' as alert_patterns;
 import 'package:flutter_network_mcp/src/update/update_check.dart';
@@ -54,6 +55,8 @@ Future<void> _runMain(List<String> args) async {
         return runUpdate(args.skip(1).toList());
       case 'audit':
         return runAudit(args.skip(1).toList());
+      case 'usage':
+        return runUsage(args.skip(1).toList());
       case 'setup':
         return runSetup(args.skip(1).toList());
     }

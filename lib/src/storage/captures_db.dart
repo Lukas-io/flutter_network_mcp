@@ -493,6 +493,78 @@ class CapturesDao {
     return rows.map(_rowToMap).toList();
   }
 
+  // ----- tool usage analytics (#79, Phase 1) -----
+
+  /// Records one tool call. Privacy-safe by construction: [argKeys] are the
+  /// parameter NAMES the agent passed, never their values; no URLs / hosts /
+  /// bodies / log text are stored.
+  void insertToolEvent({
+    required int tsMs,
+    required String correlationId,
+    required String tool,
+    required String outcome,
+    List<String>? argKeys,
+    int? durationMs,
+    int? resultBytes,
+  }) {
+    _db.execute(
+      'INSERT INTO tool_events(ts_ms, correlation_id, tool, outcome, arg_keys, '
+      'duration_ms, result_bytes) VALUES (?,?,?,?,?,?,?)',
+      [
+        tsMs,
+        correlationId,
+        tool,
+        outcome,
+        argKeys == null ? null : jsonEncode(argKeys),
+        durationMs,
+        resultBytes,
+      ],
+    );
+  }
+
+  int toolEventCount() {
+    final r = _db.select('SELECT COUNT(*) AS c FROM tool_events');
+    return (r.first['c'] as int?) ?? 0;
+  }
+
+  /// Per-(tool, outcome) counts for the `usage` transparency dump.
+  List<Map<String, Object?>> toolEventCounts({int? sinceMs}) {
+    if (sinceMs == null) {
+      return _db
+          .select(
+            'SELECT tool, outcome, COUNT(*) AS count FROM tool_events '
+            'GROUP BY tool, outcome ORDER BY count DESC',
+          )
+          .map(_rowToMap)
+          .toList();
+    }
+    return _db
+        .select(
+          'SELECT tool, outcome, COUNT(*) AS count FROM tool_events '
+          'WHERE ts_ms >= ? GROUP BY tool, outcome ORDER BY count DESC',
+          [sinceMs],
+        )
+        .map(_rowToMap)
+        .toList();
+  }
+
+  /// Most-recent raw events for `usage show`.
+  List<Map<String, Object?>> recentToolEvents({int? sinceMs, int limit = 50}) {
+    if (sinceMs == null) {
+      return _db
+          .select('SELECT * FROM tool_events ORDER BY id DESC LIMIT ?', [limit])
+          .map(_rowToMap)
+          .toList();
+    }
+    return _db
+        .select(
+          'SELECT * FROM tool_events WHERE ts_ms >= ? ORDER BY id DESC LIMIT ?',
+          [sinceMs, limit],
+        )
+        .map(_rowToMap)
+        .toList();
+  }
+
   // ----- alerts -----
 
   /// Inserts or merges an alert.
