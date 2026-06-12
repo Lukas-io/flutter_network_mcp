@@ -276,7 +276,7 @@ Key behaviour:
 
 DTD reports app names like `Flutter - iPhone 17 - Package: sanga_mobile` — so substring patterns can target either the package (`sanga_mobile`) or the device (`iPhone 17`, `Android emulator`, `iOS Simulator`). Example: `--auto-attach=sanga_mobile --auto-attach-deny="Android emulator"` auto-attaches sanga_mobile only on physical iOS + iOS Simulator.
 
-## The 37 tools
+## The 38 tools
 
 Each tool's MCP `description` (loaded into every agent at handshake) tells the agent WHEN to reach for it. This table is the same information at a glance — useful when you want to remind an agent that a tool exists, or when picking the right one yourself.
 
@@ -304,8 +304,9 @@ Each tool's MCP `description` (loaded into every agent at handshake) tells the a
 | `socket_get` | ✅ | Read one socket's read/write byte stats by id. |
 | `socket_clear` | ✅ | Wipe the live socket buffer for one session (DB untouched). |
 | **Logs** | | |
-| `logs_tail` | ✅ | Read recent app logs: `print`, `developer.log`, stdout, stderr. Correlate with HTTP or chase an exception. |
+| `logs_tail` | ✅ | Read recent app logs: `print`, `developer.log`, stdout, stderr. Correlate with HTTP or chase an exception. **0.8.1:** `messageContains` greps the message body (works when loggers are unnamed). |
 | `logs_clear` | ✅ | Wipe one session's live log ring buffer (DB untouched). |
+| `correlate_at` | ✅ | Given an anchor `tsMs`, return logs AND HTTP requests within `+/-windowMs`, each tagged with signed `deltaMs`, nearest-first. Answers "which request fired closest to this log line?" (0.8.3). |
 | **Alerts** | | |
 | `alerts_drain` | ✅ | "What is wrong right now?" — returns pending alerts for the scoped session and marks them drained. Top of any investigation. |
 | `alerts_peek` | ✅ | Same as drain but read-only (does NOT mark them drained). |

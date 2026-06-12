@@ -438,6 +438,61 @@ class CapturesDao {
     return rows.map(_rowToMap).toList();
   }
 
+  /// Log records within +/- [windowMs] of [anchorMs], nearest first (#18).
+  /// Reads persisted `log_records`, so it works for both live and history.
+  List<Map<String, Object?>> logsNear({
+    required int sessionId,
+    required int anchorMs,
+    required int windowMs,
+    String? isolateId,
+    int limit = 20,
+  }) {
+    final clauses = <String>[
+      'session_id = ?',
+      'timestamp_ms IS NOT NULL',
+      'timestamp_ms BETWEEN ? AND ?',
+    ];
+    final params = <Object?>[sessionId, anchorMs - windowMs, anchorMs + windowMs];
+    if (isolateId != null && isolateId.isNotEmpty) {
+      clauses.add('isolate_id = ?');
+      params.add(isolateId);
+    }
+    final rows = _db.select(
+      'SELECT * FROM log_records WHERE ${clauses.join(' AND ')} '
+      'ORDER BY ABS(timestamp_ms - ?) ASC LIMIT ?',
+      [...params, anchorMs, limit],
+    );
+    return rows.map(_rowToMap).toList();
+  }
+
+  /// HTTP requests whose start time is within +/- [windowMs] of [anchorMs],
+  /// nearest first (#18). `start_us` is microseconds; the window is converted.
+  List<Map<String, Object?>> httpRequestsNear({
+    required int sessionId,
+    required int anchorMs,
+    required int windowMs,
+    String? isolateId,
+    int limit = 20,
+  }) {
+    final anchorUs = anchorMs * 1000;
+    final clauses = <String>['session_id = ?', 'start_us BETWEEN ? AND ?'];
+    final params = <Object?>[
+      sessionId,
+      (anchorMs - windowMs) * 1000,
+      (anchorMs + windowMs) * 1000,
+    ];
+    if (isolateId != null && isolateId.isNotEmpty) {
+      clauses.add('isolate_id = ?');
+      params.add(isolateId);
+    }
+    final rows = _db.select(
+      'SELECT * FROM http_requests WHERE ${clauses.join(' AND ')} '
+      'ORDER BY ABS(start_us - ?) ASC LIMIT ?',
+      [...params, anchorUs, limit],
+    );
+    return rows.map(_rowToMap).toList();
+  }
+
   // ----- alerts -----
 
   /// Inserts or merges an alert.
