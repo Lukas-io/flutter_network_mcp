@@ -189,7 +189,7 @@ A stored high-watermark (`usage-ship-state.json`) makes shipping idempotent, so 
 
 ## Capability gating (control your context budget)
 
-Thirty-nine tools is a lot of schema for the agent to load. Disable the categories you don't use:
+Forty tools is a lot of schema for the agent to load. Disable the categories you don't use:
 
 ```json
 {
@@ -307,7 +307,7 @@ Key behaviour:
 
 DTD reports app names like `Flutter - iPhone 17 - Package: sanga_mobile` — so substring patterns can target either the package (`sanga_mobile`) or the device (`iPhone 17`, `Android emulator`, `iOS Simulator`). Example: `--auto-attach=sanga_mobile --auto-attach-deny="Android emulator"` auto-attaches sanga_mobile only on physical iOS + iOS Simulator.
 
-## The 39 tools
+## The 40 tools
 
 Each tool's MCP `description` (loaded into every agent at handshake) tells the agent WHEN to reach for it. This table is the same information at a glance — useful when you want to remind an agent that a tool exists, or when picking the right one yourself.
 
@@ -323,6 +323,7 @@ Each tool's MCP `description` (loaded into every agent at handshake) tells the a
 | `report_issue` | — | File a GitHub issue against this MCP from inside an agent turn (`type:"bug"` or `type:"ux"`). Uses `gh` CLI if available, else returns a paste-ready deep-link URL. Title + body path-redacted before submission (0.7.2). |
 | `auto_attach_config` | — | Read + mutate the persistent auto-attach allowlist/denylist at `<data-dir>/auto-attach.json`. Lets the agent honor `autoAttachSuggestion` (from `network_attach`) without asking the user to edit shell rc. Always ask the user before calling (0.7.4). |
 | `usage_stats` | — | Aggregate view of how agents use this MCP: per-tool counts, outcome rates (ok/error/empty), p50/p95 latency, and the tool→next-tool transition graph, from the local usage capture (0.8.5, #79 Phase 2). |
+| `session_configure` | — | Set process-wide STICKY DEFAULT filters that `logs_tail` / `network_list` inherit when you omit the arg (set `levelMin` + `messageContains` / `statusMin` once instead of repeating them). An arg you pass still wins for that call. `clear:true` resets; no args views current (0.8.9, #18). |
 | **HTTP** | | |
 | `network_list` | ✅ | Browse recent HTTP requests by metadata: host, method, status, time. Cursor-paged. |
 | `network_summarize` | ✅ | One digest row per endpoint over a time window: count, statusDist, p50/p95 latency, errorRate. Path templates collapse dynamic ids (`/api/users/N`). Cheaper than `network_list + manual bucketing` (0.7.0). |

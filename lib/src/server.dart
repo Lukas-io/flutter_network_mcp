@@ -37,6 +37,7 @@ import 'tools/network_summarize.dart';
 import 'tools/report_issue.dart';
 import 'tools/redacted_headers.dart';
 import 'tools/session_close.dart';
+import 'tools/session_configure.dart';
 import 'tools/session_delete.dart';
 import 'tools/session_export.dart';
 import 'tools/session_list.dart';
@@ -91,6 +92,8 @@ base class FlutterNetworkMcpServer extends MCPServer with ToolsSupport {
     _register(networkDiscoverDtdTool, networkDiscoverDtd);
     _register(reportIssueTool, reportIssue);
     _register(autoAttachConfigTool, autoAttachConfig);
+    // Sticky default filters tune whatever read tools are enabled (#18).
+    _register(sessionConfigureTool, sessionConfigure);
     // Usage analytics is process-wide + always available (#79 Phase 2).
     _register(usageStatsTool, usageStats);
 

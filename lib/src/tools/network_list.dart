@@ -4,6 +4,7 @@ import 'package:dart_mcp/server.dart';
 import 'package:vm_service/vm_service.dart';
 
 import '../config/capabilities.dart';
+import '../config/session_filters.dart';
 import '../state/session.dart';
 import '../storage/captures_db.dart';
 import '../util/body_decoder.dart';
@@ -73,11 +74,19 @@ FutureOr<CallToolResult> networkList(CallToolRequest request) async {
   if (scopeErr != null) return scopeErr;
   scope!;
 
+  // Sticky defaults (#18): inherit from session_configure when an arg is
+  // omitted; an explicitly-passed arg (even null) wins for this call.
+  final sf = SessionFilters.instance;
   final sinceArg = args['since'] as int?;
-  final methods = readStringList(args['method']);
-  final hostContains = args['hostContains'] as String?;
-  final statusMin = args['statusMin'] as int?;
-  final statusMax = args['statusMax'] as int?;
+  final methods =
+      args.containsKey('method') ? readStringList(args['method']) : sf.method;
+  final hostContains = args.containsKey('hostContains')
+      ? args['hostContains'] as String?
+      : sf.hostContains;
+  final statusMin =
+      args.containsKey('statusMin') ? args['statusMin'] as int? : sf.statusMin;
+  final statusMax =
+      args.containsKey('statusMax') ? args['statusMax'] as int? : sf.statusMax;
   final isolateFilter = args['isolateId'] as String?;
   final limit = clampLimit(args['limit'] as int?, fallback: 50, hardMax: 200);
 
