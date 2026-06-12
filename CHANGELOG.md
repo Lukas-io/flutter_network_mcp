@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.8.9] — 2026-06-12
+
+### Added — `session_configure` sticky default filters (#18)
+
+A new always-on `session_configure` tool (the 40th) sets **process-wide default filters** that `logs_tail` and `network_list` inherit whenever you omit the matching argument. Set "only `[EventTracker]` logs at level ≥ 1000" or "only 4xx/5xx HTTP" once, then read without repeating it:
+
+```
+session_configure levelMin:1000 messageContains:["[EventTracker]"] statusMin:400
+logs_tail            # inherits levelMin + messageContains
+network_list         # inherits statusMin
+logs_tail levelMin:0 # an arg you pass still wins for that call
+```
+
+- Inherited filters show up in each read's filter summary, so it's clear what's applied.
+- Pass a field to set it, pass it as `null` to unset just that field, `clear:true` to reset all, no args to view current.
+- In-memory only; resets on server restart. This is the "sticky filters" item from #18 (live-tail there remains a non-goal).
+
 ## [0.8.8] — 2026-06-12
 
 ### Added — `logs_tail` `messageContains` list form (#15)

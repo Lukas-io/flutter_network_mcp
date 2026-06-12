@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:dart_mcp/server.dart';
 
 import '../config/capabilities.dart';
+import '../config/session_filters.dart';
 import '../state/session.dart';
 import '../storage/captures_db.dart';
 import '../util/filters.dart';
@@ -86,11 +87,20 @@ FutureOr<CallToolResult> logsTail(CallToolRequest request) async {
   if (scopeErr != null) return scopeErr;
   scope!;
 
+  // Sticky defaults (#18): inherit from session_configure when an arg is
+  // omitted; an explicitly-passed arg (even null) wins for this call.
+  final sf = SessionFilters.instance;
   final sinceId = args['since'] as int?;
-  final levelMin = args['levelMin'] as int?;
-  final loggerContains = args['loggerContains'] as String?;
-  final messageContains = readStringList(args['messageContains']);
-  final source = args['source'] as String?;
+  final levelMin =
+      args.containsKey('levelMin') ? args['levelMin'] as int? : sf.levelMin;
+  final loggerContains = args.containsKey('loggerContains')
+      ? args['loggerContains'] as String?
+      : sf.loggerContains;
+  final messageContains = args.containsKey('messageContains')
+      ? readStringList(args['messageContains'])
+      : sf.messageContains;
+  final source =
+      args.containsKey('source') ? args['source'] as String? : sf.source;
   final isolateFilter = args['isolateId'] as String?;
   final limit = clampLimit(args['limit'] as int?, fallback: 100, hardMax: 500);
 
