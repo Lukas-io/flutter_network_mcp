@@ -175,7 +175,17 @@ flutter_network_mcp usage --json           # machine-readable
 
 On by default; opt out with `FLUTTER_NETWORK_MCP_NO_USAGE=true` (usage only) or `FLUTTER_NETWORK_MCP_NO_TELEMETRY=true` (everything).
 
-**Phase 2 (0.8.5)** adds the `usage_stats` tool, so the aggregates are readable from inside an agent turn: per-tool counts, outcome rates (ok/error/empty), p50/p95 latency, and the tool→next-tool transition graph. Roadmap: **Phase 3** ships aggregate rollups to the collector under the same audit pact, once it is live.
+**Phase 2 (0.8.5)** adds the `usage_stats` tool, so the aggregates are readable from inside an agent turn: per-tool counts, outcome rates (ok/error/empty), p50/p95 latency, and the tool→next-tool transition graph.
+
+**Phase 3 (0.8.6)** ships those aggregates to the maintainer collector under the **same audit pact as crash telemetry**. A rollup (per-tool counts, outcome + latency stats, the transition graph; **never raw events or arg values**) is appended to the hash-chained `telemetry-audit.log` first, then POSTed to the collector when one is configured. Like crash telemetry it ships **audit-log-only** until the collector URL is baked in. It runs fire-and-forget on startup (daily-gated) and on demand:
+
+```bash
+flutter_network_mcp usage ship             # ship the rollup since the last watermark
+flutter_network_mcp usage ship --dry-run   # build + print it, send nothing
+flutter_network_mcp audit show --since 1h  # see the exact bytes that were recorded
+```
+
+A stored high-watermark (`usage-ship-state.json`) makes shipping idempotent, so re-running never double-counts.
 
 ## Capability gating (control your context budget)
 

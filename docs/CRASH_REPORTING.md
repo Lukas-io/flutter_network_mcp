@@ -41,7 +41,7 @@ Default-on telemetry closes that gap. The Phase 9 runZonedGuarded around `main()
 ## Constraints
 
 1. **Default ON.** Telemetry runs unless the user sets `FLUTTER_NETWORK_MCP_NO_TELEMETRY=true`. No opt-in dance, no nag prompt.
-2. **Tamper-evident local audit log.** Every payload that goes to the wire ALSO goes to `<data-dir>/telemetry-audit.log` as a hash-chained append-only record. The user can audit + verify the chain at any time.
+2. **Tamper-evident local audit log.** Every payload that goes to the wire ALSO goes to `<data-dir>/telemetry-audit.log` as a hash-chained append-only record. The user can audit + verify the chain at any time. As of 0.8.6 this log is shared: usage-analytics rollups (issue #79 Phase 3) append to the same chain, tagged `"kind":"usage_rollup"`, so `audit show` / `audit verify` cover both crash reports and usage rollups in one place.
 3. **No PII, no app data, no source paths.** The payload contains only safe identifiers: package version, commit SHA, OS family + version, Dart version, error class, top of stack with file paths redacted to package-relative form. Never: user names, hostnames, project paths, captured HTTP bodies, headers, URLs from the target app, env-var contents, the contents of any captured DB row.
 4. **Best-effort, non-blocking.** Network failure must not crash the MCP or block shutdown. Single attempt with a 3s total deadline. The audit log write happens BEFORE the network attempt, so even if the wire send fails the user still sees what we tried to send.
 5. **Rate limit at the collector.** Max 5 reports per machine_hash per hour. A crash loop can't DOS the collector or fill the user's audit log unboundedly.

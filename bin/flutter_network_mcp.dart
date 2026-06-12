@@ -11,6 +11,7 @@ import 'package:flutter_network_mcp/src/install/update.dart';
 import 'package:flutter_network_mcp/src/server.dart';
 import 'package:flutter_network_mcp/src/storage/database.dart';
 import 'package:flutter_network_mcp/src/telemetry/audit_subcommand.dart';
+import 'package:flutter_network_mcp/src/telemetry/usage_reporter.dart';
 import 'package:flutter_network_mcp/src/telemetry/usage_subcommand.dart';
 import 'package:flutter_network_mcp/src/telemetry/telemetry_reporter.dart';
 import 'package:flutter_network_mcp/src/tools/alert_patterns.dart' as alert_patterns;
@@ -259,6 +260,13 @@ Future<void> _runMain(List<String> args) async {
       dataDir: p.dirname(CapturesDatabase.instance.path),
     ),
   );
+
+  // Background usage-rollup ship (#79 Phase 3). Daily-gated, opt-out via
+  // FLUTTER_NETWORK_MCP_NO_USAGE / NO_TELEMETRY. Folds the events accrued
+  // since the last ship into one privacy-safe aggregate, records it to the
+  // tamper-evident audit log, and POSTs to the collector when configured.
+  // Fire-and-forget: never blocks the MCP-host handshake, never throws.
+  unawaited(UsageReporter.maybeAutoShip());
 
   // Optional: watch DTD for new apps and auto-attach. CLI flag takes
   // priority; env var fallback is FLUTTER_NETWORK_MCP_AUTO_ATTACH=app1,app2.
