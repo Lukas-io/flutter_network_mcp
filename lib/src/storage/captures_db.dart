@@ -34,6 +34,20 @@ class CapturesDao {
     );
   }
 
+  /// Repoints an existing session row at a new VM service URI / isolate after
+  /// a hot-restart reattach (issue #16), so captures keep flowing into the
+  /// same session id instead of starting a new row each restart.
+  void repointSession(
+    int id, {
+    required String? vmServiceUri,
+    required String? isolateId,
+  }) {
+    _db.execute(
+      'UPDATE sessions SET vm_service_uri=?, isolate_id=? WHERE id=?',
+      [vmServiceUri, isolateId, id],
+    );
+  }
+
   List<Map<String, Object?>> listSessions({
     String? projectPath,
     int? sinceMs,
@@ -186,7 +200,7 @@ class CapturesDao {
   ///
   /// Complete requests (`end_us` set) are always eligible. Response-incomplete
   /// requests become eligible once they are older than [staleBeforeUs] and
-  /// still under [maxAttempts] — this rescues chunked / gzip responses the
+  /// still under [maxAttempts]; this rescues chunked / gzip responses the
   /// dart:io profiler never marks complete, without spinning forever on
   /// genuinely body-less or transport-invisible ones. Pass `staleBeforeUs:
   /// null` to restore the legacy "complete rows only" behaviour.
@@ -219,7 +233,7 @@ class CapturesDao {
   }
 
   /// Marks a request's bodies as terminally fetched (success, or a complete
-  /// request that genuinely has no body — e.g. 204 / HEAD) so it leaves the
+  /// request that genuinely has no body, e.g. 204 / HEAD) so it leaves the
   /// backfill queue.
   void markBodiesFetched(int sessionId, String vmId) {
     _db.execute(
@@ -386,6 +400,7 @@ class CapturesDao {
     int? sinceId,
     int? levelMin,
     String? loggerContains,
+    String? messageContains,
     String? source,
     String? isolateId,
     int limit = 100,
@@ -404,6 +419,10 @@ class CapturesDao {
       clauses.add('LOWER(logger) LIKE ?');
       params.add('%${loggerContains.toLowerCase()}%');
     }
+    if (messageContains != null && messageContains.isNotEmpty) {
+      clauses.add('LOWER(message) LIKE ?');
+      params.add('%${messageContains.toLowerCase()}%');
+    }
     if (source != null && source.isNotEmpty) {
       clauses.add('source = ?');
       params.add(source);
@@ -417,6 +436,133 @@ class CapturesDao {
       [...params, limit],
     );
     return rows.map(_rowToMap).toList();
+  }
+
+  /// Log records within +/- [windowMs] of [anchorMs], nearest first (#18).
+  /// Reads persisted `log_records`, so it works for both live and history.
+  List<Map<String, Object?>> logsNear({
+    required int sessionId,
+    required int anchorMs,
+    required int windowMs,
+    String? isolateId,
+    int limit = 20,
+  }) {
+    final clauses = <String>[
+      'session_id = ?',
+      'timestamp_ms IS NOT NULL',
+      'timestamp_ms BETWEEN ? AND ?',
+    ];
+    final params = <Object?>[sessionId, anchorMs - windowMs, anchorMs + windowMs];
+    if (isolateId != null && isolateId.isNotEmpty) {
+      clauses.add('isolate_id = ?');
+      params.add(isolateId);
+    }
+    final rows = _db.select(
+      'SELECT * FROM log_records WHERE ${clauses.join(' AND ')} '
+      'ORDER BY ABS(timestamp_ms - ?) ASC LIMIT ?',
+      [...params, anchorMs, limit],
+    );
+    return rows.map(_rowToMap).toList();
+  }
+
+  /// HTTP requests whose start time is within +/- [windowMs] of [anchorMs],
+  /// nearest first (#18). `start_us` is microseconds; the window is converted.
+  List<Map<String, Object?>> httpRequestsNear({
+    required int sessionId,
+    required int anchorMs,
+    required int windowMs,
+    String? isolateId,
+    int limit = 20,
+  }) {
+    final anchorUs = anchorMs * 1000;
+    final clauses = <String>['session_id = ?', 'start_us BETWEEN ? AND ?'];
+    final params = <Object?>[
+      sessionId,
+      (anchorMs - windowMs) * 1000,
+      (anchorMs + windowMs) * 1000,
+    ];
+    if (isolateId != null && isolateId.isNotEmpty) {
+      clauses.add('isolate_id = ?');
+      params.add(isolateId);
+    }
+    final rows = _db.select(
+      'SELECT * FROM http_requests WHERE ${clauses.join(' AND ')} '
+      'ORDER BY ABS(start_us - ?) ASC LIMIT ?',
+      [...params, anchorUs, limit],
+    );
+    return rows.map(_rowToMap).toList();
+  }
+
+  // ----- tool usage analytics (#79, Phase 1) -----
+
+  /// Records one tool call. Privacy-safe by construction: [argKeys] are the
+  /// parameter NAMES the agent passed, never their values; no URLs / hosts /
+  /// bodies / log text are stored.
+  void insertToolEvent({
+    required int tsMs,
+    required String correlationId,
+    required String tool,
+    required String outcome,
+    List<String>? argKeys,
+    int? durationMs,
+    int? resultBytes,
+  }) {
+    _db.execute(
+      'INSERT INTO tool_events(ts_ms, correlation_id, tool, outcome, arg_keys, '
+      'duration_ms, result_bytes) VALUES (?,?,?,?,?,?,?)',
+      [
+        tsMs,
+        correlationId,
+        tool,
+        outcome,
+        argKeys == null ? null : jsonEncode(argKeys),
+        durationMs,
+        resultBytes,
+      ],
+    );
+  }
+
+  int toolEventCount() {
+    final r = _db.select('SELECT COUNT(*) AS c FROM tool_events');
+    return (r.first['c'] as int?) ?? 0;
+  }
+
+  /// Per-(tool, outcome) counts for the `usage` transparency dump.
+  List<Map<String, Object?>> toolEventCounts({int? sinceMs}) {
+    if (sinceMs == null) {
+      return _db
+          .select(
+            'SELECT tool, outcome, COUNT(*) AS count FROM tool_events '
+            'GROUP BY tool, outcome ORDER BY count DESC',
+          )
+          .map(_rowToMap)
+          .toList();
+    }
+    return _db
+        .select(
+          'SELECT tool, outcome, COUNT(*) AS count FROM tool_events '
+          'WHERE ts_ms >= ? GROUP BY tool, outcome ORDER BY count DESC',
+          [sinceMs],
+        )
+        .map(_rowToMap)
+        .toList();
+  }
+
+  /// Most-recent raw events for `usage show`.
+  List<Map<String, Object?>> recentToolEvents({int? sinceMs, int limit = 50}) {
+    if (sinceMs == null) {
+      return _db
+          .select('SELECT * FROM tool_events ORDER BY id DESC LIMIT ?', [limit])
+          .map(_rowToMap)
+          .toList();
+    }
+    return _db
+        .select(
+          'SELECT * FROM tool_events WHERE ts_ms >= ? ORDER BY id DESC LIMIT ?',
+          [sinceMs, limit],
+        )
+        .map(_rowToMap)
+        .toList();
   }
 
   // ----- alerts -----

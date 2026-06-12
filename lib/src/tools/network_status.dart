@@ -36,6 +36,13 @@ Map<String, Object?> attachedStatusEntry(AttachedSession a) {
     if (a.socketProfilingEnabled) 'socketProfilingEnabled': true,
     'capabilities': capState.capabilities,
     if (capState.degraded.isNotEmpty) 'degraded': capState.degraded,
+    // #21: surface the log ring-buffer fill so the agent can reason about
+    // rotation proactively (and knows to read now / bump the buffer).
+    'logBufferUsed': a.logBuffer.length,
+    'logBufferCapacity': a.logBuffer.capacity,
+    // #16: this session id was carried across a hot restart.
+    if (a.lastReattachAt != null)
+      'lastReattachAtMs': a.lastReattachAt!.millisecondsSinceEpoch,
   };
 }
 

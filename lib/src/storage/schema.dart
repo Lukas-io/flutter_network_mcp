@@ -3,7 +3,7 @@
 // Bump [currentVersion] when changing this file and add a migration block in
 // the migration switch in database.dart.
 
-const int currentVersion = 6;
+const int currentVersion = 7;
 
 const List<String> initialSchema = [
   '''
@@ -162,6 +162,20 @@ const List<String> initialSchema = [
     added_at  INTEGER NOT NULL
   )
   ''',
+  '''
+  CREATE TABLE tool_events (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts_ms          INTEGER NOT NULL,
+    correlation_id TEXT NOT NULL,
+    tool           TEXT NOT NULL,
+    outcome        TEXT NOT NULL,
+    arg_keys       TEXT,
+    duration_ms    INTEGER,
+    result_bytes   INTEGER
+  )
+  ''',
+  'CREATE INDEX idx_tool_events_corr ON tool_events(correlation_id, ts_ms)',
+  'CREATE INDEX idx_tool_events_tool ON tool_events(tool, ts_ms)',
 ];
 
 /// SQL statements to apply when upgrading from v1 → v2.
@@ -264,7 +278,7 @@ const List<String> migrationV4toV5 = [
 ];
 
 /// v5 → v6: body-backfill retry counter. The capture writer used to skip
-/// body/search backfill for any request whose `end_us` was NULL — the
+/// body/search backfill for any request whose `end_us` was NULL; the
 /// response was never marked complete by the dart:io profiler, which is
 /// common for chunked / gzip streamed responses. That stranded their bodies
 /// forever, so `network_get` returned `response: null` and `network_search`
@@ -276,4 +290,26 @@ const List<String> migrationV4toV5 = [
 /// to 0 attempts and re-enter the backfill path on the next tick.
 const List<String> migrationV5toV6 = [
   'ALTER TABLE http_requests ADD COLUMN body_fetch_attempts INTEGER NOT NULL DEFAULT 0',
+];
+
+/// v6 -> v7: tool-usage analytics (issue #79, Phase 1). A privacy-safe,
+/// process-wide record of which tools agents call: tool name, a gap-based
+/// correlation id grouping a "turn", outcome (ok / error / empty), the arg
+/// KEYS used (never values), duration, and result size. No URLs, hosts,
+/// bodies, or log text. Not tied to a capture session.
+const List<String> migrationV6toV7 = [
+  '''
+  CREATE TABLE IF NOT EXISTS tool_events (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts_ms          INTEGER NOT NULL,
+    correlation_id TEXT NOT NULL,
+    tool           TEXT NOT NULL,
+    outcome        TEXT NOT NULL,
+    arg_keys       TEXT,
+    duration_ms    INTEGER,
+    result_bytes   INTEGER
+  )
+  ''',
+  'CREATE INDEX IF NOT EXISTS idx_tool_events_corr ON tool_events(correlation_id, ts_ms)',
+  'CREATE INDEX IF NOT EXISTS idx_tool_events_tool ON tool_events(tool, ts_ms)',
 ];

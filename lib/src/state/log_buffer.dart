@@ -43,9 +43,12 @@ class LogEntry {
 class LogBuffer {
   LogBuffer({int? capacity}) : capacity = capacity ?? _envCapacity();
 
-  /// Reads `FLUTTER_NETWORK_MCP_LOG_BUFFER` (50–10000). Default 500.
+  /// Reads `FLUTTER_NETWORK_MCP_LOG_BUFFER` (alias:
+  /// `FLUTTER_NETWORK_MCP_LOG_BUFFER_SIZE`), clamped 50–10000. Default 500.
   static int _envCapacity() {
-    final raw = io.Platform.environment['FLUTTER_NETWORK_MCP_LOG_BUFFER'];
+    final env = io.Platform.environment;
+    final raw = env['FLUTTER_NETWORK_MCP_LOG_BUFFER'] ??
+        env['FLUTTER_NETWORK_MCP_LOG_BUFFER_SIZE'];
     final parsed = raw == null ? null : int.tryParse(raw);
     if (parsed == null) return 500;
     if (parsed < 50) return 50;
@@ -92,11 +95,13 @@ class LogBuffer {
     int? sinceId,
     int? levelMin,
     String? loggerContains,
+    String? messageContains,
     String? sourceContains,
     String? isolateId,
     int limit = 100,
   }) {
     final lc = loggerContains?.toLowerCase();
+    final mc = messageContains?.toLowerCase();
     final sc = sourceContains?.toLowerCase();
     final iso = isolateId;
     final result = <LogEntry>[];
@@ -106,6 +111,9 @@ class LogBuffer {
       if (sinceId != null && e.id <= sinceId) break;
       if (levelMin != null && (e.level ?? 0) < levelMin) continue;
       if (lc != null && !(e.loggerName?.toLowerCase().contains(lc) ?? false)) {
+        continue;
+      }
+      if (mc != null && mc.isNotEmpty && !e.message.toLowerCase().contains(mc)) {
         continue;
       }
       if (sc != null && !e.source.toLowerCase().contains(sc)) continue;

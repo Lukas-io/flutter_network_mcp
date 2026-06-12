@@ -8,7 +8,7 @@ void main() {
   final dtdA = Uri.parse('ws://127.0.0.1:55580/jPg2KTYi1Ao=');
   final dtdB = Uri.parse('ws://127.0.0.1:59639/EvI_lcFkbkg=');
 
-  // Two sims, each on its own DTD — the exact shape from the bug report.
+  // Two sims, each on its own DTD; the exact shape from the bug report.
   final apps = <DtdAppCandidate>[
     (
       name: 'Kind: Flutter - Device: iPhone 16 Pro - Package: roqquapp',
