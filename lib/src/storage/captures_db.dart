@@ -50,6 +50,7 @@ class CapturesDao {
 
   List<Map<String, Object?>> listSessions({
     String? projectPath,
+    String? appNameContains,
     int? sinceMs,
     int limit = 20,
   }) {
@@ -58,6 +59,10 @@ class CapturesDao {
     if (projectPath != null) {
       clauses.add('project_path = ?');
       params.add(projectPath);
+    }
+    if (appNameContains != null && appNameContains.isNotEmpty) {
+      clauses.add('LOWER(app_name) LIKE ?');
+      params.add('%${appNameContains.toLowerCase()}%');
     }
     if (sinceMs != null) {
       clauses.add('started_at >= ?');

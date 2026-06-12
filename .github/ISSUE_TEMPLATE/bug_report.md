@@ -11,6 +11,11 @@ labels: bug
 
 ## Quick report (required — ~30 seconds)
 
+**`flutter_network_mcp` version**
+<!-- e.g. 0.8.6. The agent can read it from a network_status response, or run
+     `dart pub global list | grep flutter_network_mcp`. Without it we can't tell
+     whether your bug was already fixed in a later release. -->
+
 **What broke**
 <!-- One sentence. What did you (or the agent) expect, what actually happened? -->
 
@@ -26,7 +31,7 @@ labels: bug
 <details><summary><strong>Optional detail</strong> (helps a lot, never required)</summary>
 
 ### Environment
-- `flutter_network_mcp` version: <!-- dart pub global list | grep flutter_network_mcp -->
+<!-- version is in the Quick report above -->
 - Dart SDK: <!-- dart --version -->
 - macOS / Linux / Windows version:
 - IDE / agent: <!-- VS Code + Claude Code / Cursor / etc. -->
