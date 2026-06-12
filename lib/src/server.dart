@@ -45,6 +45,7 @@ import 'tools/session_open.dart';
 import 'tools/socket_clear.dart';
 import 'tools/socket_get.dart';
 import 'tools/socket_list.dart';
+import 'tools/usage_stats.dart';
 
 /// MCP server exposing Flutter DevTools data via DTD + VM service, with
 /// persistent capture sessions in SQLite, full-text search, proactive alerts,
@@ -90,6 +91,8 @@ base class FlutterNetworkMcpServer extends MCPServer with ToolsSupport {
     _register(networkDiscoverDtdTool, networkDiscoverDtd);
     _register(reportIssueTool, reportIssue);
     _register(autoAttachConfigTool, autoAttachConfig);
+    // Usage analytics is process-wide + always available (#79 Phase 2).
+    _register(usageStatsTool, usageStats);
 
     if (caps.isEnabled(Category.http)) {
       _register(networkListTool, networkList);
