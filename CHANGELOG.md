@@ -4,6 +4,123 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.8.4] — 2026-06-12
+
+Tool-usage analytics, **Phase 1: capture only** (issue #79). A local, privacy-safe record of which tools agents call, so the project can build the right features from real usage. Nothing is shipped anywhere in this phase.
+
+### Added — usage capture (schema v7)
+
+One instrumentation chokepoint wraps tool registration, so all 38 tools are measured with zero per-tool changes. Each call records to a new `tool_events` table:
+
+- `tool` name, `tsMs`
+- `correlationId` — gap-based "turn" grouping (a new id after `FLUTTER_NETWORK_MCP_USAGE_GAP_MS`, default 60s, of inactivity; MCP carries no conversation id, so this is the proxy)
+- `outcome` — `ok` / `error` / `empty` (`empty` is a best-effort `count:0` heuristic, refined in Phase 2)
+- `argKeys` — the parameter NAMES passed, **never their values**
+- `durationMs`, `resultBytes`
+
+**Privacy by construction:** no URLs, hosts, bodies, log text, or arg values ever touch it. Recording is wrapped so a failure can never break the tool call it measures.
+
+### Added — `flutter_network_mcp usage` subcommand
+
+The transparency surface (mirrors `audit show`): see exactly what's stored.
+
+```bash
+flutter_network_mcp usage              # per-tool summary + outcome breakdown
+flutter_network_mcp usage --show       # recent raw events
+flutter_network_mcp usage --since 7d   # window filter
+flutter_network_mcp usage --json       # machine-readable
+```
+
+### Opt-out
+
+On by default. `FLUTTER_NETWORK_MCP_NO_USAGE=true` disables usage capture only; the existing `FLUTTER_NETWORK_MCP_NO_TELEMETRY=true` disables usage **and** crash telemetry.
+
+### Roadmap
+
+- **Phase 2:** a `usage_stats` tool — per-tool counts, error/empty rates, p50/p95 latency, the tool→next-tool transition graph, `nextSteps` adoption.
+- **Phase 3:** ship aggregate rollups (histograms, not raw rows) to the collector under the existing hash-chained audit pact, once it's live.
+
+### Schema
+
+- **v7:** new `tool_events` table + indexes. Additive migration; no existing data touched.
+
+## [0.8.3] — 2026-06-11
+
+Interactive-debugging wishlist (issue #18) plus the positive-feedback acknowledgement (#19). Closes out the dogfounding-round issue set (#13–#21).
+
+### Added — `correlate_at` (log↔network correlation)
+
+The 38th tool. Given an anchor timestamp (usually a log line's `timestampMs`), returns the log records AND HTTP requests within `±windowMs`, each tagged with a signed `deltaMs` and sorted nearest-first:
+
+```
+correlate_at tsMs:1780462000000 windowMs:200
+→ { logs:[{deltaMs:-30, message:"[EventTracker] aeon_transaction_started"}],
+    requests:[{deltaMs:45, method:"POST", url:".../aeon/transaction", statusCode:200}],
+    summary:"1 log(s) + 1 request(s) ... Nearest: POST .../aeon/transaction (+45ms)." }
+```
+
+Answers "which request fired closest to this log line?" in one call instead of eyeballing two listings. Reads persisted data (live logs + HTTP both land in the DB), so it works live or after `session_open`; live captures lag ~2s. Available whenever the `http` or `logs` capability is on; returns only the enabled sides (`disabledSides` lists any omitted). Optional `isolateId` scoping. Distinct from `network_correlate`, which matches requests across sessions by shared content rather than by time.
+
+### #19 — positive feedback acknowledged
+
+The behaviours the reporter called out as working well (`nextSteps` on every response, `pendingAlerts.count` baked in, the overflow→file+jq escape hatch, replay/diff discoverability, transparent multi-attach) are intentional and stay. Noted here so the signal isn't lost.
+
+### Deferred (not shipped here)
+
+From #18's wishlist: **live-tail subscription** stays a documented non-goal (MCP has no server-initiated push; polling via `alerts_drain` / `logs_tail` is the model). **Sticky per-session filters** (`session_open defaultFilters`) are deferred — they touch multiple read tools and a per-session config store, and the reporter noted none of the three were individually critical. Re-promote if it comes up again.
+
+## [0.8.2] — 2026-06-11
+
+Hot-restart session continuity (issue #16). Interactive debugging means hot-restarting every ~30 seconds; each restart rotated the VM service URI, spawned a brand-new `sessionId`, and left the dead session listed as attached. Agents burned turns re-attaching instead of debugging.
+
+### Added — `network_attach reattach:true`
+
+Recognises the same logical app across restarts and keeps one stable `sessionId`.
+
+```
+network_attach appNameContains:"iPhone 16 Pro" reattach:true
+→ { attached:true, reattached:true, liveSessionId:14,
+    previousVmServiceUri:"ws://old/ws" }
+```
+
+- **Logical identity** is `package + device`, parsed from the DTD app name (`"Kind: Flutter - Device: iPhone 16 Pro - Package: roqquapp"` → `roqquapp@iphone 16 pro`). `iPhone 16 Pro` and `iPhone 16` stay distinct; the same app on the same device across restarts collapses to one identity.
+- On a match, the existing `sessions` row is **repointed** at the new VM URI / isolate (so captures before and after the restart share one session id), and the stale session's resources are torn down and dropped from `network_status.attached`.
+- No-op when no prior session matches — behaves as a normal attach, so passing `reattach:true` is always safe.
+- `network_status.attached[]` gains `lastReattachAtMs` when a session was carried across a restart.
+
+This is the MVP that covers the ~90% case (the agent calls one tool instead of: notice URI changed → look up new URI → detach stale → re-attach). Fully automatic migration (no flag) is a future follow-up.
+
+## [0.8.1] — 2026-06-11
+
+Quick wins from the dogfooding round (issues #15, #21, #20). Small, high-value, no new tools.
+
+### Added — `logs_tail messageContains` filter (#15)
+
+`logs_tail` only filtered by `loggerContains`, which is useless when the app's logs carry an empty logger name (common). Agents were pulling `limit:500` and grepping out-of-band, repeatedly blowing the host's output cap.
+
+New `messageContains` parameter does a case-insensitive substring match on the message body itself, applied server-side (DB `LIKE` for history, in-memory for live) so it cuts response size before it reaches the agent:
+
+```
+logs_tail messageContains:"[EventTracker]"
+```
+
+### Added — configurable log ring buffer (#21)
+
+The 500-record ring buffer rotated too fast for chatty apps, dropping events before they could be read.
+
+- Env var `FLUTTER_NETWORK_MCP_LOG_BUFFER` (alias `..._LOG_BUFFER_SIZE`), clamped 50–10000, default 500.
+- Per-session override: `network_attach logBufferSize:2000` for one chatty session without affecting others.
+- `network_status.attached[]` now surfaces `logBufferUsed` + `logBufferCapacity` so the agent can reason about rotation proactively.
+- The "near capacity" warning + `nextSteps` hint now read the *real* configured capacity (were hardcoded to `/ 500`) and fire at 80% full.
+
+### Changed — agent feedback instructions are now actionable (#20)
+
+The server `instructions` field said "report any issue proactively" but gave no concrete triggers, so agents rarely did. Rewritten with explicit triggers (user voices friction / a tool errors and you work around it / a debugging session ends), a one-line offer script, and rules (ask before filing, once per conversation, concrete repro only). Routed through the `report_issue` tool (0.7.2). The auto `agent-filed` label was already shipped in 0.7.2.
+
+### Housekeeping
+
+- Removed em dashes that slipped into the 0.8.0 Dart sources, per project convention.
+
 ## [0.8.0] — 2026-06-11
 
 Trust-breaking bug fixes from the first round of real dogfooding (issues #13, #14, #17). These three made the tool give wrong or empty answers without saying so, which is worse than failing loudly.

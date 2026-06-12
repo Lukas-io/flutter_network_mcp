@@ -66,7 +66,7 @@ void main() {
       insertReq('a', startUs: 2000000, endUs: null); // newer than staleBefore
       final pending = dao.pendingBodyFetches(sid, staleBeforeUs: 1000000);
       expect(pending, isEmpty,
-          reason: 'within the grace window — give the profiler time');
+          reason: 'within the grace window; give the profiler time');
     });
 
     test('incomplete request past the attempt cap is dropped', () {

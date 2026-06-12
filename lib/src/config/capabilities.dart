@@ -97,10 +97,10 @@ class CapabilityConfig {
 }
 
 /// Runtime health of one capability on an attached session (issue #17):
-///   * `disabled`    — the category is off in the global CLI config
-///   * `ok`          — enabled and the underlying stream started cleanly
-///   * `unavailable` — enabled but the stream failed to start; the matching
-///                     read tools will return empty
+///   * `disabled`:    the category is off in the global CLI config
+///   * `ok`:          enabled and the underlying stream started cleanly
+///   * `unavailable`: enabled but the stream failed to start; the matching
+///                    read tools will return empty
 String capabilityState({required bool enabled, required bool runtimeOk}) =>
     !enabled ? 'disabled' : (runtimeOk ? 'ok' : 'unavailable');
 

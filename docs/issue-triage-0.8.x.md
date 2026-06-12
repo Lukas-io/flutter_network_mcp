@@ -99,7 +99,8 @@ the early "no connected apps yet" return.
 
 ## #15 — `logs_tail` needs `messageContains`  ·  UX · small
 
-**Status: OPEN.** `logs_tail` filters only by `levelMin` + `loggerContains`
+**Status: SHIPPED in 0.8.1** (`messageContains` server-side filter).
+`logs_tail` filters only by `levelMin` + `loggerContains`
 + source (logs_tail.dart:77-78). Roqqu's `rqLog` calls have empty
 `loggerName`, so the only useful filter doesn't apply → repeated
 `limit:500` pulls that busted Claude's 25k output cap.
@@ -116,7 +117,9 @@ the early "no connected apps yet" return.
 
 ## #16 — Hot restart spawns a new session; no stable app identity  ·  Feature · medium-large
 
-**Status: OPEN.** Sessions are keyed purely by `vmServiceUri`
+**Status: MVP SHIPPED in 0.8.2** (`reattach:true` reuses the sessionId across
+a hot restart via package+device identity; full auto-migration deferred).
+Sessions are keyed purely by `vmServiceUri`
 (session.dart:140). Each hot restart = new VM URI = new `sessionId`; dead
 sessions stay listed as "attached." NB: this is **distinct from** the
 0.7.3 continuation work (that's cross-conversation reattach; this is
@@ -158,7 +161,8 @@ per-session `network_status`).
 
 ## #18 — Wishlist: live tail / log↔network correlation / sticky filters  ·  Feature
 
-**Status: mostly OPEN; one part is a deliberate non-goal.**
+**Status: PARTIALLY SHIPPED in 0.8.3** (correlation tool landed; live-tail is a
+non-goal; sticky filters deferred).
 
 - ~~Live tail subscription (`logs_subscribe` + push notifications)~~ —
   **NON-GOAL.** MCP has no server-initiated push; documented in
@@ -178,7 +182,8 @@ per-session `network_status`).
 
 ## #19 — Positive feedback  ·  no fix, convert to guards
 
-**Status: acknowledge.** Things that worked: `nextSteps` everywhere,
+**Status: ACKNOWLEDGED in 0.8.3** (CHANGELOG note; behaviours kept as
+intentional). Things that worked: `nextSteps` everywhere,
 `pendingAlerts.count` on every response, the overflow→file+jq escape
 hatch, replay/diff in `nextSteps`, transparent multi-attach. Lock them
 in so we don't regress.
@@ -192,7 +197,8 @@ in so we don't regress.
 
 ## #20 — Make the `instructions` field give agents concrete triggers + a script  ·  Meta
 
-**Status: PARTIALLY FIXED.**
+**Status: SHIPPED in 0.8.1** (instructions rewritten with triggers + offer
+script; `agent-filed` label already in 0.7.2).
 
 - [x] Auto `agent-filed` label on agent-filed issues — done in 0.7.2
       `report_issue` (`_labelsForType`, report_issue.dart:159-161:
@@ -212,7 +218,8 @@ in so we don't regress.
 
 ## #21 — Configurable log ring buffer  ·  UX · partially done
 
-**Status: PARTIALLY FIXED.**
+**Status: SHIPPED in 0.8.1** (env var + alias, per-attach `logBufferSize`,
+status surfacing, capacity-aware warning replacing the hardcoded `/500`).
 
 - [x] Env-var configurable buffer — done: `FLUTTER_NETWORK_MCP_LOG_BUFFER`
       (default 500, clamped 50–10000), log_buffer.dart:48

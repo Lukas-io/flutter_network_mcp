@@ -20,9 +20,11 @@ final logsTailTool = Tool(
       'nearby HTTP request, chasing an exception spotted via alerts_drain, '
       'or just inspecting what the app is doing. Newest-first, '
       'cursor-paginated (pass `since` for incremental polling). Live mode '
-      'reads from an in-memory ring buffer (capacity 500); after session_open '
-      'it reads persisted log_records for the viewed session instead. Filter '
-      'by `levelMin` to suppress noisy info logs and surface only WARNING+.',
+      'reads from an in-memory ring buffer (size configurable via '
+      '`FLUTTER_NETWORK_MCP_LOG_BUFFER`, default 500); after session_open it '
+      'reads persisted log_records for the viewed session instead. Filter by '
+      '`levelMin` to suppress noisy info logs, or `messageContains` to grep '
+      'the message body when loggers are unnamed.',
   inputSchema: Schema.object(
     properties: {
       'sessionId': Schema.int(
@@ -48,6 +50,14 @@ final logsTailTool = Tool(
       ),
       'loggerContains': Schema.string(
         description: 'Substring match (case-insensitive) on logger name.',
+      ),
+      'messageContains': Schema.string(
+        description:
+            'Substring match (case-insensitive) on the log MESSAGE body. '
+            'Use this when loggers are unnamed (so loggerContains matches '
+            'nothing), e.g. messageContains:"[EventTracker]". Filtering '
+            'happens server-side, so it cuts response size before it reaches '
+            'you.',
       ),
       'source': Schema.string(
         description: '"logging" | "stdout" | "stderr". Omit for all sources.',
@@ -76,6 +86,7 @@ FutureOr<CallToolResult> logsTail(CallToolRequest request) async {
   final sinceId = args['since'] as int?;
   final levelMin = args['levelMin'] as int?;
   final loggerContains = args['loggerContains'] as String?;
+  final messageContains = args['messageContains'] as String?;
   final source = args['source'] as String?;
   final isolateFilter = args['isolateId'] as String?;
   final limit = clampLimit(args['limit'] as int?, fallback: 100, hardMax: 500);
@@ -88,6 +99,7 @@ FutureOr<CallToolResult> logsTail(CallToolRequest request) async {
         sinceId: sinceId,
         levelMin: levelMin,
         loggerContains: loggerContains,
+        messageContains: messageContains,
         source: source,
         isolateId: isolateFilter,
         limit: limit,
@@ -108,10 +120,12 @@ FutureOr<CallToolResult> logsTail(CallToolRequest request) async {
         entries: out,
         nextCursor: maxId,
         bufferSize: null,
+        bufferCapacity: null,
         streamActive: null,
         severeCount: severeCount,
         levelMin: levelMin,
         loggerContains: loggerContains,
+        messageContains: messageContains,
         sourceFilter: source,
         caps: caps,
       ), scopeSessionId: scope.sessionId);
@@ -132,6 +146,7 @@ FutureOr<CallToolResult> logsTail(CallToolRequest request) async {
     sinceId: sinceId,
     levelMin: levelMin,
     loggerContains: loggerContains,
+    messageContains: messageContains,
     sourceContains: source,
     isolateId: isolateFilter,
     limit: limit,
@@ -150,10 +165,12 @@ FutureOr<CallToolResult> logsTail(CallToolRequest request) async {
     entries: out,
     nextCursor: maxId,
     bufferSize: attached.logBuffer.length,
+    bufferCapacity: attached.logBuffer.capacity,
     streamActive: attached.logStream.isActive,
     severeCount: severeCount,
     levelMin: levelMin,
     loggerContains: loggerContains,
+    messageContains: messageContains,
     sourceFilter: source,
     caps: caps,
   ), scopeSessionId: scope.sessionId);
@@ -201,15 +218,25 @@ Map<String, Object?> _buildResponse({
   required List<Map<String, Object?>> entries,
   required int? nextCursor,
   required int? bufferSize,
+  required int? bufferCapacity,
   required bool? streamActive,
   required int severeCount,
   required int? levelMin,
   required String? loggerContains,
+  required String? messageContains,
   required String? sourceFilter,
   required CapabilityConfig caps,
 }) {
   final sessionId = scope.sessionId;
-  final filters = _filterDesc(levelMin, loggerContains, sourceFilter);
+  final filters =
+      _filterDesc(levelMin, loggerContains, messageContains, sourceFilter);
+  // Buffer is "near capacity" at 80% full; reads its real configured size
+  // (FLUTTER_NETWORK_MCP_LOG_BUFFER / per-attach override), not a hardcoded
+  // 500, so the warning stays correct when the user bumps the buffer (#21).
+  final nearCapacity = source == 'live' &&
+      bufferSize != null &&
+      bufferCapacity != null &&
+      bufferSize >= (bufferCapacity * 0.8).floor();
   final summary = entries.isEmpty
       ? (source == 'live' && streamActive == false
           ? 'Log stream not active — buffer is empty.'
@@ -226,8 +253,12 @@ Map<String, Object?> _buildResponse({
   if (entries.isEmpty && filters.isNotEmpty) {
     warnings.add('No matches — try widening levelMin / dropping loggerContains.');
   }
-  if (source == 'live' && bufferSize != null && bufferSize >= 480) {
-    warnings.add('Ring buffer near capacity ($bufferSize / 500) — older records may have rotated out. Use history mode (session_open) for the full record.');
+  if (nearCapacity) {
+    warnings.add('Ring buffer near capacity ($bufferSize / $bufferCapacity); '
+        'older records may have rotated out. Raise '
+        'FLUTTER_NETWORK_MCP_LOG_BUFFER (or re-attach with a larger '
+        'logBufferSize), or use history mode (session_open) for the full '
+        'record.');
   }
 
   final nextSteps = <String>[];
@@ -244,6 +275,11 @@ Map<String, Object?> _buildResponse({
       nextSteps.add('logs_tail since:$nextCursor — page incrementally on next call');
     }
   }
+  if (nearCapacity) {
+    nextSteps.add('Buffer is ${((bufferSize / bufferCapacity) * 100).round()}% '
+        'full; raise FLUTTER_NETWORK_MCP_LOG_BUFFER if you are missing older '
+        'records');
+  }
 
   return {
     'source': source,
@@ -252,6 +288,7 @@ Map<String, Object?> _buildResponse({
     'summary': summary,
     'count': entries.length,
     if (bufferSize != null) 'bufferSize': bufferSize,
+    if (bufferCapacity != null) 'bufferCapacity': bufferCapacity,
     if (streamActive != null) 'streamActive': streamActive,
     if (severeCount > 0) 'severeCount': severeCount,
     'nextCursor': nextCursor,
@@ -261,10 +298,16 @@ Map<String, Object?> _buildResponse({
   };
 }
 
-String _filterDesc(int? levelMin, String? loggerContains, String? source) {
+String _filterDesc(
+  int? levelMin,
+  String? loggerContains,
+  String? messageContains,
+  String? source,
+) {
   final parts = <String>[];
   if (levelMin != null) parts.add('level≥$levelMin');
   if (loggerContains != null && loggerContains.isNotEmpty) parts.add('logger~"$loggerContains"');
+  if (messageContains != null && messageContains.isNotEmpty) parts.add('message~"$messageContains"');
   if (source != null && source.isNotEmpty) parts.add('source=$source');
   return parts.join(', ');
 }
