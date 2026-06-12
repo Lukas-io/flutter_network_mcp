@@ -35,7 +35,9 @@ Stack traces from errors are written to stderr only — they never appear in the
 
 - `dtdUri` (string, optional) — overrides the default DTD URI.
 - `vmServiceUri` (string, optional) — bypasses DTD entirely. Takes priority over `dtdUri` and `appNameContains`.
-- `appNameContains` (string, optional) — case-insensitive substring filter applied to `knownApps[].name`. Use when DTD has multiple apps.
+- `appNameContains` (string, optional) — case-insensitive substring filter applied to `knownApps[].name`. Resolved across ALL discovered DTDs (0.8.0), so it matches whatever `network_status.knownApps` showed even when another `flutter run` owns the app.
+- `logBufferSize` (int, optional, 50–10000) — per-session log ring-buffer capacity, overriding `FLUTTER_NETWORK_MCP_LOG_BUFFER` for this session (0.8.1). Bump it for chatty apps.
+- `reattach` (bool, optional, default false) — hot-restart continuity (0.8.2). When true and an already-attached session for the SAME app (same package + device) is bound to a now-stale VM URI, reuse its `sessionId`: captures continue under one session across the restart, and the stale session is torn down. No-op when no prior session matches. Pair with `appNameContains`.
 - `force` (bool, optional, default false) — required to re-attach when already attached. Without it, the call errors instead of silently detaching.
 
 If neither `dtdUri` nor `vmServiceUri` is provided, falls back to `--dtd-uri` / `FLUTTER_NETWORK_MCP_DTD_URI`.
@@ -122,3 +124,13 @@ Switching attached app:
 > network_attach appNameContains:"app_b" force:true
 < {attached:true, appName:"app_b"}
 ```
+
+After a hot restart (the VM URI rotated; old session is now stale):
+```
+> network_attach appNameContains:"iPhone 16 Pro" reattach:true
+< {attached:true, reattached:true, liveSessionId:14,
+   previousVmServiceUri:"ws://old/ws",
+   summary:"Reattached to ... after a hot restart; ... same session 14 ..."}
+```
+`sessionId` stays 14, captures before and after the restart share one
+session, and the dead session is dropped from `network_status.attached`.

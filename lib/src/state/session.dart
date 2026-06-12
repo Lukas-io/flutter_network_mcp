@@ -127,6 +127,8 @@ class AttachedSession {
     required this.attachedAt,
     required this.httpProfilingEnabled,
     required this.socketProfilingEnabled,
+    this.lastReattachAt,
+    this.previousVmServiceUri,
   });
 
   /// DB row id in `sessions` table — the canonical anchor for routing.
@@ -154,6 +156,12 @@ class AttachedSession {
   /// the session (the streams either enabled cleanly or they didn't).
   final bool httpProfilingEnabled;
   final bool socketProfilingEnabled;
+
+  /// Set when this session id was carried across a hot-restart reattach
+  /// (issue #16): the wall-clock of the most recent migration, and the VM
+  /// service URI it was previously bound to. Null for a fresh attach.
+  final DateTime? lastReattachAt;
+  final String? previousVmServiceUri;
 
   /// Mutable: updated by network_list when caller omits `since`.
   DateTime? lastHttpCursor;
