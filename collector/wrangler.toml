@@ -1,0 +1,10 @@
+name = "flutter-network-telemetry"
+main = "src/worker.js"
+compatibility_date = "2026-06-01"
+
+# Paste the database_id that `wrangler d1 create flutter-network-telemetry`
+# printed. Everything else here can stay as-is.
+[[d1_databases]]
+binding = "DB"
+database_name = "flutter-network-telemetry"
+database_id = "4218d2fc-6450-4d6e-8ce6-c73bfa42fe3e"

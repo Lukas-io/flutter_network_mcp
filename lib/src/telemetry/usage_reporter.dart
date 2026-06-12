@@ -142,7 +142,7 @@ class UsageReporter {
     }
 
     var posted = false;
-    if (kCollectorEndpoint.isNotEmpty) {
+    if (_endpoint.isNotEmpty) {
       try {
         final status =
             await postTelemetry(jsonStr).timeout(kTelemetryTimeout);
@@ -166,7 +166,7 @@ class UsageReporter {
     final String msg;
     if (posted) {
       msg = 'shipped ${rows.length} event(s) to the collector + audit log';
-    } else if (kCollectorEndpoint.isEmpty) {
+    } else if (_endpoint.isEmpty) {
       msg = 'recorded ${rows.length} event(s) to the audit log '
           '(collector not configured; audit-log-only mode)';
     } else if (!auditWritten) {
@@ -191,6 +191,15 @@ class UsageReporter {
   /// at the mercy of the host shell's `FLUTTER_NETWORK_MCP_NO_*` vars. Pass
   /// null to revert to the real process environment.
   static set envForTest(Map<String, String>? env) => _envOverride = env;
+
+  static String? _endpointOverride;
+
+  /// Test seam: overrides the collector endpoint so tests never POST to the
+  /// real (baked) collector. Set to `''` to force audit-log-only. Pass null
+  /// to revert to the compiled-in [kCollectorEndpoint].
+  static set endpointForTest(String? endpoint) => _endpointOverride = endpoint;
+
+  static String get _endpoint => _endpointOverride ?? kCollectorEndpoint;
 
   static bool _optedOut() {
     final env = _envOverride ?? io.Platform.environment;
