@@ -118,9 +118,13 @@ void main() {
       CapturesDatabase.open(dataDir: dir.path);
       dao = CapturesDao();
       UsageReporter.envForTest = {}; // never opted out, regardless of shell
+      // Force audit-log-only so tests never POST to the real (baked)
+      // collector, regardless of kCollectorEndpoint.
+      UsageReporter.endpointForTest = '';
     });
     tearDown(() {
       UsageReporter.envForTest = null;
+      UsageReporter.endpointForTest = null;
       CapturesDatabase.instance.close();
       dir.deleteSync(recursive: true);
     });

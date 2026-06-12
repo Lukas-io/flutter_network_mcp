@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.8.12] — 2026-06-12
+
+### Changed — telemetry collector is live
+
+The Cloudflare Worker + D1 collector (added under `collector/`) is deployed, so `kCollectorEndpoint` now points at it instead of being empty. Crash reports (0.7.1) and usage rollups (#79) now POST to the collector in addition to the local tamper-evident audit log. One endpoint receives both; the worker routes by payload `kind`.
+
+- **No behaviour change beyond the network send.** Same payloads, same privacy guarantees (only `machine_hash` + aggregate/error shape, no PII / URLs / bodies / arg values), same audit log recording byte-for-byte what was sent. Opt out with `FLUTTER_NETWORK_MCP_NO_TELEMETRY=true` (or `FLUTTER_NETWORK_MCP_NO_USAGE=true` for usage only).
+- Verified end-to-end against the deployed collector: health, a usage rollup (fanned into per-tool stats + transitions), and a crash report all round-trip; test data was then cleared.
+- The collector is queryable for the "how do agents use the tools" event-tracking the analytics were built for: see `collector/README.md`.
+
 ## [0.8.11] — 2026-06-12
 
 ### Fixed — `network_list` "No HTTP captured yet" was misleading after the cursor advanced
