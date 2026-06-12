@@ -67,8 +67,8 @@ The server **runs a daily background version check** (hits `raw.githubuserconten
 
 **Issue filing for this MCP is agent-first.** Two templates in the repo, both designed for an agent to fill and submit in one shot — neither is required to be long:
 
-- **[Bug report](https://github.com/Lukas-io/flutter_network_mcp/issues/new?template=bug_report.md)** — 3 required fields (what broke, the failing tool call, `network_status` response). Optional detail (environment, repro steps, stderr) lives under a collapsible block — agents fill what they can see and submit, you don't have to type anything.
-- **[UX friction / suggestion](https://github.com/Lukas-io/flutter_network_mcp/issues/new?template=ux_friction.md)** — even simpler. For anything that *works* but feels awkward, confusing, slow, or unclear. 3 fields, no environment needed.
+- **[Bug report](https://github.com/Lukas-io/flutter_network_mcp/issues/new?template=bug_report.md)** — 4 required fields (the `flutter_network_mcp` version, what broke, the failing tool call, `network_status` response). Optional detail (repro steps, stderr) lives under a collapsible block — agents fill what they can see and submit, you don't have to type anything.
+- **[UX friction / suggestion](https://github.com/Lukas-io/flutter_network_mcp/issues/new?template=ux_friction.md)** — even simpler. For anything that *works* but feels awkward, confusing, slow, or unclear. 4 short fields (version + 3), no environment needed.
 
 If you're using Claude Code, Cursor, or any MCP-capable agent, just say *"file a bug for this"* or *"file a UX friction report"* and the agent should open the template, fill it, and submit (using a GitHub tool if available, otherwise handing you a paste-ready body). The MCP server's `instructions` field directs agents to do this proactively, no permission needed.
 

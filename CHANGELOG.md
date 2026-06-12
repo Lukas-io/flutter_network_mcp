@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.8.7] — 2026-06-12
+
+Issue-triage round: a `session_list` identity fix (#27) and a more useful issue template.
+
+### Fixed — `session_list` app identity (#27)
+
+`session_list` could mislead multi-app developers: its only identity filter was `projectPath`, which is just the working directory at attach time. Several apps launched from the same parent dir share that directory, so filtering for one app silently returned another's sessions (the reporter burned ~5 tool calls chasing the wrong app).
+
+- New **`appNameContains`** filter (case-insensitive substring on the DTD app identity), the reliable way to scope to one app. Works alongside `projectPath` (AND).
+- `projectPath`'s description now states plainly it is the cwd at attach, not app identity, and points at `appNameContains`.
+- When a result set holds more distinct apps than directories, the response carries a **warning** naming the apps and a `nextSteps` hint to re-filter by `appNameContains`, so the trap surfaces itself.
+
+No schema change: the `app_name` column already existed and was already surfaced; this adds the missing filter + guard rails.
+
+### Changed — issue templates ask for the plugin version
+
+Reporters kept omitting which version they were on (it lived only in the collapsible *Optional* block), forcing us to guess whether a bug was already fixed. The `flutter_network_mcp` version is now a **required** field in the bug-report Quick section, and a field in the UX-friction template.
+
 ## [0.8.6] — 2026-06-12
 
 Tool-usage analytics, **Phase 3: ship** (issue #79). The local `tool_events` capture from 0.8.4 and the aggregates from 0.8.5 become a periodic, privacy-safe rollup the maintainer can actually receive, under the same audit pact as crash telemetry.
