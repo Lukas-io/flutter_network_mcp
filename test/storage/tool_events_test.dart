@@ -77,5 +77,21 @@ void main() {
       final rows = dao.recentToolEvents(limit: 2);
       expect(rows.map((r) => r['tool']), ['t4', 't3']);
     });
+
+    test('toolEventsAfterId returns only newer rows, carrying id + ts_ms', () {
+      for (var i = 0; i < 4; i++) {
+        dao.insertToolEvent(
+            tsMs: 1000 + i, correlationId: 'c', tool: 't$i', outcome: 'ok');
+      }
+      // ids are 1..4. After id=2 -> ids 3,4.
+      final rows = dao.toolEventsAfterId(afterId: 2);
+      expect(rows.map((r) => r['id']), [3, 4]);
+      expect(rows.first.containsKey('ts_ms'), isTrue);
+      expect(rows.first.containsKey('correlation_id'), isTrue);
+      // afterId past the end -> empty.
+      expect(dao.toolEventsAfterId(afterId: 99), isEmpty);
+      // afterId 0 -> everything.
+      expect(dao.toolEventsAfterId(afterId: 0).length, 4);
+    });
   });
 }

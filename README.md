@@ -67,8 +67,8 @@ The server **runs a daily background version check** (hits `raw.githubuserconten
 
 **Issue filing for this MCP is agent-first.** Two templates in the repo, both designed for an agent to fill and submit in one shot — neither is required to be long:
 
-- **[Bug report](https://github.com/Lukas-io/flutter_network_mcp/issues/new?template=bug_report.md)** — 3 required fields (what broke, the failing tool call, `network_status` response). Optional detail (environment, repro steps, stderr) lives under a collapsible block — agents fill what they can see and submit, you don't have to type anything.
-- **[UX friction / suggestion](https://github.com/Lukas-io/flutter_network_mcp/issues/new?template=ux_friction.md)** — even simpler. For anything that *works* but feels awkward, confusing, slow, or unclear. 3 fields, no environment needed.
+- **[Bug report](https://github.com/Lukas-io/flutter_network_mcp/issues/new?template=bug_report.md)** — 4 required fields (the `flutter_network_mcp` version, what broke, the failing tool call, `network_status` response). Optional detail (repro steps, stderr) lives under a collapsible block — agents fill what they can see and submit, you don't have to type anything.
+- **[UX friction / suggestion](https://github.com/Lukas-io/flutter_network_mcp/issues/new?template=ux_friction.md)** — even simpler. For anything that *works* but feels awkward, confusing, slow, or unclear. 4 short fields (version + 3), no environment needed.
 
 If you're using Claude Code, Cursor, or any MCP-capable agent, just say *"file a bug for this"* or *"file a UX friction report"* and the agent should open the template, fill it, and submit (using a GitHub tool if available, otherwise handing you a paste-ready body). The MCP server's `instructions` field directs agents to do this proactively, no permission needed.
 
@@ -89,6 +89,8 @@ Beyond capability gating, these env vars tune runtime behavior:
 | `FLUTTER_NETWORK_MCP_AUTO_ATTACH` | — | comma-list | **Allowlist** for auto-attach. Comma-separated substring patterns matched against the DTD app name. Non-empty value enables; empty / absent disables. Equivalent to `--auto-attach=app1,app2`. |
 | `FLUTTER_NETWORK_MCP_AUTO_ATTACH_DENY` | — | comma-list | **Denylist** for auto-attach (optional). Matching apps are skipped even when the allowlist would otherwise admit them. Equivalent to `--auto-attach-deny=pat1,pat2`. |
 | `FLUTTER_NETWORK_MCP_AUTO_ATTACH_POLL_MS` | 5000 | 1000–60000 | Poll interval for the auto-attach watcher. |
+| `FLUTTER_NETWORK_MCP_NO_AUTO_MIGRATE` | — | `true` to disable | Disables the hot-restart migration watcher (0.8.10+). On by default: when an attached app's VM URI changes across a restart, the session id is reattached to the new URI automatically. |
+| `FLUTTER_NETWORK_MCP_MIGRATE_POLL_MS` | 5000 | 1000–60000 | Poll interval for the hot-restart migration watcher (0.8.10+). |
 | `FLUTTER_NETWORK_MCP_CAPABILITIES` | (all) | — | Allowlist (see below). |
 | `FLUTTER_NETWORK_MCP_DISABLE` | — | — | Denylist (see below). |
 | `FLUTTER_NETWORK_MCP_NO_JIT_NUDGE` | — | `true` to silence | Suppresses the "running in JIT mode" stderr nudge that suggests `flutter_network_mcp install`. Set after you've decided you're fine with JIT startup. |
@@ -175,11 +177,21 @@ flutter_network_mcp usage --json           # machine-readable
 
 On by default; opt out with `FLUTTER_NETWORK_MCP_NO_USAGE=true` (usage only) or `FLUTTER_NETWORK_MCP_NO_TELEMETRY=true` (everything).
 
-**Phase 2 (0.8.5)** adds the `usage_stats` tool, so the aggregates are readable from inside an agent turn: per-tool counts, outcome rates (ok/error/empty), p50/p95 latency, and the tool→next-tool transition graph. Roadmap: **Phase 3** ships aggregate rollups to the collector under the same audit pact, once it is live.
+**Phase 2 (0.8.5)** adds the `usage_stats` tool, so the aggregates are readable from inside an agent turn: per-tool counts, outcome rates (ok/error/empty), p50/p95 latency, and the tool→next-tool transition graph.
+
+**Phase 3 (0.8.6)** ships those aggregates to the maintainer collector under the **same audit pact as crash telemetry**. A rollup (per-tool counts, outcome + latency stats, the transition graph; **never raw events or arg values**) is appended to the hash-chained `telemetry-audit.log` first, then POSTed to the collector when one is configured. Like crash telemetry it ships **audit-log-only** until the collector URL is baked in. It runs fire-and-forget on startup (daily-gated) and on demand:
+
+```bash
+flutter_network_mcp usage ship             # ship the rollup since the last watermark
+flutter_network_mcp usage ship --dry-run   # build + print it, send nothing
+flutter_network_mcp audit show --since 1h  # see the exact bytes that were recorded
+```
+
+A stored high-watermark (`usage-ship-state.json`) makes shipping idempotent, so re-running never double-counts.
 
 ## Capability gating (control your context budget)
 
-Thirty-nine tools is a lot of schema for the agent to load. Disable the categories you don't use:
+Forty tools is a lot of schema for the agent to load. Disable the categories you don't use:
 
 ```json
 {
@@ -297,7 +309,7 @@ Key behaviour:
 
 DTD reports app names like `Flutter - iPhone 17 - Package: sanga_mobile` — so substring patterns can target either the package (`sanga_mobile`) or the device (`iPhone 17`, `Android emulator`, `iOS Simulator`). Example: `--auto-attach=sanga_mobile --auto-attach-deny="Android emulator"` auto-attaches sanga_mobile only on physical iOS + iOS Simulator.
 
-## The 39 tools
+## The 40 tools
 
 Each tool's MCP `description` (loaded into every agent at handshake) tells the agent WHEN to reach for it. This table is the same information at a glance — useful when you want to remind an agent that a tool exists, or when picking the right one yourself.
 
@@ -313,6 +325,7 @@ Each tool's MCP `description` (loaded into every agent at handshake) tells the a
 | `report_issue` | — | File a GitHub issue against this MCP from inside an agent turn (`type:"bug"` or `type:"ux"`). Uses `gh` CLI if available, else returns a paste-ready deep-link URL. Title + body path-redacted before submission (0.7.2). |
 | `auto_attach_config` | — | Read + mutate the persistent auto-attach allowlist/denylist at `<data-dir>/auto-attach.json`. Lets the agent honor `autoAttachSuggestion` (from `network_attach`) without asking the user to edit shell rc. Always ask the user before calling (0.7.4). |
 | `usage_stats` | — | Aggregate view of how agents use this MCP: per-tool counts, outcome rates (ok/error/empty), p50/p95 latency, and the tool→next-tool transition graph, from the local usage capture (0.8.5, #79 Phase 2). |
+| `session_configure` | — | Set process-wide STICKY DEFAULT filters that `logs_tail` / `network_list` inherit when you omit the arg (set `levelMin` + `messageContains` / `statusMin` once instead of repeating them). An arg you pass still wins for that call. `clear:true` resets; no args views current (0.8.9, #18). |
 | **HTTP** | | |
 | `network_list` | ✅ | Browse recent HTTP requests by metadata: host, method, status, time. Cursor-paged. |
 | `network_summarize` | ✅ | One digest row per endpoint over a time window: count, statusDist, p50/p95 latency, errorRate. Path templates collapse dynamic ids (`/api/users/N`). Cheaper than `network_list + manual bucketing` (0.7.0). |

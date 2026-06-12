@@ -50,6 +50,7 @@ class CapturesDao {
 
   List<Map<String, Object?>> listSessions({
     String? projectPath,
+    String? appNameContains,
     int? sinceMs,
     int limit = 20,
   }) {
@@ -58,6 +59,10 @@ class CapturesDao {
     if (projectPath != null) {
       clauses.add('project_path = ?');
       params.add(projectPath);
+    }
+    if (appNameContains != null && appNameContains.isNotEmpty) {
+      clauses.add('LOWER(app_name) LIKE ?');
+      params.add('%${appNameContains.toLowerCase()}%');
     }
     if (sinceMs != null) {
       clauses.add('started_at >= ?');
@@ -400,7 +405,7 @@ class CapturesDao {
     int? sinceId,
     int? levelMin,
     String? loggerContains,
-    String? messageContains,
+    List<String>? messageContains,
     String? source,
     String? isolateId,
     int limit = 100,
@@ -419,9 +424,15 @@ class CapturesDao {
       clauses.add('LOWER(logger) LIKE ?');
       params.add('%${loggerContains.toLowerCase()}%');
     }
-    if (messageContains != null && messageContains.isNotEmpty) {
-      clauses.add('LOWER(message) LIKE ?');
-      params.add('%${messageContains.toLowerCase()}%');
+    final msgTerms = messageContains
+            ?.where((t) => t.trim().isNotEmpty)
+            .map((t) => t.toLowerCase())
+            .toList() ??
+        const [];
+    if (msgTerms.isNotEmpty) {
+      final ors = List.filled(msgTerms.length, 'LOWER(message) LIKE ?');
+      clauses.add('(${ors.join(' OR ')})');
+      params.addAll(msgTerms.map((t) => '%$t%'));
     }
     if (source != null && source.isNotEmpty) {
       clauses.add('source = ?');
@@ -584,6 +595,26 @@ class CapturesDao {
           'SELECT correlation_id, tool, outcome, duration_ms, result_bytes '
           'FROM tool_events WHERE ts_ms >= ? ORDER BY correlation_id, id LIMIT ?',
           [sinceMs, limit],
+        )
+        .map(_rowToMap)
+        .toList();
+  }
+
+  /// Events with `id` strictly greater than [afterId], ordered by
+  /// (correlation_id, id) so the rollup builder can compute per-tool stats
+  /// AND consecutive-tool transitions in one pass. Carries `id` + `ts_ms`
+  /// so the usage shipper (#79 Phase 3) can advance its high-watermark and
+  /// stamp the rollup window. Pass `afterId: 0` to read from the start.
+  List<Map<String, Object?>> toolEventsAfterId({
+    required int afterId,
+    int limit = 50000,
+  }) {
+    return _db
+        .select(
+          'SELECT id, ts_ms, correlation_id, tool, outcome, duration_ms, '
+          'result_bytes FROM tool_events WHERE id > ? '
+          'ORDER BY correlation_id, id LIMIT ?',
+          [afterId, limit],
         )
         .map(_rowToMap)
         .toList();

@@ -50,6 +50,7 @@ The index below is by **use case** ("I want to do X — which tool?"). Some tool
 - [`session_note`](tools/history/session_note.md) — freeform note on a session.
 
 ### [Tuning what gets captured & analyzed](tools/tuning/)
+- [`session_configure`](tools/tuning/session_configure.md) — set process-wide STICKY DEFAULT filters that `logs_tail` / `network_list` inherit when you omit the arg. Set the filter once instead of repeating it every read (0.8.9+, #18).
 - [`alerts_config`](tools/tuning/alerts_config.md) — toggle alert rules; set the slow-request threshold.
 - [`alert_patterns`](tools/tuning/alert_patterns.md) — add project-specific regex patterns.
 - [`ignored_hosts`](tools/tuning/ignored_hosts.md) — drop analytics/telemetry at capture time.
@@ -120,4 +121,4 @@ For `--capabilities` / `--disable` startup flags — the tools each capability g
 | `sessions` | `session_list`, `session_open`, `session_close`, `session_export`, `session_note`, `session_delete` |
 | `sql` | `network_query` |
 | `admin` | `ignored_hosts`, `redacted_headers`, `db_stats`, `db_vacuum`, `bodies_purge` |
-| _(always on)_ | `network_status`, `network_attach`, `network_detach`, `network_discover_dtd`, `report_issue`, `auto_attach_config`, `usage_stats` |
+| _(always on)_ | `network_status`, `network_attach`, `network_detach`, `network_discover_dtd`, `report_issue`, `auto_attach_config`, `usage_stats`, `session_configure` |

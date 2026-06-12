@@ -40,14 +40,32 @@ void main() {
       dir.deleteSync(recursive: true);
     });
 
-    test('case-insensitive substring on message body', () {
-      final rows = dao.queryLogs(sessionId: sid, messageContains: 'eventtracker');
+    test('case-insensitive substring on message body (single term)', () {
+      final rows =
+          dao.queryLogs(sessionId: sid, messageContains: ['eventtracker']);
       expect(rows, hasLength(1));
       expect(rows.single['message'], contains('EventTracker'));
     });
 
+    test('list form OR-matches every term (#15)', () {
+      final rows = dao.queryLogs(
+        sessionId: sid,
+        messageContains: ['EventTracker', 'KycTier'],
+      );
+      expect(rows, hasLength(2));
+      expect(
+        rows.map((r) => r['message']),
+        everyElement(anyOf(contains('EventTracker'), contains('KycTier'))),
+      );
+    });
+
+    test('empty / whitespace-only terms are ignored (no filter)', () {
+      expect(dao.queryLogs(sessionId: sid, messageContains: ['', '  ']),
+          hasLength(3));
+    });
+
     test('no match returns empty', () {
-      expect(dao.queryLogs(sessionId: sid, messageContains: 'nope'), isEmpty);
+      expect(dao.queryLogs(sessionId: sid, messageContains: ['nope']), isEmpty);
     });
 
     test('omitted filter returns everything', () {

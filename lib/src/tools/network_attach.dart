@@ -182,6 +182,25 @@ Future<Map<String, Object?>> performAttach({
 
     if (vmServiceUri != null) {
       resolvedVmServiceUri = vmServiceUri;
+      // Resolve the app name for this URI from DTD. Without it, attaching by
+      // raw vmServiceUri leaves appName null, which (a) breaks identity-based
+      // reattach (#16: the auto-migration watcher and auto-attach both attach
+      // by URI, so a hot restart would spawn a NEW session instead of reusing
+      // the id) and (b) leaves the session row's app_name null. Best-effort:
+      // if the URI isn't registered with any DTD, appName stays null and
+      // behaviour is unchanged.
+      try {
+        final listings = await DtdProbe.probeAll();
+        outer:
+        for (final l in listings) {
+          for (final a in l.apps) {
+            if (a.uri == resolvedVmServiceUri) {
+              appName = a.name;
+              break outer;
+            }
+          }
+        }
+      } catch (_) {/* best-effort name resolution */}
     } else if (appNameContains != null &&
         appNameContains.isNotEmpty &&
         dtdUri == null) {
@@ -391,9 +410,11 @@ Future<Map<String, Object?>> performAttach({
     final dao = CapturesDao();
     final int sid;
     final String? previousVmServiceUri;
+    final int reattachCount;
     if (reattachPrior != null) {
       sid = reattachPrior.id;
       previousVmServiceUri = reattachPrior.vmServiceUri;
+      reattachCount = reattachPrior.reattachCount + 1;
       dao.repointSession(
         sid,
         vmServiceUri: resolvedVmServiceUri,
@@ -406,7 +427,14 @@ Future<Map<String, Object?>> performAttach({
       } catch (_) {
         registry.unregister(reattachPrior.vmServiceUri);
       }
+      io.stderr.writeln(
+        'flutter_network_mcp: hot restart #$reattachCount for session $sid '
+        '(${appName ?? "app"}): kept the session id, repointed '
+        '$previousVmServiceUri -> $resolvedVmServiceUri. Captures continue '
+        'uninterrupted.',
+      );
     } else {
+      reattachCount = 0;
       previousVmServiceUri = null;
       sid = dao.createSession(
         appName: appName,
@@ -446,6 +474,7 @@ Future<Map<String, Object?>> performAttach({
         socketProfilingEnabled: socketEnabled,
         lastReattachAt: reattachPrior != null ? DateTime.now() : null,
         previousVmServiceUri: previousVmServiceUri,
+        reattachCount: reattachCount,
       ),
     );
 
