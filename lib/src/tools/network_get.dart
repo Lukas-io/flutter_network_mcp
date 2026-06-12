@@ -401,7 +401,11 @@ List<String> _warningsFor({
   if (!isRequestComplete) {
     w.add('Request is still in flight; response will be incomplete or absent.');
   } else if (!isResponseComplete) {
-    w.add('Response not yet complete; bodies may grow on a subsequent call.');
+    w.add('Request finished but the dart:io profiler never marked the response '
+        'complete. The writer keeps trying to backfill the body for a few '
+        'ticks; if it stays empty the response is likely unreachable via '
+        'vm_service (streamed/chunked body consumed without finalizing, or a '
+        'transport that bypasses dart:io HttpClient) — fall back to logs_tail.');
   }
   if (requestError != null) w.add('Request error: $requestError');
   if (responseError != null) w.add('Response error: $responseError');

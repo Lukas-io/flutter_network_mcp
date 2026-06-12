@@ -95,3 +95,36 @@ class CapabilityConfig {
     return out;
   }
 }
+
+/// Runtime health of one capability on an attached session (issue #17):
+///   * `disabled`    — the category is off in the global CLI config
+///   * `ok`          — enabled and the underlying stream started cleanly
+///   * `unavailable` — enabled but the stream failed to start; the matching
+///                     read tools will return empty
+String capabilityState({required bool enabled, required bool runtimeOk}) =>
+    !enabled ? 'disabled' : (runtimeOk ? 'ok' : 'unavailable');
+
+/// Builds the per-session `capabilities` map + `degraded` list shared by
+/// `network_attach` and `network_status`. Surfaces partial degradation in a
+/// structured field the agent can branch on instead of a single `warnings`
+/// string that tends to get scanned past.
+({Map<String, String> capabilities, List<String> degraded}) sessionCapabilities({
+  required bool httpOk,
+  required bool socketOk,
+  required bool logsOk,
+}) {
+  final caps = CapabilityConfig.instance;
+  final m = <String, String>{
+    'http': capabilityState(
+        enabled: caps.isEnabled(Category.http), runtimeOk: httpOk),
+    'socket': capabilityState(
+        enabled: caps.isEnabled(Category.sockets), runtimeOk: socketOk),
+    'logs': capabilityState(
+        enabled: caps.isEnabled(Category.logs), runtimeOk: logsOk),
+  };
+  final degraded = [
+    for (final e in m.entries)
+      if (e.value == 'unavailable') e.key,
+  ];
+  return (capabilities: m, degraded: degraded);
+}
