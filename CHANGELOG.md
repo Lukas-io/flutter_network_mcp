@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.8.11] — 2026-06-12
+
+### Fixed — `network_list` "No HTTP captured yet" was misleading after the cursor advanced
+
+Found during real-app usage. `network_list` LIVE mode is **incremental**: each call advances a cursor and returns only requests newer than the last call. But when an incremental call came back empty, the summary said **"No HTTP captured yet"** even when the session already held requests, so it read as "no traffic" when there was plenty (it cost the agent extra `hot restart` / re-drive cycles chasing phantom-missing traffic).
+
+- The summary now distinguishes the cases: **"No NEW HTTP since your last call ... pass since:0 to re-scan everything captured, or use network_summarize"** vs the genuine **"No HTTP captured yet"** (cursor never advanced) vs **"N scanned, 0 matched filters."**
+- When an empty incremental read happens, `nextSteps` now **leads with `network_list since:0`** so the agent surfaces the already-captured requests instead of concluding there is no traffic.
+- Logic extracted to a pure `liveListSummary(...)` with unit coverage for every case.
+
+This is a context-efficiency win as much as a UX one: the old wording sent agents down a "there's no traffic" dead end when the data was one `since:0` away.
+
 ## [0.8.10] — 2026-06-12
 
 ### Added — hot-restart auto-migration (#16)
