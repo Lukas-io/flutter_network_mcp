@@ -23,8 +23,9 @@ final logsTailTool = Tool(
       'reads from an in-memory ring buffer (size configurable via '
       '`FLUTTER_NETWORK_MCP_LOG_BUFFER`, default 500); after session_open it '
       'reads persisted log_records for the viewed session instead. Filter by '
-      '`levelMin` to suppress noisy info logs, or `messageContains` to grep '
-      'the message body when loggers are unnamed.',
+      '`levelMin` to suppress noisy info logs, or `messageContains` (one tag '
+      'or a list of tags, OR-matched) to grep the message body when loggers '
+      'are unnamed.',
   inputSchema: Schema.object(
     properties: {
       'sessionId': Schema.int(
@@ -51,13 +52,15 @@ final logsTailTool = Tool(
       'loggerContains': Schema.string(
         description: 'Substring match (case-insensitive) on logger name.',
       ),
-      'messageContains': Schema.string(
+      'messageContains': Schema.list(
         description:
-            'Substring match (case-insensitive) on the log MESSAGE body. '
-            'Use this when loggers are unnamed (so loggerContains matches '
-            'nothing), e.g. messageContains:"[EventTracker]". Filtering '
-            'happens server-side, so it cuts response size before it reaches '
-            'you.',
+            'Substring match(es) (case-insensitive) on the log MESSAGE body, '
+            'OR-combined. Use this when loggers are unnamed (so loggerContains '
+            'matches nothing). Pass one tag, e.g. ["[EventTracker]"], or '
+            'several to get them all in one call, e.g. '
+            '["EventTracker","KycTier"]. Filtering happens server-side, so it '
+            'cuts response size before it reaches you.',
+        items: Schema.string(),
       ),
       'source': Schema.string(
         description: '"logging" | "stdout" | "stderr". Omit for all sources.',
@@ -86,7 +89,7 @@ FutureOr<CallToolResult> logsTail(CallToolRequest request) async {
   final sinceId = args['since'] as int?;
   final levelMin = args['levelMin'] as int?;
   final loggerContains = args['loggerContains'] as String?;
-  final messageContains = args['messageContains'] as String?;
+  final messageContains = readStringList(args['messageContains']);
   final source = args['source'] as String?;
   final isolateFilter = args['isolateId'] as String?;
   final limit = clampLimit(args['limit'] as int?, fallback: 100, hardMax: 500);
@@ -223,7 +226,7 @@ Map<String, Object?> _buildResponse({
   required int severeCount,
   required int? levelMin,
   required String? loggerContains,
-  required String? messageContains,
+  required List<String>? messageContains,
   required String? sourceFilter,
   required CapabilityConfig caps,
 }) {
@@ -301,13 +304,19 @@ Map<String, Object?> _buildResponse({
 String _filterDesc(
   int? levelMin,
   String? loggerContains,
-  String? messageContains,
+  List<String>? messageContains,
   String? source,
 ) {
   final parts = <String>[];
   if (levelMin != null) parts.add('level≥$levelMin');
   if (loggerContains != null && loggerContains.isNotEmpty) parts.add('logger~"$loggerContains"');
-  if (messageContains != null && messageContains.isNotEmpty) parts.add('message~"$messageContains"');
+  final msgTerms =
+      messageContains?.where((t) => t.trim().isNotEmpty).toList() ?? const [];
+  if (msgTerms.isNotEmpty) {
+    parts.add(msgTerms.length == 1
+        ? 'message~"${msgTerms.single}"'
+        : 'message~any[${msgTerms.map((t) => '"$t"').join(', ')}]');
+  }
   if (source != null && source.isNotEmpty) parts.add('source=$source');
   return parts.join(', ');
 }

@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.8.8] — 2026-06-12
+
+### Added — `logs_tail` `messageContains` list form (#15)
+
+`messageContains` now accepts a **list of tags, OR-matched**, in addition to a single string: `logs_tail messageContains:["EventTracker","KycTier"]` returns logs matching either tag in one call, instead of one request per tag. A bare string still works. Applied server-side in both the live ring buffer and the history (`session_open`) path, so it cuts response size before it reaches the agent. This completes the remaining item on #15 (the single-string filter shipped in 0.8.1).
+
 ## [0.8.7] — 2026-06-12
 
 Issue-triage round: a `session_list` identity fix (#27) and a more useful issue template.

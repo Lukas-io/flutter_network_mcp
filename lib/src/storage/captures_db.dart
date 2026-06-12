@@ -405,7 +405,7 @@ class CapturesDao {
     int? sinceId,
     int? levelMin,
     String? loggerContains,
-    String? messageContains,
+    List<String>? messageContains,
     String? source,
     String? isolateId,
     int limit = 100,
@@ -424,9 +424,15 @@ class CapturesDao {
       clauses.add('LOWER(logger) LIKE ?');
       params.add('%${loggerContains.toLowerCase()}%');
     }
-    if (messageContains != null && messageContains.isNotEmpty) {
-      clauses.add('LOWER(message) LIKE ?');
-      params.add('%${messageContains.toLowerCase()}%');
+    final msgTerms = messageContains
+            ?.where((t) => t.trim().isNotEmpty)
+            .map((t) => t.toLowerCase())
+            .toList() ??
+        const [];
+    if (msgTerms.isNotEmpty) {
+      final ors = List.filled(msgTerms.length, 'LOWER(message) LIKE ?');
+      clauses.add('(${ors.join(' OR ')})');
+      params.addAll(msgTerms.map((t) => '%$t%'));
     }
     if (source != null && source.isNotEmpty) {
       clauses.add('source = ?');
