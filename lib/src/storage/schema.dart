@@ -264,7 +264,7 @@ const List<String> migrationV4toV5 = [
 ];
 
 /// v5 → v6: body-backfill retry counter. The capture writer used to skip
-/// body/search backfill for any request whose `end_us` was NULL — the
+/// body/search backfill for any request whose `end_us` was NULL; the
 /// response was never marked complete by the dart:io profiler, which is
 /// common for chunked / gzip streamed responses. That stranded their bodies
 /// forever, so `network_get` returned `response: null` and `network_search`

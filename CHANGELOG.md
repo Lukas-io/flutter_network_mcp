@@ -4,6 +4,37 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.8.1] — 2026-06-11
+
+Quick wins from the dogfooding round (issues #15, #21, #20). Small, high-value, no new tools.
+
+### Added — `logs_tail messageContains` filter (#15)
+
+`logs_tail` only filtered by `loggerContains`, which is useless when the app's logs carry an empty logger name (common). Agents were pulling `limit:500` and grepping out-of-band, repeatedly blowing the host's output cap.
+
+New `messageContains` parameter does a case-insensitive substring match on the message body itself, applied server-side (DB `LIKE` for history, in-memory for live) so it cuts response size before it reaches the agent:
+
+```
+logs_tail messageContains:"[EventTracker]"
+```
+
+### Added — configurable log ring buffer (#21)
+
+The 500-record ring buffer rotated too fast for chatty apps, dropping events before they could be read.
+
+- Env var `FLUTTER_NETWORK_MCP_LOG_BUFFER` (alias `..._LOG_BUFFER_SIZE`), clamped 50–10000, default 500.
+- Per-session override: `network_attach logBufferSize:2000` for one chatty session without affecting others.
+- `network_status.attached[]` now surfaces `logBufferUsed` + `logBufferCapacity` so the agent can reason about rotation proactively.
+- The "near capacity" warning + `nextSteps` hint now read the *real* configured capacity (were hardcoded to `/ 500`) and fire at 80% full.
+
+### Changed — agent feedback instructions are now actionable (#20)
+
+The server `instructions` field said "report any issue proactively" but gave no concrete triggers, so agents rarely did. Rewritten with explicit triggers (user voices friction / a tool errors and you work around it / a debugging session ends), a one-line offer script, and rules (ask before filing, once per conversation, concrete repro only). Routed through the `report_issue` tool (0.7.2). The auto `agent-filed` label was already shipped in 0.7.2.
+
+### Housekeeping
+
+- Removed em dashes that slipped into the 0.8.0 Dart sources, per project convention.
+
 ## [0.8.0] — 2026-06-11
 
 Trust-breaking bug fixes from the first round of real dogfooding (issues #13, #14, #17). These three made the tool give wrong or empty answers without saying so, which is worse than failing loudly.
