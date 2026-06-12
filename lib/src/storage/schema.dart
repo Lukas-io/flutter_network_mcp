@@ -3,7 +3,7 @@
 // Bump [currentVersion] when changing this file and add a migration block in
 // the migration switch in database.dart.
 
-const int currentVersion = 5;
+const int currentVersion = 6;
 
 const List<String> initialSchema = [
   '''
@@ -39,6 +39,7 @@ const List<String> initialSchema = [
     response_headers_json TEXT,
     has_error             INTEGER NOT NULL DEFAULT 0,
     bodies_fetched        INTEGER NOT NULL DEFAULT 0,
+    body_fetch_attempts   INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (session_id, vm_id),
     FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
   )
@@ -260,4 +261,19 @@ const List<String> migrationV4toV5 = [
     ON alerts(session_id, signature)
     WHERE drained = 0 AND signature IS NOT NULL
   ''',
+];
+
+/// v5 → v6: body-backfill retry counter. The capture writer used to skip
+/// body/search backfill for any request whose `end_us` was NULL — the
+/// response was never marked complete by the dart:io profiler, which is
+/// common for chunked / gzip streamed responses. That stranded their bodies
+/// forever, so `network_get` returned `response: null` and `network_search`
+/// could not see the payload.
+///
+/// v6 lets the writer also attempt backfill for response-incomplete-but-stale
+/// requests, capped by `body_fetch_attempts` so genuinely body-less or
+/// transport-invisible requests stop being re-polled. Existing rows default
+/// to 0 attempts and re-enter the backfill path on the next tick.
+const List<String> migrationV5toV6 = [
+  'ALTER TABLE http_requests ADD COLUMN body_fetch_attempts INTEGER NOT NULL DEFAULT 0',
 ];
