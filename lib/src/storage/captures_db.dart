@@ -186,7 +186,7 @@ class CapturesDao {
   ///
   /// Complete requests (`end_us` set) are always eligible. Response-incomplete
   /// requests become eligible once they are older than [staleBeforeUs] and
-  /// still under [maxAttempts] — this rescues chunked / gzip responses the
+  /// still under [maxAttempts]; this rescues chunked / gzip responses the
   /// dart:io profiler never marks complete, without spinning forever on
   /// genuinely body-less or transport-invisible ones. Pass `staleBeforeUs:
   /// null` to restore the legacy "complete rows only" behaviour.
@@ -219,7 +219,7 @@ class CapturesDao {
   }
 
   /// Marks a request's bodies as terminally fetched (success, or a complete
-  /// request that genuinely has no body — e.g. 204 / HEAD) so it leaves the
+  /// request that genuinely has no body, e.g. 204 / HEAD) so it leaves the
   /// backfill queue.
   void markBodiesFetched(int sessionId, String vmId) {
     _db.execute(
@@ -386,6 +386,7 @@ class CapturesDao {
     int? sinceId,
     int? levelMin,
     String? loggerContains,
+    String? messageContains,
     String? source,
     String? isolateId,
     int limit = 100,
@@ -403,6 +404,10 @@ class CapturesDao {
     if (loggerContains != null && loggerContains.isNotEmpty) {
       clauses.add('LOWER(logger) LIKE ?');
       params.add('%${loggerContains.toLowerCase()}%');
+    }
+    if (messageContains != null && messageContains.isNotEmpty) {
+      clauses.add('LOWER(message) LIKE ?');
+      params.add('%${messageContains.toLowerCase()}%');
     }
     if (source != null && source.isNotEmpty) {
       clauses.add('source = ?');

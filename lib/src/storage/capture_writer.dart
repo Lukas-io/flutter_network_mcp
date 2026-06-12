@@ -160,7 +160,7 @@ class CaptureWriter {
 
   /// Grace window before a response-incomplete request becomes eligible for a
   /// body-backfill attempt, plus the attempt cap after which the writer gives
-  /// up. See [CapturesDao.pendingBodyFetches] and schema v6 — this is what
+  /// up. See [CapturesDao.pendingBodyFetches] and schema v6; this is what
   /// rescues chunked / gzip responses the dart:io profiler never marks
   /// complete (issue #13) without re-polling body-less requests forever.
   static const int _bodyBackfillGraceUs = 3 * 1000 * 1000; // 3s
@@ -193,10 +193,10 @@ class CaptureWriter {
           _dao.storeBodies(sid, detail);
           if (searchOn) _indexForSearch(sid, detail, isolateId: isolateId);
         } else if (entry.isComplete) {
-          // Complete and genuinely body-less (204 / HEAD / empty) — terminal.
+          // Complete and genuinely body-less (204 / HEAD / empty); terminal.
           _dao.markBodiesFetched(sid, entry.vmId);
         } else {
-          // Response-incomplete, no body yet — count the attempt so the gate
+          // Response-incomplete, no body yet; count the attempt so the gate
           // eventually drops it instead of re-polling forever.
           _dao.bumpBodyFetchAttempt(sid, entry.vmId);
         }
