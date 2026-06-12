@@ -14,30 +14,44 @@ void main() {
   }
 
   group('messageContains (#15)', () {
-    test('case-insensitive substring on the message body', () {
+    test('case-insensitive substring on the message body (single term)', () {
       final b = LogBuffer(capacity: 100);
       push(b, '[EventTracker] aeon_transaction_started');
       push(b, '[KycTier] upgraded');
       push(b, 'unrelated line');
-      final r = b.tail(messageContains: 'eventtracker');
+      final r = b.tail(messageContains: ['eventtracker']);
       expect(r, hasLength(1));
       expect(r.single.message, contains('EventTracker'));
+    });
+
+    test('list form OR-matches every term', () {
+      final b = LogBuffer(capacity: 100);
+      push(b, '[EventTracker] aeon_transaction_started');
+      push(b, '[KycTier] upgraded');
+      push(b, 'unrelated line');
+      final r = b.tail(messageContains: ['EventTracker', 'KycTier']);
+      expect(r, hasLength(2));
+      expect(
+        r.map((e) => e.message),
+        everyElement(anyOf(contains('EventTracker'), contains('KycTier'))),
+      );
     });
 
     test('composes with levelMin', () {
       final b = LogBuffer(capacity: 100);
       push(b, '[EventTracker] info', level: 800);
       push(b, '[EventTracker] severe', level: 1200);
-      final r = b.tail(messageContains: 'EventTracker', levelMin: 1000);
+      final r = b.tail(messageContains: ['EventTracker'], levelMin: 1000);
       expect(r, hasLength(1));
       expect(r.single.message, contains('severe'));
     });
 
-    test('empty messageContains is ignored (matches everything)', () {
+    test('empty / whitespace-only terms are ignored (matches everything)', () {
       final b = LogBuffer(capacity: 100);
       push(b, 'a');
       push(b, 'b');
-      expect(b.tail(messageContains: ''), hasLength(2));
+      expect(b.tail(messageContains: const []), hasLength(2));
+      expect(b.tail(messageContains: ['', '  ']), hasLength(2));
     });
   });
 
