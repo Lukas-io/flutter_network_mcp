@@ -589,6 +589,26 @@ class CapturesDao {
         .toList();
   }
 
+  /// Events with `id` strictly greater than [afterId], ordered by
+  /// (correlation_id, id) so the rollup builder can compute per-tool stats
+  /// AND consecutive-tool transitions in one pass. Carries `id` + `ts_ms`
+  /// so the usage shipper (#79 Phase 3) can advance its high-watermark and
+  /// stamp the rollup window. Pass `afterId: 0` to read from the start.
+  List<Map<String, Object?>> toolEventsAfterId({
+    required int afterId,
+    int limit = 50000,
+  }) {
+    return _db
+        .select(
+          'SELECT id, ts_ms, correlation_id, tool, outcome, duration_ms, '
+          'result_bytes FROM tool_events WHERE id > ? '
+          'ORDER BY correlation_id, id LIMIT ?',
+          [afterId, limit],
+        )
+        .map(_rowToMap)
+        .toList();
+  }
+
   // ----- alerts -----
 
   /// Inserts or merges an alert.

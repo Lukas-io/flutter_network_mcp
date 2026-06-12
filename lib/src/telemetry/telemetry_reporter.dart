@@ -9,6 +9,7 @@ import '../version.dart';
 import 'audit_log.dart';
 import 'path_redactor.dart';
 import 'telemetry_constants.dart';
+import 'telemetry_env.dart';
 
 /// Crash telemetry reporter.
 ///
@@ -58,9 +59,11 @@ class TelemetryReporter {
       } catch (_) {/* audit log is best-effort */}
 
       // Network POST only when a real endpoint is baked in. Path B
-      // (default 0.7.1) ships with empty constant → audit-log-only.
+      // (default 0.7.1) ships with empty constant, so audit-log-only.
       if (kCollectorEndpoint.isNotEmpty) {
-        await _post(jsonStr).timeout(kTelemetryTimeout).catchError((_) => -1);
+        await postTelemetry(jsonStr)
+            .timeout(kTelemetryTimeout)
+            .catchError((_) => -1);
       }
     } catch (_) {
       // Belt-and-suspenders: nothing inside this method should propagate.
@@ -70,27 +73,6 @@ class TelemetryReporter {
     }
   }
 
-  /// Visible for testing. POSTs the [jsonStr] payload to the configured
-  /// collector with a User-Agent header. Returns the HTTP status; throws
-  /// on connection failure (caller's `.catchError` swallows it).
-  static Future<int> _post(String jsonStr) async {
-    final client = io.HttpClient()
-      ..connectionTimeout = kTelemetryTimeout
-      ..userAgent = kTelemetryUserAgent;
-    try {
-      final request = await client
-          .postUrl(Uri.parse(kCollectorEndpoint))
-          .timeout(kTelemetryTimeout);
-      request.headers.contentType = io.ContentType.json;
-      request.write(jsonStr);
-      final response = await request.close().timeout(kTelemetryTimeout);
-      // Drain response to free the socket.
-      await response.drain<void>();
-      return response.statusCode;
-    } finally {
-      client.close(force: true);
-    }
-  }
 }
 
 /// Builds the wire payload. Visible for testing — `TelemetryReporter`
@@ -125,23 +107,19 @@ Map<String, Object?> buildTelemetryPayload({
   final errorMessage = _truncate(error.toString(), kErrorMessageMaxChars);
   final stackHead = redactStackHead(stack, maxFrames: kStackHeadFrames);
   final signature = _signature(errorClass, stackHead);
-  final machineHash = _machineHash(dataDir);
-  final commit = currentCommitSha();
-  final commitShort = commit == null
-      ? null
-      : (commit.length > 12 ? commit.substring(0, 12) : commit);
+  final commitShort = shortCommit();
 
   return <String, Object?>{
     'version': packageVersion,
     if (commitShort != null) 'commit': commitShort,
     'isAot': isAotBuild,
-    'os': _os(),
-    'dart': _dart(),
+    'os': osDescriptor(),
+    'dart': dartVersion(),
     'errorClass': errorClass,
     if (errorMessage.isNotEmpty) 'errorMessage': errorMessage,
     'stackHead': stackHead,
     'signature': signature,
-    'machineHash': machineHash,
+    'machineHash': machineHash(dataDir),
     'reportedAt': DateTime.now().toUtc().toIso8601String(),
   };
 }
@@ -158,32 +136,4 @@ String _signature(String errorClass, List<String> stackHead) {
   final top = stackHead.take(3).join('\n');
   final digest = sha256.convert(utf8.encode('$errorClass:$top'));
   return digest.toString().substring(0, 12);
-}
-
-/// `HMAC-SHA256(dataDirPath, kPublicSalt)[:24]`. Lets the collector
-/// dedupe per-machine activity without ever learning a value it could
-/// reverse to the user's identity — the salt is public but the dataDir
-/// is user-specific, and HMAC's one-way property prevents inversion.
-String _machineHash(String dataDir) {
-  final hmac = Hmac(sha256, utf8.encode(kPublicSalt));
-  final digest = hmac.convert(utf8.encode(dataDir));
-  return digest.toString().substring(0, 24);
-}
-
-/// `"macos 14.6"` — operating system + truncated version. Long Linux
-/// version strings (often kernel + distro + build info) get capped at
-/// 60 chars so the payload stays bounded.
-String _os() {
-  final ver = io.Platform.operatingSystemVersion;
-  final trimmed = ver.length > 60 ? '${ver.substring(0, 60)}…' : ver;
-  return '${io.Platform.operatingSystem} $trimmed';
-}
-
-/// Dart SDK version. `Platform.version` carries `3.5.0 (stable) ...
-/// (Linux X64)` shape; we keep just the leading semver triple.
-String _dart() {
-  final raw = io.Platform.version;
-  final spaceIdx = raw.indexOf(' ');
-  if (spaceIdx < 0) return raw;
-  return raw.substring(0, spaceIdx);
 }

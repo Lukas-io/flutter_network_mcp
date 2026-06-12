@@ -4,6 +4,33 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.8.6] — 2026-06-12
+
+Tool-usage analytics, **Phase 3: ship** (issue #79). The local `tool_events` capture from 0.8.4 and the aggregates from 0.8.5 become a periodic, privacy-safe rollup the maintainer can actually receive, under the same audit pact as crash telemetry.
+
+### Added — usage-rollup shipping
+
+A rollup folds every event since a stored high-watermark into one aggregate: per-tool counts, outcome rates (`ok` / `error` / `empty`), p50/p95 latency, average result size, and the tool-to-next-tool transition graph (the same shape `usage_stats` returns). **Raw events never leave the machine; only the aggregate does.** No URLs, hosts, bodies, log text, arg values, or raw correlation ids are ever in the payload.
+
+Same trust model as crash telemetry:
+
+- **Audit log first.** The exact rollup JSON is appended to the hash-chained `telemetry-audit.log` before any network attempt, so `flutter_network_mcp audit show` shows precisely what left (or would have left) the machine.
+- **POST only when configured.** The binary still ships with an empty collector endpoint (Path B), so this is **audit-log-only today** and flips to live sending when the collector URL is baked in, exactly as crash telemetry does.
+- **Idempotent.** A tiny `usage-ship-state.json` records the last shipped `tool_events.id`, so re-running never double-counts. The rollup carries the same HMAC `machineHash` as crash telemetry, so the collector can attribute both to one install without learning anything identifying.
+
+### Added — triggers
+
+- **Startup auto-ship.** Fire-and-forget on server start, daily-gated (one rollup per day across MCP-host restarts), never blocks the handshake, never throws.
+- **`flutter_network_mcp usage ship`** — explicit ship; `--dry-run` prints the rollup without writing or sending it, `--json` emits the structured result.
+
+### Opt-out
+
+Unchanged: `FLUTTER_NETWORK_MCP_NO_USAGE=true` (usage only) or `FLUTTER_NETWORK_MCP_NO_TELEMETRY=true` (everything). With either set, no rollup is built, recorded, or sent.
+
+### Internal
+
+The machine-identity + host-descriptor helpers shared by both reporters now live in one place (`telemetry_env.dart`), so `machineHash` is guaranteed byte-for-byte identical across crash and usage payloads (cross-payload dedupe depends on it). No schema change: the watermark is a state file, so the DB stays at v7.
+
 ## [0.8.5] — 2026-06-12
 
 Tool-usage analytics, **Phase 2: insights** (issue #79). The `tool_events` capture from 0.8.4 becomes readable from inside an agent turn.
