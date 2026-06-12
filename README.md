@@ -89,6 +89,8 @@ Beyond capability gating, these env vars tune runtime behavior:
 | `FLUTTER_NETWORK_MCP_AUTO_ATTACH` | — | comma-list | **Allowlist** for auto-attach. Comma-separated substring patterns matched against the DTD app name. Non-empty value enables; empty / absent disables. Equivalent to `--auto-attach=app1,app2`. |
 | `FLUTTER_NETWORK_MCP_AUTO_ATTACH_DENY` | — | comma-list | **Denylist** for auto-attach (optional). Matching apps are skipped even when the allowlist would otherwise admit them. Equivalent to `--auto-attach-deny=pat1,pat2`. |
 | `FLUTTER_NETWORK_MCP_AUTO_ATTACH_POLL_MS` | 5000 | 1000–60000 | Poll interval for the auto-attach watcher. |
+| `FLUTTER_NETWORK_MCP_NO_AUTO_MIGRATE` | — | `true` to disable | Disables the hot-restart migration watcher (0.8.10+). On by default: when an attached app's VM URI changes across a restart, the session id is reattached to the new URI automatically. |
+| `FLUTTER_NETWORK_MCP_MIGRATE_POLL_MS` | 5000 | 1000–60000 | Poll interval for the hot-restart migration watcher (0.8.10+). |
 | `FLUTTER_NETWORK_MCP_CAPABILITIES` | (all) | — | Allowlist (see below). |
 | `FLUTTER_NETWORK_MCP_DISABLE` | — | — | Denylist (see below). |
 | `FLUTTER_NETWORK_MCP_NO_JIT_NUDGE` | — | `true` to silence | Suppresses the "running in JIT mode" stderr nudge that suggests `flutter_network_mcp install`. Set after you've decided you're fine with JIT startup. |

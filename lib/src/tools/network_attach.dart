@@ -391,9 +391,11 @@ Future<Map<String, Object?>> performAttach({
     final dao = CapturesDao();
     final int sid;
     final String? previousVmServiceUri;
+    final int reattachCount;
     if (reattachPrior != null) {
       sid = reattachPrior.id;
       previousVmServiceUri = reattachPrior.vmServiceUri;
+      reattachCount = reattachPrior.reattachCount + 1;
       dao.repointSession(
         sid,
         vmServiceUri: resolvedVmServiceUri,
@@ -406,7 +408,14 @@ Future<Map<String, Object?>> performAttach({
       } catch (_) {
         registry.unregister(reattachPrior.vmServiceUri);
       }
+      io.stderr.writeln(
+        'flutter_network_mcp: hot restart #$reattachCount for session $sid '
+        '(${appName ?? "app"}): kept the session id, repointed '
+        '$previousVmServiceUri -> $resolvedVmServiceUri. Captures continue '
+        'uninterrupted.',
+      );
     } else {
+      reattachCount = 0;
       previousVmServiceUri = null;
       sid = dao.createSession(
         appName: appName,
@@ -446,6 +455,7 @@ Future<Map<String, Object?>> performAttach({
         socketProfilingEnabled: socketEnabled,
         lastReattachAt: reattachPrior != null ? DateTime.now() : null,
         previousVmServiceUri: previousVmServiceUri,
+        reattachCount: reattachCount,
       ),
     );
 
