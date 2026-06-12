@@ -4,6 +4,31 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.8.3] — 2026-06-11
+
+Interactive-debugging wishlist (issue #18) plus the positive-feedback acknowledgement (#19). Closes out the dogfounding-round issue set (#13–#21).
+
+### Added — `correlate_at` (log↔network correlation)
+
+The 38th tool. Given an anchor timestamp (usually a log line's `timestampMs`), returns the log records AND HTTP requests within `±windowMs`, each tagged with a signed `deltaMs` and sorted nearest-first:
+
+```
+correlate_at tsMs:1780462000000 windowMs:200
+→ { logs:[{deltaMs:-30, message:"[EventTracker] aeon_transaction_started"}],
+    requests:[{deltaMs:45, method:"POST", url:".../aeon/transaction", statusCode:200}],
+    summary:"1 log(s) + 1 request(s) ... Nearest: POST .../aeon/transaction (+45ms)." }
+```
+
+Answers "which request fired closest to this log line?" in one call instead of eyeballing two listings. Reads persisted data (live logs + HTTP both land in the DB), so it works live or after `session_open`; live captures lag ~2s. Available whenever the `http` or `logs` capability is on; returns only the enabled sides (`disabledSides` lists any omitted). Optional `isolateId` scoping. Distinct from `network_correlate`, which matches requests across sessions by shared content rather than by time.
+
+### #19 — positive feedback acknowledged
+
+The behaviours the reporter called out as working well (`nextSteps` on every response, `pendingAlerts.count` baked in, the overflow→file+jq escape hatch, replay/diff discoverability, transparent multi-attach) are intentional and stay. Noted here so the signal isn't lost.
+
+### Deferred (not shipped here)
+
+From #18's wishlist: **live-tail subscription** stays a documented non-goal (MCP has no server-initiated push; polling via `alerts_drain` / `logs_tail` is the model). **Sticky per-session filters** (`session_open defaultFilters`) are deferred — they touch multiple read tools and a per-session config store, and the reporter noted none of the three were individually critical. Re-promote if it comes up again.
+
 ## [0.8.2] — 2026-06-11
 
 Hot-restart session continuity (issue #16). Interactive debugging means hot-restarting every ~30 seconds; each restart rotated the VM service URI, spawned a brand-new `sessionId`, and left the dead session listed as attached. Agents burned turns re-attaching instead of debugging.

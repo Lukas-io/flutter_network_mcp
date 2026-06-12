@@ -12,6 +12,7 @@ import 'tools/alerts_config.dart';
 import 'tools/alerts_drain.dart';
 import 'tools/alerts_peek.dart';
 import 'tools/bodies_purge.dart';
+import 'tools/correlate_at.dart';
 import 'tools/db_stats.dart';
 import 'tools/db_vacuum.dart';
 import 'tools/ignored_hosts.dart';
@@ -107,6 +108,13 @@ base class FlutterNetworkMcpServer extends MCPServer with ToolsSupport {
     if (caps.isEnabled(Category.logs)) {
       registerTool(logsTailTool, logsTail);
       registerTool(logsClearTool, logsClear);
+    }
+
+    // #18: log<->network correlation bridges the http + logs surfaces, so it
+    // is available whenever either side is on (it returns only the enabled
+    // sides).
+    if (caps.isEnabled(Category.http) || caps.isEnabled(Category.logs)) {
+      registerTool(correlateAtTool, correlateAt);
     }
 
     if (caps.isEnabled(Category.alerts)) {
