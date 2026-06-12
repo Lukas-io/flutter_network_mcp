@@ -173,11 +173,21 @@ class SessionMigrator {
             'flutter_network_mcp: auto-migrate skipped ${plan.newUri}: '
             '${result['error']}',
           );
-        } else {
+        } else if (result['reattached'] == true) {
           io.stderr.writeln(
             'flutter_network_mcp: auto-migrated session '
             '${plan.priorSessionId} (${result['appName'] ?? "app"}) across a '
             'hot restart: ${plan.priorUri} -> ${plan.newUri}.',
+          );
+        } else {
+          // Defensive: a fresh session was created instead of reusing the id
+          // (e.g. the new URI's app name could not be resolved for identity
+          // matching). Surface it rather than claim a migration.
+          io.stderr.writeln(
+            'flutter_network_mcp: WARNING reattach to ${plan.newUri} did not '
+            'reuse session ${plan.priorSessionId} (got session '
+            '${result['liveSessionId']}). The stale session may linger; '
+            'network_detach it manually.',
           );
         }
       } catch (e) {

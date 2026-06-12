@@ -182,6 +182,25 @@ Future<Map<String, Object?>> performAttach({
 
     if (vmServiceUri != null) {
       resolvedVmServiceUri = vmServiceUri;
+      // Resolve the app name for this URI from DTD. Without it, attaching by
+      // raw vmServiceUri leaves appName null, which (a) breaks identity-based
+      // reattach (#16: the auto-migration watcher and auto-attach both attach
+      // by URI, so a hot restart would spawn a NEW session instead of reusing
+      // the id) and (b) leaves the session row's app_name null. Best-effort:
+      // if the URI isn't registered with any DTD, appName stays null and
+      // behaviour is unchanged.
+      try {
+        final listings = await DtdProbe.probeAll();
+        outer:
+        for (final l in listings) {
+          for (final a in l.apps) {
+            if (a.uri == resolvedVmServiceUri) {
+              appName = a.name;
+              break outer;
+            }
+          }
+        }
+      } catch (_) {/* best-effort name resolution */}
     } else if (appNameContains != null &&
         appNameContains.isNotEmpty &&
         dtdUri == null) {
