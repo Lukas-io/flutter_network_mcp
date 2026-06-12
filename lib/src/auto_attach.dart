@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:io' as io;
 
 import 'state/session.dart';
-import 'tools/network_attach.dart' show performAttach;
+import 'tools/network_attach.dart' show appSessionIdentity, performAttach;
 import 'vm/dtd_probe.dart';
 
 /// Background watcher that polls DTD periodically for new VM service URIs
@@ -247,6 +247,23 @@ class AutoAttacher {
       // Defensive: skip if already attached (race between this tick and
       // a manual network_attach the agent just fired).
       if (SessionRegistry.instance.attachedByUri(uri) != null) continue;
+
+      // #16: if this URI is a hot restart of an app we already track (same
+      // package+device identity at a different URI), don't fresh-attach it
+      // as a brand-new session. The migration watcher reattaches it under
+      // the existing session id instead.
+      final newIdentity = appSessionIdentity(appName);
+      if (newIdentity != null &&
+          SessionRegistry.instance.attached.values.any((s) =>
+              s.vmServiceUri != uri &&
+              appSessionIdentity(s.appName) == newIdentity)) {
+        io.stderr.writeln(
+          'flutter_network_mcp: auto-attach skipped $uri (app "$displayName"): '
+          'looks like a hot restart of an already-tracked app; the '
+          'migration watcher will reattach it under the existing session id.',
+        );
+        continue;
+      }
 
       try {
         final result = await performAttach(

@@ -9,6 +9,7 @@ import 'package:flutter_network_mcp/src/install/install.dart';
 import 'package:flutter_network_mcp/src/install/setup.dart';
 import 'package:flutter_network_mcp/src/install/update.dart';
 import 'package:flutter_network_mcp/src/server.dart';
+import 'package:flutter_network_mcp/src/session_migrator.dart';
 import 'package:flutter_network_mcp/src/storage/database.dart';
 import 'package:flutter_network_mcp/src/telemetry/audit_subcommand.dart';
 import 'package:flutter_network_mcp/src/telemetry/usage_reporter.dart';
@@ -306,6 +307,14 @@ Future<void> _runMain(List<String> args) async {
       allowedAppPatterns: autoAttachAllowlist,
       deniedAppPatterns: autoAttachDenylist,
     ).start();
+  }
+
+  // #16: hot-restart auto-migration watcher. Keeps a session id stable when
+  // an attached app's VM URI changes across a restart, for ANY attached app
+  // (not just auto-attached ones). Cheap when nothing is attached (the tick
+  // early-returns). Opt out with FLUTTER_NETWORK_MCP_NO_AUTO_MIGRATE=true.
+  if (env['FLUTTER_NETWORK_MCP_NO_AUTO_MIGRATE']?.toLowerCase() != 'true') {
+    SessionMigrator(defaultDtdUri: dtdUri).start();
   }
 }
 

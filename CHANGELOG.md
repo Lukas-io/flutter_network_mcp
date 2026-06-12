@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.8.10] — 2026-06-12
+
+### Added — hot-restart auto-migration (#16)
+
+A background watcher now keeps a session id **stable across a hot restart for any attached app**, without the agent calling `network_attach reattach:true` by hand. When an attached app's VM service URI changes (restart rotates it), the watcher reattaches the same session id to the new URI, repoints the DB row, restarts capture, and drops the stale session, so captures from before and after the restart stay in one session.
+
+Safe by construction: a session migrates only when its own URI has gone away **and** exactly one live URI serves the same logical app identity (`package@device`). Zero or multiple candidates are skipped, never guessed, so a session is never moved onto the wrong app. The auto-attach watcher cooperates: it no longer fresh-attaches a URI that is a restart of an already-tracked app, leaving the migration to this watcher.
+
+This builds on the 0.8.2 `reattach:true` MVP (which stays as the manual path) and reuses its tested migration machinery; the new piece only decides *when* to migrate.
+
+**First-class + agent-visible.** A restart isn't a silent stderr line. Each migration logs `hot restart #N for session <id>` and, more importantly, `network_status.attached[]` now carries `reattachCount` (how many restarts this session has survived, carried across migrations), `lastReattachAtMs`, and `previousVmServiceUri`. So when the agent reads `network_status`, it can see that the captures it's about to read span a restart and didn't reset under it.
+
+- On by default. Opt out with `FLUTTER_NETWORK_MCP_NO_AUTO_MIGRATE=true`.
+- Poll interval: `FLUTTER_NETWORK_MCP_MIGRATE_POLL_MS` (1000-60000, default 5000). The tick early-returns when nothing is attached, so it is cheap when idle.
+
 ## [0.8.9] — 2026-06-12
 
 ### Added — `session_configure` sticky default filters (#18)

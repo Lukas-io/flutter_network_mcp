@@ -79,12 +79,12 @@ FutureOr<CallToolResult> sessionConfigure(CallToolRequest request) async {
     'defaults': block,
     'nextSteps': sf.isEmpty
         ? const [
-            'session_configure levelMin:1000 messageContains:["[EventTracker]"] — default to those logs',
-            'session_configure statusMin:400 — default to HTTP errors only',
+            'session_configure levelMin:1000 messageContains:["[EventTracker]"] to default to those logs',
+            'session_configure statusMin:400 to default to HTTP errors only',
           ]
         : const [
-            'logs_tail — returns the filtered view now without repeating args',
-            'session_configure clear:true — drop all sticky defaults',
+            'logs_tail now returns the filtered view without repeating args',
+            'session_configure clear:true to drop all sticky defaults',
           ],
   });
 }
