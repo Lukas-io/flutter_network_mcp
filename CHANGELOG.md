@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.8.5] — 2026-06-12
+
+Tool-usage analytics, **Phase 2: insights** (issue #79). The `tool_events` capture from 0.8.4 becomes readable from inside an agent turn.
+
+### Added — `usage_stats` tool (the 39th)
+
+Aggregate view of how agents use this MCP, computed from the local usage capture:
+
+- **Per tool:** call count, outcome breakdown (`ok` / `error` / `empty`), error + empty rates, p50/p95 latency, average result size.
+- **Transition graph:** the busiest tool→next-tool pairs, counted only between consecutive calls *within a turn* (grouped by the usage correlation id; never bridging the idle-gap boundary). This surfaces the playbook agents actually follow versus the documented one.
+- `sinceMs` window (relative ms; omit for all history) and `topTransitions` (default 15).
+
+Always-on, read-only, process-wide (not session-scoped). Reflects only what was captured, so it returns empty when usage capture is opted out. Pairs with the `flutter_network_mcp usage --show` CLI for the raw events behind the aggregates.
+
+### Deferred
+
+`nextSteps` adoption (did the agent's next call match a hint we emitted?) needs the *suggested* next-tools recorded per event, which Phase 1 doesn't store. Deferred to a later phase that adds that field. Phase 3 still ships aggregate rollups to the collector under the audit pact, once it's live.
+
 ## [0.8.4] — 2026-06-12
 
 Tool-usage analytics, **Phase 1: capture only** (issue #79). A local, privacy-safe record of which tools agents call, so the project can build the right features from real usage. Nothing is shipped anywhere in this phase.

@@ -74,6 +74,7 @@ The index below is by **use case** ("I want to do X — which tool?"). Some tool
 ### [Power user / ad-hoc queries](tools/power/)
 - [`network_query`](tools/power/network_query.md) — read-only SQL escape hatch (BLOB-safe, cell-capped, 500-row cap).
 - [`network_correlate`](tools/power/network_correlate.md) — find matching requests across 2+ sessions (webhook originator + receiver pattern). Requires explicit `sessionIds:[int]`.
+- [`usage_stats`](tools/power/usage_stats.md) — how agents use THIS MCP: per-tool counts, outcome/latency, tool→next-tool transition graph (0.8.5+, #79 Phase 2).
 
 ### Wrapping up (in `lifecycle/`)
 - [`network_detach`](tools/lifecycle/network_detach.md) — close the live session. Captured data stays queryable.
@@ -119,4 +120,4 @@ For `--capabilities` / `--disable` startup flags — the tools each capability g
 | `sessions` | `session_list`, `session_open`, `session_close`, `session_export`, `session_note`, `session_delete` |
 | `sql` | `network_query` |
 | `admin` | `ignored_hosts`, `redacted_headers`, `db_stats`, `db_vacuum`, `bodies_purge` |
-| _(always on)_ | `network_status`, `network_attach`, `network_detach`, `network_discover_dtd` |
+| _(always on)_ | `network_status`, `network_attach`, `network_detach`, `network_discover_dtd`, `report_issue`, `auto_attach_config`, `usage_stats` |

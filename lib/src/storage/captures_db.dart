@@ -565,6 +565,30 @@ class CapturesDao {
         .toList();
   }
 
+  /// All events (capped), ordered by (correlation_id, id), so the analytics
+  /// layer can compute per-tool stats AND consecutive-tool transitions in one
+  /// pass (#79 Phase 2, `usage_stats`).
+  List<Map<String, Object?>> allToolEvents({int? sinceMs, int limit = 50000}) {
+    if (sinceMs == null) {
+      return _db
+          .select(
+            'SELECT correlation_id, tool, outcome, duration_ms, result_bytes '
+            'FROM tool_events ORDER BY correlation_id, id LIMIT ?',
+            [limit],
+          )
+          .map(_rowToMap)
+          .toList();
+    }
+    return _db
+        .select(
+          'SELECT correlation_id, tool, outcome, duration_ms, result_bytes '
+          'FROM tool_events WHERE ts_ms >= ? ORDER BY correlation_id, id LIMIT ?',
+          [sinceMs, limit],
+        )
+        .map(_rowToMap)
+        .toList();
+  }
+
   // ----- alerts -----
 
   /// Inserts or merges an alert.
