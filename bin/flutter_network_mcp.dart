@@ -9,8 +9,10 @@ import 'package:flutter_network_mcp/src/install/install.dart';
 import 'package:flutter_network_mcp/src/install/setup.dart';
 import 'package:flutter_network_mcp/src/install/update.dart';
 import 'package:flutter_network_mcp/src/server.dart';
+import 'package:flutter_network_mcp/src/session_migrator.dart';
 import 'package:flutter_network_mcp/src/storage/database.dart';
 import 'package:flutter_network_mcp/src/telemetry/audit_subcommand.dart';
+import 'package:flutter_network_mcp/src/telemetry/usage_reporter.dart';
 import 'package:flutter_network_mcp/src/telemetry/usage_subcommand.dart';
 import 'package:flutter_network_mcp/src/telemetry/telemetry_reporter.dart';
 import 'package:flutter_network_mcp/src/tools/alert_patterns.dart' as alert_patterns;
@@ -260,6 +262,13 @@ Future<void> _runMain(List<String> args) async {
     ),
   );
 
+  // Background usage-rollup ship (#79 Phase 3). Daily-gated, opt-out via
+  // FLUTTER_NETWORK_MCP_NO_USAGE / NO_TELEMETRY. Folds the events accrued
+  // since the last ship into one privacy-safe aggregate, records it to the
+  // tamper-evident audit log, and POSTs to the collector when configured.
+  // Fire-and-forget: never blocks the MCP-host handshake, never throws.
+  unawaited(UsageReporter.maybeAutoShip());
+
   // Optional: watch DTD for new apps and auto-attach. CLI flag takes
   // priority; env var fallback is FLUTTER_NETWORK_MCP_AUTO_ATTACH=app1,app2.
   // Value is a comma-separated allowlist of substring patterns. Empty /
@@ -298,6 +307,14 @@ Future<void> _runMain(List<String> args) async {
       allowedAppPatterns: autoAttachAllowlist,
       deniedAppPatterns: autoAttachDenylist,
     ).start();
+  }
+
+  // #16: hot-restart auto-migration watcher. Keeps a session id stable when
+  // an attached app's VM URI changes across a restart, for ANY attached app
+  // (not just auto-attached ones). Cheap when nothing is attached (the tick
+  // early-returns). Opt out with FLUTTER_NETWORK_MCP_NO_AUTO_MIGRATE=true.
+  if (env['FLUTTER_NETWORK_MCP_NO_AUTO_MIGRATE']?.toLowerCase() != 'true') {
+    SessionMigrator(defaultDtdUri: dtdUri).start();
   }
 }
 

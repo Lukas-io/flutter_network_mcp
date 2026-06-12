@@ -23,9 +23,12 @@ SQL on `sessions` joined with COUNT subqueries against http_requests / socket_ev
 
 ## Args
 
-- `projectPath` (string, optional) — exact match.
+- `appNameContains` (string, optional) — case-insensitive substring match on the app's DTD identity. **This is the reliable way to scope to one app.**
+- `projectPath` (string, optional) — exact match on the working directory at attach time. **NOT app identity:** multiple apps launched from the same parent dir share it, so it can return the wrong app. Prefer `appNameContains`.
 - `sinceMs` (int, optional) — ms epoch.
 - `limit` (int, default 20, hard cap 100).
+
+When several distinct apps share fewer directories, the result carries a warning naming them and pointing at `appNameContains` (issue #27).
 
 ## Returns
 

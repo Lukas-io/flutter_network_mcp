@@ -95,13 +95,18 @@ class LogBuffer {
     int? sinceId,
     int? levelMin,
     String? loggerContains,
-    String? messageContains,
+    List<String>? messageContains,
     String? sourceContains,
     String? isolateId,
     int limit = 100,
   }) {
     final lc = loggerContains?.toLowerCase();
-    final mc = messageContains?.toLowerCase();
+    // OR-match: an entry passes if its message contains ANY of the terms.
+    final mcTerms = messageContains
+            ?.where((t) => t.trim().isNotEmpty)
+            .map((t) => t.toLowerCase())
+            .toList() ??
+        const <String>[];
     final sc = sourceContains?.toLowerCase();
     final iso = isolateId;
     final result = <LogEntry>[];
@@ -113,8 +118,9 @@ class LogBuffer {
       if (lc != null && !(e.loggerName?.toLowerCase().contains(lc) ?? false)) {
         continue;
       }
-      if (mc != null && mc.isNotEmpty && !e.message.toLowerCase().contains(mc)) {
-        continue;
+      if (mcTerms.isNotEmpty) {
+        final msg = e.message.toLowerCase();
+        if (!mcTerms.any(msg.contains)) continue;
       }
       if (sc != null && !e.source.toLowerCase().contains(sc)) continue;
       if (iso != null && iso.isNotEmpty && e.isolateId != iso) continue;

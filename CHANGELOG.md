@@ -4,6 +4,101 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.8.11] — 2026-06-12
+
+### Fixed — `network_list` "No HTTP captured yet" was misleading after the cursor advanced
+
+Found during real-app usage. `network_list` LIVE mode is **incremental**: each call advances a cursor and returns only requests newer than the last call. But when an incremental call came back empty, the summary said **"No HTTP captured yet"** even when the session already held requests, so it read as "no traffic" when there was plenty (it cost the agent extra `hot restart` / re-drive cycles chasing phantom-missing traffic).
+
+- The summary now distinguishes the cases: **"No NEW HTTP since your last call ... pass since:0 to re-scan everything captured, or use network_summarize"** vs the genuine **"No HTTP captured yet"** (cursor never advanced) vs **"N scanned, 0 matched filters."**
+- When an empty incremental read happens, `nextSteps` now **leads with `network_list since:0`** so the agent surfaces the already-captured requests instead of concluding there is no traffic.
+- Logic extracted to a pure `liveListSummary(...)` with unit coverage for every case.
+
+This is a context-efficiency win as much as a UX one: the old wording sent agents down a "there's no traffic" dead end when the data was one `since:0` away.
+
+## [0.8.10] — 2026-06-12
+
+### Added — hot-restart auto-migration (#16)
+
+A background watcher now keeps a session id **stable across a hot restart for any attached app**, without the agent calling `network_attach reattach:true` by hand. When an attached app's VM service URI changes (restart rotates it), the watcher reattaches the same session id to the new URI, repoints the DB row, restarts capture, and drops the stale session, so captures from before and after the restart stay in one session.
+
+Safe by construction: a session migrates only when its own URI has gone away **and** exactly one live URI serves the same logical app identity (`package@device`). Zero or multiple candidates are skipped, never guessed, so a session is never moved onto the wrong app. The auto-attach watcher cooperates: it no longer fresh-attaches a URI that is a restart of an already-tracked app, leaving the migration to this watcher.
+
+This builds on the 0.8.2 `reattach:true` MVP (which stays as the manual path) and reuses its tested migration machinery; the new piece only decides *when* to migrate.
+
+**First-class + agent-visible.** A restart isn't a silent stderr line. Each migration logs `hot restart #N for session <id>` and, more importantly, `network_status.attached[]` now carries `reattachCount` (how many restarts this session has survived, carried across migrations), `lastReattachAtMs`, and `previousVmServiceUri`. So when the agent reads `network_status`, it can see that the captures it's about to read span a restart and didn't reset under it.
+
+- On by default. Opt out with `FLUTTER_NETWORK_MCP_NO_AUTO_MIGRATE=true`.
+- Poll interval: `FLUTTER_NETWORK_MCP_MIGRATE_POLL_MS` (1000-60000, default 5000). The tick early-returns when nothing is attached, so it is cheap when idle.
+
+## [0.8.9] — 2026-06-12
+
+### Added — `session_configure` sticky default filters (#18)
+
+A new always-on `session_configure` tool (the 40th) sets **process-wide default filters** that `logs_tail` and `network_list` inherit whenever you omit the matching argument. Set "only `[EventTracker]` logs at level ≥ 1000" or "only 4xx/5xx HTTP" once, then read without repeating it:
+
+```
+session_configure levelMin:1000 messageContains:["[EventTracker]"] statusMin:400
+logs_tail            # inherits levelMin + messageContains
+network_list         # inherits statusMin
+logs_tail levelMin:0 # an arg you pass still wins for that call
+```
+
+- Inherited filters show up in each read's filter summary, so it's clear what's applied.
+- Pass a field to set it, pass it as `null` to unset just that field, `clear:true` to reset all, no args to view current.
+- In-memory only; resets on server restart. This is the "sticky filters" item from #18 (live-tail there remains a non-goal).
+
+## [0.8.8] — 2026-06-12
+
+### Added — `logs_tail` `messageContains` list form (#15)
+
+`messageContains` now accepts a **list of tags, OR-matched**, in addition to a single string: `logs_tail messageContains:["EventTracker","KycTier"]` returns logs matching either tag in one call, instead of one request per tag. A bare string still works. Applied server-side in both the live ring buffer and the history (`session_open`) path, so it cuts response size before it reaches the agent. This completes the remaining item on #15 (the single-string filter shipped in 0.8.1).
+
+## [0.8.7] — 2026-06-12
+
+Issue-triage round: a `session_list` identity fix (#27) and a more useful issue template.
+
+### Fixed — `session_list` app identity (#27)
+
+`session_list` could mislead multi-app developers: its only identity filter was `projectPath`, which is just the working directory at attach time. Several apps launched from the same parent dir share that directory, so filtering for one app silently returned another's sessions (the reporter burned ~5 tool calls chasing the wrong app).
+
+- New **`appNameContains`** filter (case-insensitive substring on the DTD app identity), the reliable way to scope to one app. Works alongside `projectPath` (AND).
+- `projectPath`'s description now states plainly it is the cwd at attach, not app identity, and points at `appNameContains`.
+- When a result set holds more distinct apps than directories, the response carries a **warning** naming the apps and a `nextSteps` hint to re-filter by `appNameContains`, so the trap surfaces itself.
+
+No schema change: the `app_name` column already existed and was already surfaced; this adds the missing filter + guard rails.
+
+### Changed — issue templates ask for the plugin version
+
+Reporters kept omitting which version they were on (it lived only in the collapsible *Optional* block), forcing us to guess whether a bug was already fixed. The `flutter_network_mcp` version is now a **required** field in the bug-report Quick section, and a field in the UX-friction template.
+
+## [0.8.6] — 2026-06-12
+
+Tool-usage analytics, **Phase 3: ship** (issue #79). The local `tool_events` capture from 0.8.4 and the aggregates from 0.8.5 become a periodic, privacy-safe rollup the maintainer can actually receive, under the same audit pact as crash telemetry.
+
+### Added — usage-rollup shipping
+
+A rollup folds every event since a stored high-watermark into one aggregate: per-tool counts, outcome rates (`ok` / `error` / `empty`), p50/p95 latency, average result size, and the tool-to-next-tool transition graph (the same shape `usage_stats` returns). **Raw events never leave the machine; only the aggregate does.** No URLs, hosts, bodies, log text, arg values, or raw correlation ids are ever in the payload.
+
+Same trust model as crash telemetry:
+
+- **Audit log first.** The exact rollup JSON is appended to the hash-chained `telemetry-audit.log` before any network attempt, so `flutter_network_mcp audit show` shows precisely what left (or would have left) the machine.
+- **POST only when configured.** The binary still ships with an empty collector endpoint (Path B), so this is **audit-log-only today** and flips to live sending when the collector URL is baked in, exactly as crash telemetry does.
+- **Idempotent.** A tiny `usage-ship-state.json` records the last shipped `tool_events.id`, so re-running never double-counts. The rollup carries the same HMAC `machineHash` as crash telemetry, so the collector can attribute both to one install without learning anything identifying.
+
+### Added — triggers
+
+- **Startup auto-ship.** Fire-and-forget on server start, daily-gated (one rollup per day across MCP-host restarts), never blocks the handshake, never throws.
+- **`flutter_network_mcp usage ship`** — explicit ship; `--dry-run` prints the rollup without writing or sending it, `--json` emits the structured result.
+
+### Opt-out
+
+Unchanged: `FLUTTER_NETWORK_MCP_NO_USAGE=true` (usage only) or `FLUTTER_NETWORK_MCP_NO_TELEMETRY=true` (everything). With either set, no rollup is built, recorded, or sent.
+
+### Internal
+
+The machine-identity + host-descriptor helpers shared by both reporters now live in one place (`telemetry_env.dart`), so `machineHash` is guaranteed byte-for-byte identical across crash and usage payloads (cross-payload dedupe depends on it). No schema change: the watermark is a state file, so the DB stays at v7.
+
 ## [0.8.5] — 2026-06-12
 
 Tool-usage analytics, **Phase 2: insights** (issue #79). The `tool_events` capture from 0.8.4 becomes readable from inside an agent turn.

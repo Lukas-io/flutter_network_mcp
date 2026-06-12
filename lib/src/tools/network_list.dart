@@ -4,6 +4,7 @@ import 'package:dart_mcp/server.dart';
 import 'package:vm_service/vm_service.dart';
 
 import '../config/capabilities.dart';
+import '../config/session_filters.dart';
 import '../state/session.dart';
 import '../storage/captures_db.dart';
 import '../util/body_decoder.dart';
@@ -73,11 +74,19 @@ FutureOr<CallToolResult> networkList(CallToolRequest request) async {
   if (scopeErr != null) return scopeErr;
   scope!;
 
+  // Sticky defaults (#18): inherit from session_configure when an arg is
+  // omitted; an explicitly-passed arg (even null) wins for this call.
+  final sf = SessionFilters.instance;
   final sinceArg = args['since'] as int?;
-  final methods = readStringList(args['method']);
-  final hostContains = args['hostContains'] as String?;
-  final statusMin = args['statusMin'] as int?;
-  final statusMax = args['statusMax'] as int?;
+  final methods =
+      args.containsKey('method') ? readStringList(args['method']) : sf.method;
+  final hostContains = args.containsKey('hostContains')
+      ? args['hostContains'] as String?
+      : sf.hostContains;
+  final statusMin =
+      args.containsKey('statusMin') ? args['statusMin'] as int? : sf.statusMin;
+  final statusMax =
+      args.containsKey('statusMax') ? args['statusMax'] as int? : sf.statusMax;
   final isolateFilter = args['isolateId'] as String?;
   final limit = clampLimit(args['limit'] as int?, fallback: 50, hardMax: 200);
 
@@ -157,21 +166,20 @@ FutureOr<CallToolResult> networkList(CallToolRequest request) async {
         _activeFilters(methods, hostContains, statusMin, statusMax);
     final cursorWasIncremental = sinceArg == null && cursor != null;
 
-    final summary = filtered.isEmpty
-        ? (scannedTotal == 0
-            ? 'No HTTP captured yet in session $liveSid (live${scope.appName != null ? ", ${scope.appName}" : ""}).'
-            : '$scannedTotal request(s) scanned, 0 matched filters.')
-        : '${filtered.length} request(s) from session $liveSid (live${scope.appName != null ? ", ${scope.appName}" : ""}, newest-first)'
-            '${cursorWasIncremental ? " — incremental since last call" : ""}.';
+    final scopeLabel =
+        'session $liveSid (live${scope.appName != null ? ", ${scope.appName}" : ""})';
+    final summary = liveListSummary(
+      matched: filtered.length,
+      scannedTotal: scannedTotal,
+      cursorAdvanced: cursor != null,
+      incremental: cursorWasIncremental,
+      scopeLabel: scopeLabel,
+    );
 
     final warnings = <String>[];
     if (filtered.isEmpty && scannedTotal == 0 && cursor == null) {
       warnings.add(
-        'Capture profile is empty — drive the app to generate traffic, then re-call.',
-      );
-    } else if (filtered.isEmpty && scannedTotal == 0 && cursor != null) {
-      warnings.add(
-        'No new captures since the last cursor. Drive the app or pass since:0 to re-scan everything.',
+        'Capture profile is empty. Drive the app to generate traffic, then re-call.',
       );
     } else if (filtered.isEmpty && scannedTotal > 0) {
       warnings.add(
@@ -180,7 +188,7 @@ FutureOr<CallToolResult> networkList(CallToolRequest request) async {
     }
     if (scannedTotal > filtered.length * 5 && filtered.isNotEmpty) {
       warnings.add(
-        'Filters dropped ${scannedTotal - filtered.length} of $scannedTotal scanned requests — consider widening.',
+        'Filters dropped ${scannedTotal - filtered.length} of $scannedTotal scanned requests, consider widening.',
       );
     }
 
@@ -196,11 +204,18 @@ FutureOr<CallToolResult> networkList(CallToolRequest request) async {
         nextSteps.add('alerts_drain — surface anything the detector flagged');
       }
     } else {
-      nextSteps.add(
-        'Drive the app to generate traffic, then call network_list again (cursor is incremental)',
-      );
+      if (cursor != null) {
+        // The read was incremental and came back empty, but the session may
+        // already hold requests. Lead with since:0 so the agent sees them
+        // instead of concluding there is no traffic.
+        nextSteps.add(
+          'network_list since:0 to re-scan everything captured this session '
+          '(this read was incremental and only shows new requests)',
+        );
+      }
+      nextSteps.add('Drive the app to generate traffic, then call network_list again');
       if (activeFilters.isNotEmpty) {
-        nextSteps.add('Drop filters and pass since:0 to re-scan from the start');
+        nextSteps.add('Drop filters to widen the match');
       }
     }
 
@@ -370,4 +385,42 @@ List<String> _activeFilters(
   if (min != null) filters.add('status>=$min');
   if (max != null) filters.add('status<=$max');
   return filters;
+}
+
+/// Summary line for a LIVE network_list read. Visible for testing.
+///
+/// The live read is cursor-based: each call advances the cursor, so a later
+/// call sees only NEW requests. The key UX trap (found in live testing) is
+/// the empty case: an incremental call that returns 0 must NOT read as "no
+/// traffic" when the session already holds requests. The wording below makes
+/// "0 new" distinct from "0 ever", and points an empty incremental read at
+/// `since:0`.
+///
+/// - [matched]: rows returned after filtering.
+/// - [scannedTotal]: rows the live profile returned before filtering.
+/// - [cursorAdvanced]: a `since` cursor was in effect (`since` arg or stored).
+/// - [incremental]: the cursor was the auto-advancing one (no explicit `since`).
+String liveListSummary({
+  required int matched,
+  required int scannedTotal,
+  required bool cursorAdvanced,
+  required bool incremental,
+  required String scopeLabel,
+}) {
+  if (matched > 0) {
+    return '$matched request(s) from $scopeLabel, newest-first'
+        '${incremental ? " (new since your last call)" : ""}.';
+  }
+  if (scannedTotal > 0) {
+    return '$scannedTotal request(s) scanned, 0 matched filters.';
+  }
+  if (!cursorAdvanced) {
+    return 'No HTTP captured yet in $scopeLabel.';
+  }
+  return incremental
+      ? 'No NEW HTTP since your last call to $scopeLabel. This read is '
+          'incremental; pass since:0 to re-scan everything captured, or use '
+          'network_summarize for the session shape.'
+      : 'No HTTP newer than your since cursor in $scopeLabel; pass since:0 '
+          'to re-scan everything captured.';
 }

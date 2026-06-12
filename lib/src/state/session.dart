@@ -129,6 +129,7 @@ class AttachedSession {
     required this.socketProfilingEnabled,
     this.lastReattachAt,
     this.previousVmServiceUri,
+    this.reattachCount = 0,
   });
 
   /// DB row id in `sessions` table — the canonical anchor for routing.
@@ -162,6 +163,12 @@ class AttachedSession {
   /// service URI it was previously bound to. Null for a fresh attach.
   final DateTime? lastReattachAt;
   final String? previousVmServiceUri;
+
+  /// How many hot restarts this session has survived. Incremented on each
+  /// reattach (manual `reattach:true` or the auto-migration watcher), carried
+  /// across migrations so it counts the session's whole life, not just the
+  /// latest hop. 0 for a session that has never migrated.
+  final int reattachCount;
 
   /// Mutable: updated by network_list when caller omits `since`.
   DateTime? lastHttpCursor;

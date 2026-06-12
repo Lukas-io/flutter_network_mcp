@@ -40,9 +40,14 @@ Map<String, Object?> attachedStatusEntry(AttachedSession a) {
     // rotation proactively (and knows to read now / bump the buffer).
     'logBufferUsed': a.logBuffer.length,
     'logBufferCapacity': a.logBuffer.capacity,
-    // #16: this session id was carried across a hot restart.
+    // #16: hot-restart continuity. When this session id has survived one or
+    // more restarts, surface the count + when + where-from so the agent knows
+    // the captures it's reading span the restart (and didn't silently reset).
+    if (a.reattachCount > 0) 'reattachCount': a.reattachCount,
     if (a.lastReattachAt != null)
       'lastReattachAtMs': a.lastReattachAt!.millisecondsSinceEpoch,
+    if (a.previousVmServiceUri != null)
+      'previousVmServiceUri': a.previousVmServiceUri,
   };
 }
 
