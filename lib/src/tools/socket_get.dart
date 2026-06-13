@@ -11,25 +11,23 @@ import 'result.dart';
 final socketGetTool = Tool(
   name: 'socket_get',
   description:
-      'Returns one socket\'s statistics by id (from socket_list). Aggregate '
-      'byte counts + lifetime timing only — sockets do not capture payloads.',
+      'One socket\'s stats by id (from socket_list). Byte counts + lifetime '
+      'only; no payloads.',
   inputSchema: Schema.object(
     properties: {
       'id': Schema.string(description: 'Socket id from socket_list.'),
       'sessionId': Schema.int(
         description:
-            'Which session the socket belongs to. Omit to auto-resolve.',
+            'Session to read from. Omit to auto-resolve (the sole attached '
+            'session, or the one you opened).',
       ),
       'appNameContains': Schema.string(
-        description:
-            'Alternative to sessionId — case-insensitive substring on a '
-            'currently-attached app name.',
+        description: 'Pick the session by app-name substring instead of sessionId.',
       ),
       'isolateId': Schema.string(
         description:
-            'Optional: tells the live VM lookup which isolate to ask. Omit '
-            'and the tool resolves from the DB row, or tries each known '
-            'isolate.',
+            'Restrict to one isolate (id from network_status). Omit to '
+            'auto-resolve.',
       ),
     },
     required: ['id'],

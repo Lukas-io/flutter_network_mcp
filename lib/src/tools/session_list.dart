@@ -11,32 +11,27 @@ import 'result.dart';
 final sessionListTool = Tool(
   name: 'session_list',
   description:
-      'Lists past capture sessions (newest-first). Each session is a '
-      'contiguous run between network_attach and network_detach (or process '
-      'exit). Includes per-session counts of HTTP requests, sockets, and '
-      'log records. Default scope is "all". To scope to one APP use '
-      '`appNameContains` (the DTD app identity); `projectPath` is only the '
-      'working directory at attach time, which several apps can share, so it '
-      'is a weak identity signal. Also filter by `sinceMs`.',
+      'Lists past capture sessions (newest-first) with per-session '
+      'HTTP/socket/log counts. Scope to one app with appNameContains (the DTD '
+      'identity); projectPath is just the cwd at attach and several apps can '
+      'share it.',
   inputSchema: Schema.object(
     properties: {
       'appNameContains': Schema.string(
         description:
-            'Case-insensitive substring match on the app name (the DTD '
-            'identity captured at attach). This is the reliable way to scope '
-            'to one app when several were launched from the same directory.',
+            'Case-insensitive substring on the app name (DTD identity). The '
+            'reliable way to scope to one app.',
       ),
       'projectPath': Schema.string(
         description:
-            'Exact-match filter on the working directory at attach time. NOT '
-            'app identity: multiple apps launched from one parent dir share '
-            'it. Prefer appNameContains to scope to a specific app.',
+            'Exact cwd at attach. NOT app identity (apps from one dir share '
+            'it); prefer appNameContains.',
       ),
       'sinceMs': Schema.int(
-        description: 'Only sessions started at or after this millis-since-epoch.',
+        description: 'Only sessions started at or after this ms-since-epoch.',
       ),
       'limit': Schema.int(
-        description: 'Max sessions returned (default 20, hard cap 100). Newest-first.',
+        description: 'Max sessions (default 20, cap 100).',
       ),
     },
   ),

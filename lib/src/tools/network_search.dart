@@ -11,44 +11,33 @@ import 'result.dart';
 final networkSearchTool = Tool(
   name: 'network_search',
   description:
-      'Find a captured request by something inside it — a URL substring, a '
-      'body keyword, an error string from a stack trace. Use this when you '
-      'remember WHAT the request contained but not which id it was. '
-      'Searches URLs and (backfilled) request/response bodies; returns '
-      'ranked matches with «highlighted» snippets. Hyphens / colons in the '
-      'query work naturally. Cheaper than network_list when you have a '
-      'concrete needle but no idea where in the haystack to look.',
+      'Find a captured request by content (URL substring, body keyword, '
+      'error string) when you know what it contained but not the id. '
+      'BM25-ranked, with highlighted snippets. Searches URLs and backfilled '
+      'request/response bodies.',
   inputSchema: Schema.object(
     properties: {
       'query': Schema.string(
-        description:
-            'Text to search for. Phrase-quoted by default — pass operator '
-            'syntax pre-escaped if you want AND/OR/NEAR semantics.',
+        description: 'Text to search for; phrase-matched by default.',
       ),
       'sessionId': Schema.int(
         description:
-            'Which session to search. Omit to auto-resolve: explicit '
-            'view (session_open) → sole attached session → error if 2+ '
-            'attached.',
+            'Session to read from. Omit to auto-resolve (the sole attached '
+            'session, or the one you opened).',
       ),
       'appNameContains': Schema.string(
-        description:
-            'Alternative to sessionId — case-insensitive substring on a '
-            'currently-attached app name.',
+        description: 'Pick the session by app-name substring instead of sessionId.',
       ),
       'isolateId': Schema.string(
         description:
-            'Optional: restrict to one isolate within the session (e.g. '
-            'a worker isolate). Get the id from network_status.attached[].'
-            'isolates[]. Omit to search across every isolate in the session '
-            '(the default).',
+            'Restrict to one isolate (id from network_status). Omit to search '
+            'all isolates.',
       ),
       'which': Schema.string(
-        description:
-            'Column to match: "url" | "request" | "response" | "any" (default).',
+        description: 'Match "url" | "request" | "response" | "any" (default).',
       ),
       'limit': Schema.int(
-        description: 'Max results (default 20, hard cap 100). Ranked by BM25, lowest first.',
+        description: 'Max results (default 20, cap 100).',
       ),
     },
     required: ['query'],

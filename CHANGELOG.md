@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.8.13] — 2026-06-13
+
+### Changed — compact, accurate tool definitions
+
+Rewrote every tool `description` and schema-property description (and the server `instructions` field) for the agent's handshake budget: one tight sentence on when/what plus the key constraint, dropping version tags, markdown, mechanism history, em dashes, and anything the schema already states. The recurring params (`sessionId` / `appNameContains` / `isolateId` / `since`) are standardized to one short phrasing across all read tools.
+
+- The `tools/list` handshake payload drops from **~46 KB to ~29 KB (about 36% off)**, so every agent session loads a leaner, sharper surface. ~16.9 KB of description text cut across 37 files.
+- Accuracy preserved: each tool still states when to reach for it and its one gotcha. No behaviour change (descriptions are strings); 216 tests still green.
+- The usage telemetry (live since 0.8.12) will show which tools get mispicked or never called, to guide further pruning with data instead of guesses.
+
 ## [0.8.12] — 2026-06-12
 
 ### Changed — telemetry collector is live

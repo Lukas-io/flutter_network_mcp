@@ -11,9 +11,8 @@ import 'result.dart';
 final sessionExportTool = Tool(
   name: 'session_export',
   description:
-      'Writes a session to disk as HAR 1.2 (JSON, openable in Chrome '
-      'DevTools / Insomnia / Postman) or NDJSON (one record per line — good '
-      'for grep/jq). Creates parent directories as needed.',
+      'Write a session to disk as HAR 1.2 (Chrome DevTools / Insomnia / '
+      'Postman) or NDJSON (one record per line for grep/jq).',
   inputSchema: Schema.object(
     properties: {
       'id': Schema.int(description: 'Session id (from session_list).'),
