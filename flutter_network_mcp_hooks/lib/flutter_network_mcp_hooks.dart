@@ -19,4 +19,5 @@ library;
 export 'src/capture_buffer.dart'
     show CapturedWsConnection, CapturedWsFrame, RealtimeCapture;
 export 'src/io_hooks.dart' show FlutterNetworkMcpHooks;
+export 'src/realtime_extension.dart' show RealtimeExtension;
 export 'src/ws_frame.dart' show WsFrame, WsFrameDecoder, WsOpcode;
