@@ -9,11 +9,9 @@ import 'result.dart';
 final alertPatternsTool = Tool(
   name: 'alert_patterns',
   description:
-      'Manage custom alert regex patterns. The detector evaluates these '
-      'against every captured log message (in addition to the built-in '
-      'flutter_error and log_keyword rules). Useful for project-specific '
-      'signals like "\\[OrderService\\].*fail" or "websocket: dropping '
-      'frame". Patterns are persisted in the DB and hydrated on server start.',
+      'Manage custom alert regex patterns matched against every captured log '
+      'message (alongside the built-in flutter_error / log_keyword rules), '
+      'for project-specific signals. Persisted in the DB.',
   inputSchema: Schema.object(
     properties: {
       'action': Schema.string(description: '"list" (default) | "add" | "remove".'),

@@ -9,21 +9,15 @@ import 'result.dart';
 final logsClearTool = Tool(
   name: 'logs_clear',
   description:
-      'Empties the in-memory log ring buffer for the scoped session. **Does '
-      'NOT affect the app or the persistent DB** — new log/stdout/stderr '
-      'events will continue to fill the buffer, and DB `log_records` rows '
-      'remain queryable via session_open + logs_tail.',
+      'Empties the in-memory log ring buffer for the scoped session. Does '
+      'NOT touch the app or the DB (log_records stay queryable).',
   inputSchema: Schema.object(
     properties: {
       'sessionId': Schema.int(
-        description:
-            'Which attached session\'s buffer to clear. Omit when exactly '
-            'one is attached.',
+        description: 'Attached session to clear. Omit when exactly one is attached.',
       ),
       'appNameContains': Schema.string(
-        description:
-            'Alternative to sessionId — case-insensitive substring on a '
-            'currently-attached app name.',
+        description: 'Pick the session by app-name substring instead of sessionId.',
       ),
     },
   ),

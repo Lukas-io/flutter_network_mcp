@@ -10,10 +10,9 @@ import 'result.dart';
 final sessionOpenTool = Tool(
   name: 'session_open',
   description:
-      'Switches the read pointer used by network_list, network_get, '
-      'network_body, socket_list, socket_get, logs_tail, network_search, and '
-      'network_diff to the given session. The live capture continues '
-      'writing into its own session regardless. Call session_close to revert.',
+      'Point the read tools (network_list/get/body, socket_list/get, '
+      'logs_tail, network_search/diff) at a past session. Live capture keeps '
+      'writing its own session; session_close reverts.',
   inputSchema: Schema.object(
     properties: {
       'id': Schema.int(description: 'Session id from session_list.'),

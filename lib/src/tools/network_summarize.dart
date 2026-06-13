@@ -10,46 +10,31 @@ import 'result.dart';
 final networkSummarizeTool = Tool(
   name: 'network_summarize',
   description:
-      'One digest row per endpoint over a time window. Returns count, '
-      'status distribution, p50/p95 latency, and error rate per '
-      '(method, host, pathTemplate) bucket. Path templates collapse '
-      'dynamic ids — /api/users/42 and /api/users/91 group as '
-      'GET api.example.com/api/users/N. Use this AS THE FIRST CALL '
-      'after network_status when you want the shape of the captured '
-      'session — typically much cheaper than network_list + manual '
-      'bucketing.',
+      'One digest row per endpoint: count, status distribution, p50/p95 '
+      'latency, error rate, by (method, host, pathTemplate). Path templates '
+      'collapse ids (/api/users/42 and /91 -> /api/users/N). Good first call '
+      'after network_status for the session shape; cheaper than network_list.',
   inputSchema: Schema.object(
     properties: {
       'sessionId': Schema.int(
         description:
-            'Which session to summarize. Omit to auto-resolve: explicit '
-            'view (session_open) → sole attached session → error if 2+ '
-            'attached.',
+            'Session to read from. Omit to auto-resolve (the sole attached '
+            'session, or the one you opened).',
       ),
       'appNameContains': Schema.string(
-        description:
-            'Alternative to sessionId — case-insensitive substring match '
-            'against currently-attached app names.',
+        description: 'Pick the session by app-name substring instead of sessionId.',
       ),
       'sinceMs': Schema.int(
-        description:
-            'Relative time window in milliseconds. Default 3600000 (1 '
-            'hour). Pass 0 to summarize the entire session.',
+        description: 'Window in ms. Default 3600000 (1h); 0 for the whole session.',
       ),
       'hostContains': Schema.string(
-        description:
-            'Substring filter on host. Case-insensitive. Reduces the '
-            'read-then-aggregate workload when only one host matters.',
+        description: 'Case-insensitive host substring.',
       ),
       'limit': Schema.int(
-        description:
-            'Max endpoint rows returned (default 50, hard cap 200). '
-            'Sorted by count desc.',
+        description: 'Max endpoint rows (default 50, cap 200).',
       ),
       'minCount': Schema.int(
-        description:
-            'Drop endpoints with fewer than this many requests. Default '
-            '1 (no filter).',
+        description: 'Drop endpoints with fewer than this many requests. Default 1.',
       ),
     },
   ),

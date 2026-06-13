@@ -10,22 +10,15 @@ const int _kRowCap = 500;
 final networkQueryTool = Tool(
   name: 'network_query',
   description:
-      'Run a custom SELECT against the captures DB when the typed tools '
-      'can\'t express what you need: cross-session aggregates, slowest '
-      'endpoints by host, percentile timings, joins between requests and '
-      'alerts, top error URLs. Schema lives in '
-      'docs/tools/power/network_query.md. Single statement, read-only, '
-      '500-row cap. BLOB cells (http_bodies.bytes) return '
-      '`{type:"blob", size}` so they don\'t flood context; oversized strings '
-      'truncate. Reach for this AFTER you\'ve confirmed network_list / '
-      'network_search / session_list can\'t answer the question — those are '
-      'cheaper and don\'t need SQL.',
+      'Read-only SELECT against the captures DB for what the typed tools '
+      'cannot express (cross-session aggregates, percentile timings, joins, '
+      'top error URLs). Single statement, 500-row cap; BLOB cells return '
+      '{type:"blob",size}. Schema in docs/tools/power/network_query.md. Prefer '
+      'the typed tools first.',
   inputSchema: Schema.object(
     properties: {
       'sql': Schema.string(
-        description:
-            'A single SELECT / WITH...SELECT. Semicolons not allowed (one '
-            'statement only).',
+        description: 'A single SELECT / WITH...SELECT (no semicolons).',
       ),
     },
     required: ['sql'],

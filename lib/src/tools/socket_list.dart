@@ -12,30 +12,24 @@ import 'result.dart';
 final socketListTool = Tool(
   name: 'socket_list',
   description:
-      'Lists dart:io socket statistics (TCP/UDP) for the attached app (live '
-      'mode) or the viewed session (history mode). Returns address, port, '
-      'byte counts, and open/closed state — NEVER payloads (sockets don\'t '
-      'capture them).',
+      'Lists dart:io socket stats (TCP/UDP): address, port, byte counts, '
+      'open/closed. Never payloads (sockets do not capture them).',
   inputSchema: Schema.object(
     properties: {
       'sessionId': Schema.int(
         description:
-            'Which session to read from. Omit to auto-resolve: explicit '
-            'view (session_open) → sole attached session → error if 2+ '
-            'attached.',
+            'Session to read from. Omit to auto-resolve (the sole attached '
+            'session, or the one you opened).',
       ),
       'appNameContains': Schema.string(
-        description:
-            'Alternative to sessionId — case-insensitive substring on a '
-            'currently-attached app name.',
+        description: 'Pick the session by app-name substring instead of sessionId.',
       ),
       'isolateId': Schema.string(
         description:
-            'Optional: restrict to one isolate within the session. Get the id '
-            'from network_status.attached[].isolates[]. Omit to merge every '
-            'isolate (the default).',
+            'Restrict to one isolate (id from network_status). Omit to merge '
+            'all isolates.',
       ),
-      'limit': Schema.int(description: 'Max sockets returned (default 50, hard cap 200). Newest-first by startTimeUs.'),
+      'limit': Schema.int(description: 'Max sockets (default 50, cap 200).'),
     },
   ),
 );

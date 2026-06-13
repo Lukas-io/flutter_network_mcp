@@ -10,27 +10,24 @@ import 'result.dart';
 final alertsDrainTool = Tool(
   name: 'alerts_drain',
   description:
-      'Returns pending alerts (newest-first) AND marks them as drained. The '
-      'classic "what is wrong?" first call of an investigation. Scope '
-      'auto-resolves to the sole attached session; pass sessionId / '
-      'appNameContains in multi-attach to disambiguate.',
+      'Returns pending alerts (newest-first) AND marks them drained. The '
+      '"what is wrong?" first call. Scope auto-resolves to the sole attached '
+      'session.',
   inputSchema: Schema.object(
     properties: {
       'sessionId': Schema.int(
         description:
-            'Which session to drain. Omit to auto-resolve: explicit view '
-            '(session_open) → sole attached session → error if 2+ attached.',
+            'Session to read from. Omit to auto-resolve (the sole attached '
+            'session, or the one you opened).',
       ),
       'appNameContains': Schema.string(
-        description:
-            'Alternative to sessionId — case-insensitive substring on a '
-            'currently-attached app name.',
+        description: 'Pick the session by app-name substring instead of sessionId.',
       ),
       'severityMin': Schema.string(
         description: '"info" | "warning" | "error" | "critical". Default: any.',
       ),
       'limit': Schema.int(
-        description: 'Max alerts returned (default 50, hard cap 200). Newest-first.',
+        description: 'Max alerts (default 50, cap 200).',
       ),
     },
   ),
