@@ -15,53 +15,45 @@ import 'result.dart';
 final networkListTool = Tool(
   name: 'network_list',
   description:
-      'Lists captured HTTP requests, newest-first. Returns summaries only — '
-      'never bodies. The default `since` cursor is incremental: subsequent '
-      'calls return only what is new. Pass `since:0` to fetch everything; '
-      'pass `nextCursor` from a prior call to continue paging. When a session '
-      'is opened via session_open, reads from history instead of live VM.',
+      'Lists captured HTTP requests (newest-first, summaries only, no '
+      'bodies). Live reads are incremental: each call returns only what is '
+      'new since the last; pass since:0 for everything. After session_open, '
+      'reads history.',
   inputSchema: Schema.object(
     properties: {
       'sessionId': Schema.int(
         description:
-            'Which session to read from. Omit to auto-resolve: explicit '
-            'view (session_open) → sole attached session → error if 2+ '
-            'attached.',
+            'Session to read from. Omit to auto-resolve (the sole attached '
+            'session, or the one you opened).',
       ),
       'appNameContains': Schema.string(
-        description:
-            'Alternative to sessionId — case-insensitive substring match '
-            'against currently-attached app names. Must match exactly one.',
+        description: 'Pick the session by app-name substring instead of sessionId.',
       ),
       'since': Schema.int(
         description:
-            'Microsecond cursor — epoch micros (live mode) or start_us '
-            'threshold (history mode). Omit to use the live session\'s stored '
-            'cursor (incremental). Pass 0 to fetch everything captured. '
-            'Typical usage: pass the `nextCursor` value from your prior call.',
+            'Microsecond cursor. Omit for incremental (new since last call), '
+            '0 for all captured. Pass a prior nextCursor to page.',
       ),
       'method': Schema.list(
-        description: 'Filter by HTTP method(s), e.g. ["GET","POST"]. Omit for all methods.',
+        description: 'Filter by HTTP method(s), e.g. ["GET","POST"].',
         items: Schema.string(),
       ),
       'hostContains': Schema.string(
-        description: 'Substring match (case-insensitive) on the request host.',
+        description: 'Case-insensitive substring on the request host.',
       ),
       'statusMin': Schema.int(
-        description: 'Inclusive lower bound on response status code (e.g. 400 for errors).',
+        description: 'Min status code (e.g. 400 for errors).',
       ),
       'statusMax': Schema.int(
-        description: 'Inclusive upper bound on response status code.',
+        description: 'Max status code.',
       ),
       'isolateId': Schema.string(
         description:
-            'Optional: restrict to one isolate within the session (e.g. a '
-            'worker isolate). Get the id from network_status.attached[].'
-            'isolates[]. Omit to merge every isolate in the session (the '
-            'default — same UX as single-isolate apps).',
+            'Restrict to one isolate (id from network_status). Omit to merge '
+            'all isolates.',
       ),
       'limit': Schema.int(
-        description: 'Max requests returned (default 50, hard cap 200). Newest-first.',
+        description: 'Max requests (default 50, cap 200).',
       ),
     },
   ),

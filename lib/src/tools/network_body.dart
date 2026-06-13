@@ -16,43 +16,31 @@ const int _kDefaultLen = 16384;
 final networkBodyTool = Tool(
   name: 'network_body',
   description:
-      'Fetch the rest of a body that network_get truncated. Call this '
-      'whenever a network_get response carries `truncated:true` plus a '
-      '`totalSize` larger than what was returned — that\'s the signal you '
-      'are missing data. Byte-range paged via `offset` + `length`; returns '
-      '`nextOffset` so you can iterate. Auto-decodes utf8 for text content '
-      'types, base64 for binary. Works against both live and history '
-      'sessions (history needs the writer\'s ~2s body backfill to have run).',
+      'Fetch more of a body that network_get truncated (its response had '
+      'truncated:true with a larger totalSize). Byte-range paged via '
+      'offset+length; returns nextOffset to iterate. Auto-decodes text/binary.',
   inputSchema: Schema.object(
     properties: {
       'id': Schema.string(description: 'Request id from network_list / network_search.'),
       'which': Schema.string(description: '"request" or "response".'),
       'sessionId': Schema.int(
         description:
-            'Which session the request belongs to. Omit to auto-resolve: '
-            'explicit view (session_open) → sole attached session → error '
-            'if 2+ attached.',
+            'Session to read from. Omit to auto-resolve (the sole attached '
+            'session, or the one you opened).',
       ),
       'appNameContains': Schema.string(
-        description:
-            'Alternative to sessionId — case-insensitive substring on a '
-            'currently-attached app name.',
+        description: 'Pick the session by app-name substring instead of sessionId.',
       ),
       'isolateId': Schema.string(
         description:
-            'Optional: tells the live VM lookup which isolate to ask. Omit '
-            'and the tool resolves from the DB row (the capture writer tags '
-            'every request with its isolate) or tries each known isolate. '
-            'Set explicitly to skip resolution.',
+            'Restrict to one isolate (id from network_status). Omit to '
+            'auto-resolve.',
       ),
       'offset': Schema.int(
-        description:
-            'Byte offset to start at. Default 0. Clamped to [0, totalSize].',
+        description: 'Byte offset to start at. Default 0.',
       ),
       'length': Schema.int(
-        description:
-            'Bytes to read (default 16384, hard cap 262144). Returned size '
-            'may be smaller when offset+length > totalSize.',
+        description: 'Bytes to read (default 16384, cap 262144).',
       ),
       'decode': Schema.string(
         description:

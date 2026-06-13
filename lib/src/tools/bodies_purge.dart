@@ -8,21 +8,17 @@ import 'result.dart';
 final bodiesPurgeTool = Tool(
   name: 'bodies_purge',
   description:
-      'Drops captured request/response BLOBs while preserving http_requests '
-      'summary metadata. Useful to shrink the DB without losing the trace '
-      'of what happened. Pass `sessionId` for a single session, '
-      '`olderThanMs` to purge across sessions, or both. Default is dry-run; '
-      'pass `confirm:true` to actually delete.',
+      'Drops captured request/response bodies but keeps the request '
+      'metadata, to shrink the DB. Scope with sessionId and/or olderThanMs. '
+      'Dry-run unless confirm:true.',
   inputSchema: Schema.object(
     properties: {
       'sessionId': Schema.int(description: 'Restrict to a session id.'),
       'olderThanMs': Schema.int(
-        description:
-            'Millis-since-epoch. Bodies of requests whose start time is older '
-            'than this are purged.',
+        description: 'Ms-since-epoch; purge bodies of requests older than this.',
       ),
       'confirm': Schema.bool(
-        description: 'Required true to actually purge. Default false (dry-run reports what would go).',
+        description: 'Required true to purge; default false (dry-run).',
       ),
     },
   ),

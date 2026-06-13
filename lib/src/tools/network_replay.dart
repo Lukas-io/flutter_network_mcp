@@ -14,33 +14,25 @@ const _kMaxBodyTruncate = 262144;
 final networkReplayTool = Tool(
   name: 'network_replay',
   description:
-      'Emits a runnable curl command for a captured HTTP request. Sensitive '
-      'headers are redacted by default (built-in set + names added via the '
-      'redacted_headers tool). Request body is truncated to '
-      '`bodyTruncateBytes` (default 4 KB) so the response stays context-safe. '
-      'Pass `redact:false` for unredacted headers (local debugging only); '
-      '`bodyTruncateBytes:0` for the full body up to 256 KB.',
+      'Emit a runnable curl for a captured request. Auth headers redacted by '
+      'default; body truncated to bodyTruncateBytes (default 4 KB). '
+      'redact:false for unredacted (local only); bodyTruncateBytes:0 for full.',
   inputSchema: Schema.object(
     properties: {
       'id': Schema.string(description: 'Request id from network_list / network_search.'),
       'sessionId': Schema.int(
         description:
-            'Which session the request belongs to. Omit to auto-resolve: '
-            'explicit view (session_open) → sole attached session → error '
-            'if 2+ attached.',
+            'Session to read from. Omit to auto-resolve (the sole attached '
+            'session, or the one you opened).',
       ),
       'appNameContains': Schema.string(
-        description:
-            'Alternative to sessionId — case-insensitive substring on a '
-            'currently-attached app name.',
+        description: 'Pick the session by app-name substring instead of sessionId.',
       ),
       'redact': Schema.bool(
-        description: 'Mask auth-like headers with <redacted> (default true). Set false only for local terminal use.',
+        description: 'Mask auth-like headers (default true). false only for local terminal use.',
       ),
       'bodyTruncateBytes': Schema.int(
-        description:
-            'Max bytes of body inlined into the curl. Default 4096, hard cap 262144. '
-            'Pass 0 to use the hard cap.',
+        description: 'Max body bytes in the curl (default 4096, cap 262144; 0 = cap).',
       ),
     },
     required: ['id'],

@@ -14,44 +14,34 @@ import 'result.dart';
 final networkGetTool = Tool(
   name: 'network_get',
   description:
-      'Returns full details for ONE captured HTTP request: headers, timing, '
-      'and (optionally) decoded request/response bodies. Bodies truncate to '
-      '`bodyTruncateBytes` (default 4 KB) — truncation is signaled both in '
-      'each body sub-object and in a top-level `warnings` array. Lifecycle '
-      'events are opt-in to keep payloads small.',
+      'Full detail for ONE captured request: headers, timing, and decoded '
+      'bodies (truncated to bodyTruncateBytes, default 4 KB; truncation is '
+      'flagged). Use after network_list / network_search gives you an id.',
   inputSchema: Schema.object(
     properties: {
       'id': Schema.string(
-        description:
-            'Request id from a prior network_list / network_search call.',
+        description: 'Request id from network_list / network_search.',
       ),
       'sessionId': Schema.int(
         description:
-            'Which session the request belongs to. Omit to auto-resolve: '
-            'explicit view (session_open) → sole attached session → error '
-            'if 2+ attached.',
+            'Session to read from. Omit to auto-resolve (the sole attached '
+            'session, or the one you opened).',
       ),
       'appNameContains': Schema.string(
-        description:
-            'Alternative to sessionId — case-insensitive substring on a '
-            'currently-attached app name.',
+        description: 'Pick the session by app-name substring instead of sessionId.',
       ),
       'isolateId': Schema.string(
         description:
-            'Optional: tells the live VM lookup which isolate to ask. Omit '
-            'and the tool will resolve from the DB row (the capture writer '
-            'tags every request with its source isolate) or try each known '
-            'isolate in turn. Set explicitly to skip resolution.',
+            'Restrict to one isolate (id from network_status). Omit to merge '
+            'all isolates.',
       ),
       'includeBodies': Schema.bool(
-        description: 'Omit request + response bodies entirely. Default true.',
+        description: 'Include request/response bodies. Default true.',
       ),
       'bodyTruncateBytes': Schema.int(
         description:
-            'Max bytes per body before truncation (default 4096, hard cap '
-            '262144 — pass 0 to use the hard cap). Truncated bodies include '
-            '{truncated:true,totalSize:N}; agents should follow with '
-            'network_body for byte-range fetches.',
+            'Max bytes per body (default 4096, cap 262144; 0 = cap). Truncated '
+            'bodies set truncated:true; fetch more with network_body.',
       ),
       'headerTruncateBytes': Schema.int(
         description:

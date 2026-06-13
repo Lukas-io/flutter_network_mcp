@@ -11,31 +11,21 @@ import 'result.dart';
 final networkDetachTool = Tool(
   name: 'network_detach',
   description:
-      'Stops capture for one attached session (or every attached session '
-      'with `all:true`). Closes the per-session VM service connection, '
-      'tears down the capture writer + log subscriber, and marks the DB '
-      'session as ended — captured rows remain queryable via '
-      'session_list / session_open. DTD is disconnected only when no '
-      'sessions remain attached.\n\n'
-      '**Multi-attach (0.6.0):** zero-arg works only when exactly one '
-      'session is attached. With 2+ attached, pass sessionId / '
-      'appNameContains, or `all:true` to drop everything.',
+      'Stop capture for one attached session (or all with all:true). Ends '
+      'the DB session (rows stay queryable). DTD disconnects when nothing '
+      'remains. Zero-arg works only when exactly one session is attached.',
   inputSchema: Schema.object(
     properties: {
       'sessionId': Schema.int(
         description:
-            'Which attached session to detach. Omit when exactly one is '
-            'attached. Ignored when `all:true`.',
+            'Attached session to detach. Omit when exactly one is attached. '
+            'Ignored when all:true.',
       ),
       'appNameContains': Schema.string(
-        description:
-            'Alternative to sessionId — case-insensitive substring on a '
-            'currently-attached app name. Must match exactly one.',
+        description: 'Pick the session by app-name substring instead of sessionId.',
       ),
       'all': Schema.bool(
-        description:
-            'Detach every attached session in one call. Useful at the end '
-            'of a debugging session.',
+        description: 'Detach every attached session.',
       ),
     },
   ),

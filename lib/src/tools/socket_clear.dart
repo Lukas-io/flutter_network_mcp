@@ -9,26 +9,18 @@ import 'result.dart';
 final socketClearTool = Tool(
   name: 'socket_clear',
   description:
-      'Wipes the LIVE in-VM socket profile on the attached isolate. **Does '
-      'NOT touch the persistent DB** — captured rows in `socket_events` '
-      'remain queryable.',
+      'Wipes the LIVE in-VM socket profile. Does NOT touch the persistent DB '
+      '(socket_events rows stay queryable).',
   inputSchema: Schema.object(
     properties: {
       'sessionId': Schema.int(
-        description:
-            'Which attached session to clear. Omit when exactly one is '
-            'attached; required when 2+ are attached (multi-attach).',
+        description: 'Attached session to clear. Omit when exactly one is attached.',
       ),
       'appNameContains': Schema.string(
-        description:
-            'Alternative to sessionId — case-insensitive substring on a '
-            'currently-attached app name.',
+        description: 'Pick the session by app-name substring instead of sessionId.',
       ),
       'isolateId': Schema.string(
-        description:
-            'Optional: clear only this isolate\'s socket profile. Get the id '
-            'from network_status.attached[].isolates[]. Omit to clear every '
-            'isolate in the session (the default).',
+        description: 'Clear only this isolate. Omit to clear all.',
       ),
     },
   ),

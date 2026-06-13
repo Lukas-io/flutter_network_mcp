@@ -55,47 +55,35 @@ String? appSessionIdentity(String? appName) {
 final networkAttachTool = Tool(
   name: 'network_attach',
   description:
-      'Open a capture session against a running Flutter/Dart app — call '
-      'this after `network_status` shows the app you want under '
-      '`knownApps`. Enables HTTP + socket profiling, subscribes to log '
-      'streams, and creates a new row in `sessions` so everything that '
-      'follows is persisted. **Multi-attach (0.6.0):** multiple apps can '
-      'be attached concurrently — each gets its own VM connection + '
-      'capture writer + log buffer. Re-attaching to the SAME app '
-      '(matched by vmServiceUri) is blocked; attach to a different one '
-      'is allowed up to FLUTTER_NETWORK_MCP_MAX_ATTACH (default 4). The '
-      'response carries `scope:{sessionId, appName}` — use that sessionId '
-      'to route subsequent read tools.',
+      'Start capturing HTTP, sockets, and logs from a running app (call '
+      'after network_status lists it under knownApps). Several apps can be '
+      'attached at once; use the returned scope.sessionId to route later '
+      'reads. Re-attaching the same app is a no-op.',
   inputSchema: Schema.object(
     properties: {
       'dtdUri': Schema.string(
-        description: 'DTD WebSocket URI. Overrides the default.',
+        description: 'DTD WebSocket URI; overrides the default.',
       ),
       'vmServiceUri': Schema.string(
         description:
-            'VM service URI. Bypasses DTD entirely; takes priority over '
-            'dtdUri / appNameContains.',
+            'VM service URI; bypasses DTD. Takes priority over dtdUri and '
+            'appNameContains.',
       ),
       'appNameContains': Schema.string(
         description:
-            'Case-insensitive substring match on the DTD app name (from '
-            'network_status.knownApps[].name). Use when DTD has multiple apps.',
+            'Case-insensitive substring of the app name (from '
+            'network_status.knownApps). Use when several apps are connected.',
       ),
       'logBufferSize': Schema.int(
         description:
-            'Optional per-session log ring-buffer capacity (50–10000). '
-            'Overrides FLUTTER_NETWORK_MCP_LOG_BUFFER for THIS session only; '
-            'bump it for chatty apps whose logs rotate out before you read '
-            'them. Omit to use the env / default (500).',
+            'Per-session log ring capacity (50-10000). Overrides the env '
+            'default (500); raise it for chatty apps.',
       ),
       'reattach': Schema.bool(
         description:
-            'Hot-restart continuity (0.8.2). When true and an already-attached '
-            'session for the SAME app (same package + device) is still bound '
-            'to a now-stale VM URI, reuse its sessionId: captures continue '
-            'under one session across restarts and the stale session is torn '
-            'down automatically. Pair with appNameContains. No-op when no '
-            'prior session matches (behaves as a normal attach).',
+            'Reuse an existing session id across a hot restart (same '
+            'package+device) instead of starting a new one. Pair with '
+            'appNameContains.',
       ),
     },
   ),

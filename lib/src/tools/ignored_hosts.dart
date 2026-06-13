@@ -9,16 +9,14 @@ import 'result.dart';
 final ignoredHostsTool = Tool(
   name: 'ignored_hosts',
   description:
-      'Manage the host allowlist. The capture writer SKIPS any HTTP request '
-      'whose host matches an entry — useful for filtering out analytics, '
-      'crash reporters, and noisy telemetry so the agent sees only the '
-      'requests that matter. Exact hostname match (case-insensitive). '
-      'Already-captured rows are NOT removed; only NEW captures are filtered.',
+      'Manage the host skiplist: the capture writer drops requests whose host '
+      'matches an entry (analytics, crash reporters, noisy telemetry). Exact '
+      'case-insensitive match; only new captures are filtered.',
   inputSchema: Schema.object(
     properties: {
       'action': Schema.string(description: '"list" (default) | "add" | "remove".'),
       'host': Schema.string(description: 'Hostname (required for add/remove). No scheme, no port.'),
-      'reason': Schema.string(description: 'Optional reason — surfaces in list output.'),
+      'reason': Schema.string(description: 'Optional reason shown in list output.'),
     },
   ),
 );

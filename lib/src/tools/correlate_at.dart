@@ -10,43 +10,33 @@ import 'result.dart';
 final correlateAtTool = Tool(
   name: 'correlate_at',
   description:
-      'Correlate logs and HTTP requests around a moment in time (0.8.3). '
-      'Given an anchor timestamp (e.g. the `timestampMs` of a log line you '
-      'found via logs_tail), returns the log records AND HTTP requests within '
-      '+/- `windowMs`, each tagged with a signed `deltaMs` from the anchor and '
-      'sorted nearest-first. Answers "which request fired closest to this '
-      'log?" without eyeballing two separate listings. Reads persisted data, '
-      'so it works live or after session_open (live captures lag ~2s).',
+      'Logs and HTTP requests within +/- windowMs of an anchor timestamp, '
+      'each with a signed deltaMs, nearest-first. Answers "which request '
+      'fired closest to this log line?"',
   inputSchema: Schema.object(
     properties: {
       'tsMs': Schema.int(
         description:
-            'Anchor timestamp, milliseconds since epoch. Usually a log '
-            'entry\'s timestampMs or an HTTP request\'s startTimeMs.',
+            'Anchor timestamp (ms since epoch), e.g. a log entry\'s timestampMs.',
       ),
       'windowMs': Schema.int(
         description:
-            'Half-width of the window in milliseconds (matches anchor +/- '
-            'windowMs). Default 1000, hard cap 30000.',
+            'Half-width window in ms (anchor +/- windowMs). Default 1000, cap '
+            '30000.',
       ),
       'sessionId': Schema.int(
         description:
-            'Which session to read. Omit to auto-resolve: explicit view '
-            '(session_open) -> sole attached session -> error if 2+ attached.',
+            'Session to read from. Omit to auto-resolve (the sole attached '
+            'session, or the one you opened).',
       ),
       'appNameContains': Schema.string(
-        description:
-            'Alternative to sessionId: case-insensitive substring on a '
-            'currently-attached app name.',
+        description: 'Pick the session by app-name substring instead of sessionId.',
       ),
       'isolateId': Schema.string(
-        description:
-            'Optional: restrict both sides to one isolate. Omit to merge all.',
+        description: 'Restrict both sides to one isolate. Omit to merge all.',
       ),
       'limit': Schema.int(
-        description:
-            'Max items returned PER SIDE (logs and requests each). Default '
-            '20, hard cap 100.',
+        description: 'Max items per side (logs and requests). Default 20, cap 100.',
       ),
     },
     required: ['tsMs'],
