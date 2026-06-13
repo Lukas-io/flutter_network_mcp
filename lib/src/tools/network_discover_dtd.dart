@@ -9,33 +9,20 @@ import 'result.dart';
 final networkDiscoverDtdTool = Tool(
   name: 'network_discover_dtd',
   description:
-      'List Dart Tooling Daemon (DTD) instances on this machine so you can '
-      'pick one to attach to without the user pasting a URI. Reads the '
-      'standard package:dtd discovery directory; each entry includes the '
-      'FULL ws:// URI with security token, plus workspaceRoot / pid / '
-      'dartVersion / isLive / matchesCwd. Use when the MCP started '
-      'without --dtd-uri or when multiple DTDs are running. Default scope '
-      'is "live processes whose workspaceRoot matches cwd"; pass '
-      '`cwdMatch:false` for everything, `includeStale:true` to include '
-      'dead-pid candidates (auto-attach should usually skip those).',
+      'List DTD instances on this machine (with full ws:// URI + token, '
+      'workspaceRoot, pid, isLive) so you can attach without a pasted URI. '
+      'Use when the server started without --dtd-uri or several DTDs run. '
+      'Defaults to live, cwd-matching ones.',
   inputSchema: Schema.object(
     properties: {
       'cwdMatch': Schema.bool(
-        description:
-            'Restrict to candidates whose workspaceRoot equals the server\'s '
-            'current working directory. Default true. Pass false to see '
-            'every DTD on the machine.',
+        description: 'Restrict to DTDs whose workspaceRoot matches the cwd. Default true.',
       ),
       'includeStale': Schema.bool(
-        description:
-            'Include candidates whose recorded pid no longer responds to '
-            'the OS "exists?" probe (kill -0 on POSIX, tasklist on Windows). '
-            'Stale discovery files persist when Dart processes die '
-            'uncleanly. Default false — auto-attach should not use these.',
+        description: 'Include dead-pid candidates (stale discovery files). Default false.',
       ),
       'limit': Schema.int(
-        description: 'Max candidates returned (default 5, hard cap 20). '
-            'Sorted best-first: live > matchesCwd > newer epoch.',
+        description: 'Max candidates (default 5, cap 20). Best-first.',
       ),
     },
   ),

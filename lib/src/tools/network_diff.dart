@@ -12,35 +12,27 @@ import 'result.dart';
 final networkDiffTool = Tool(
   name: 'network_diff',
   description:
-      'Compare two captured requests side-by-side to see what changed: '
-      'status, method, URL, response headers, and (when both bodies are '
-      'utf8) a line-based body diff. Use this when investigating a '
-      'regression — a request that used to work now fails, or two '
-      'similar-looking requests behave differently. Also useful to confirm '
-      'two requests really are identical when you suspect they are. Both '
-      'ids must live in the SAME session.',
+      'Compare two captured requests: status, method, URL, response headers, '
+      'and a line-based body diff. Use to investigate a regression (a request '
+      'that used to work now fails) or confirm two are identical. Both ids '
+      'must be in the same session.',
   inputSchema: Schema.object(
     properties: {
       'idA': Schema.string(description: 'First request id.'),
       'idB': Schema.string(description: 'Second request id.'),
       'sessionId': Schema.int(
         description:
-            'Which session both ids belong to. Omit to auto-resolve: '
-            'explicit view (session_open) → sole attached session → error '
-            'if 2+ attached.',
+            'Session to read from. Omit to auto-resolve (the sole attached '
+            'session, or the one you opened).',
       ),
       'appNameContains': Schema.string(
-        description:
-            'Alternative to sessionId — case-insensitive substring on a '
-            'currently-attached app name.',
+        description: 'Pick the session by app-name substring instead of sessionId.',
       ),
       'maxBodyLines': Schema.int(
-        description: 'Max body lines to diff (default 200, hard cap 1000).',
+        description: 'Max body lines to diff (default 200, cap 1000).',
       ),
       'maxLineLength': Schema.int(
-        description:
-            'Max chars per diffed line (default 2000, hard cap 8000). Longer '
-            'lines get an «…+N chars» suffix.',
+        description: 'Max chars per diffed line (default 2000, cap 8000).',
       ),
     },
     required: ['idA', 'idB'],

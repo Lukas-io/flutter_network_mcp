@@ -17,10 +17,9 @@ const _ruleKeys = [
 final alertsConfigTool = Tool(
   name: 'alerts_config',
   description:
-      'Read or update alert rule settings. Pass no args (or `get:true`) for '
-      'a read. Pass `set:{slowThresholdMs?, rules?:{rule_key:bool}}` to '
-      'mutate. Changes apply IMMEDIATELY to subsequent capture ticks and log '
-      'events — no restart needed. Per-process; resets on server restart.',
+      'Read or update alert rules. No args (or get:true) reads; '
+      'set:{slowThresholdMs?, rules?:{rule_key:bool}} mutates. Applies '
+      'immediately; per-process, resets on restart.',
   inputSchema: Schema.object(
     properties: {
       'get': Schema.bool(description: 'True (default when `set` not given) to read current config.'),

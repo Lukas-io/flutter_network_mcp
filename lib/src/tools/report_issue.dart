@@ -13,34 +13,27 @@ const String _kIssueNewBase =
 final reportIssueTool = Tool(
   name: 'report_issue',
   description:
-      'File a GitHub issue against this MCP from an agent turn — no need '
-      'to copy-paste anywhere. Two types: "bug" (code issue, wrong output, '
-      'crash) or "ux" (works but feels awkward / confusing / slow / unclear). '
-      'When `gh` CLI is available, posts via `gh issue create`. Otherwise '
-      'returns a paste-ready GitHub deep-link URL the user can open in one '
-      'click. Titles + bodies are PATH-REDACTED before they leave the '
-      'machine — same redactor that scrubs telemetry stack frames.',
+      'File a GitHub issue against this MCP from an agent turn. type "bug" '
+      '(wrong output / crash) or "ux" (awkward / confusing / slow). Posts via '
+      'gh CLI if available, else returns a paste-ready URL. Titles and bodies '
+      'are path-redacted before submission.',
   inputSchema: Schema.object(
     properties: {
       'type': Schema.string(
         description: '"bug" or "ux". Picks the matching label + template.',
       ),
       'title': Schema.string(
-        description:
-            'One-line summary of the issue. Will be path-redacted before '
-            'submission.',
+        description: 'One-line summary. Path-redacted before submission.',
       ),
       'body': Schema.string(
         description:
-            'Issue body in GitHub-flavored markdown. Include context the '
-            'maintainer needs — what broke, what you expected, the failing '
-            'tool call. Will be path-redacted before submission.',
+            'Issue body (markdown): what broke, what you expected, the '
+            'failing tool call. Path-redacted.',
       ),
       'auto': Schema.bool(
         description:
-            'When true (default), tries `gh issue create` and reports the '
-            'resulting URL. When false (or `gh` isn\'t installed), returns '
-            'a paste-ready deep-link URL instead.',
+            'Try gh issue create (default true); false returns a paste-ready '
+            'URL.',
       ),
     },
     required: ['type', 'title', 'body'],

@@ -14,62 +14,38 @@ const int _kPairsHardMax = 100;
 final networkCorrelateTool = Tool(
   name: 'network_correlate',
   description:
-      'Find correlated HTTP requests across multiple captured sessions — '
-      'the typed companion to network_query SQL for the common '
-      '"webhook originator + receiver" pattern. Example: sanga_mobile '
-      'sends POST /webhook/order with body containing "txn-abc-123"; '
-      'sanga_driver receives POST /handlers/webhook a few hundred ms '
-      'later with the same id in its body. `network_correlate` finds '
-      'both halves in one call.\n\n'
-      '**Required:** `sessionIds:[int]` (explicit, no auto-resolve — '
-      'cross-session aggregation is intentional, the agent must pick '
-      'which apps to compare) and `pattern:string` (substring searched '
-      'via FTS5 in URLs and/or bodies). **Optional:** `timeWindowMs` to '
-      'only return pairs whose start times fall within that window of '
-      'each other; `which` to scope to url / request / response only. '
-      'Hard caps: 8 sessions per call, 100 pair results, 500 raw matches '
-      'per session.',
+      'Find correlated HTTP requests across sessions (the typed version of '
+      'network_query for the "webhook originator + receiver" pattern: one app '
+      'sends a request carrying a shared id, another receives it). Requires '
+      'explicit sessionIds (cross-session is intentional) and a pattern '
+      'substring.',
   inputSchema: Schema.object(
     properties: {
       'sessionIds': Schema.list(
         description:
-            'REQUIRED — list of session ids to correlate across. Get them '
-            'from network_status.attached[].sessionId or session_list. '
-            'Hard cap of 8 sessions per call (cross-session aggregation '
-            'is bounded by design — use network_query for wider sweeps).',
+            'REQUIRED. Session ids to correlate across (from network_status '
+            'or session_list). Cap 8.',
         items: Schema.int(),
       ),
       'pattern': Schema.string(
         description:
-            'REQUIRED — substring to search for (a correlation id, a '
-            'shared URL fragment, an error string). Phrase-quoted in '
-            'FTS5 so hyphens / colons / special chars work naturally.',
+            'REQUIRED. Substring to match (a correlation id, shared URL '
+            'fragment, error string).',
       ),
       'which': Schema.string(
-        description:
-            'Column to match: "url" | "request" | "response" | "any" '
-            '(default). Use "response" to chase responses containing an '
-            'error id; "request" to chase shared body fields; "url" for '
-            'matching path fragments.',
+        description: 'Match "url" | "request" | "response" | "any" (default).',
       ),
       'timeWindowMs': Schema.int(
         description:
-            'Optional — only return pairs whose start times fall within '
-            'this many milliseconds of each other. Useful for tight '
-            'request → webhook pairs (try 1000–5000ms). Omit to return '
-            'every pair regardless of timing.',
+            'Only return pairs whose start times are within this many ms of '
+            'each other (try 1000-5000). Omit for all pairs.',
       ),
       'limit': Schema.int(
-        description:
-            'Max pairs returned (default 20, hard cap 100). Pairs are '
-            'sorted by smallest time delta first (tightest pairs at the '
-            'top). Per-session match cap is separate (perSessionLimit).',
+        description: 'Max pairs (default 20, cap 100), tightest first.',
       ),
       'perSessionLimit': Schema.int(
         description:
-            'Max raw matches per session BEFORE pairing (default 100, '
-            'hard cap 500). Bounds memory + context regardless of pattern '
-            'noisiness — a single noisy session can\'t drown the others.',
+            'Max raw matches per session before pairing (default 100, cap 500).',
       ),
     },
     required: ['sessionIds', 'pattern'],
