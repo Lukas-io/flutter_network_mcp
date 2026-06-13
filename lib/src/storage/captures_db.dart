@@ -380,6 +380,118 @@ class CapturesDao {
     return _rowToMap(rows.first);
   }
 
+  // ----- websocket frames (0.9.0) -----
+
+  /// Records (or refreshes) one captured WebSocket connection. `conn_id` is the
+  /// companion package's per-process id; idempotent across polls since the
+  /// companion re-reports open connections on every drain.
+  void upsertWsConnection(
+    int sessionId, {
+    required int connId,
+    String? host,
+    int? port,
+    String? path,
+    int? startedMs,
+    String? isolateId,
+  }) {
+    _db.execute(
+      'INSERT INTO websocket_connections(session_id, conn_id, host, port, path, started_ms, isolate_id) '
+      'VALUES (?,?,?,?,?,?,?) '
+      'ON CONFLICT(session_id, conn_id) DO UPDATE SET '
+      '  host=COALESCE(excluded.host, host), '
+      '  port=COALESCE(excluded.port, port), '
+      '  path=COALESCE(excluded.path, path), '
+      '  started_ms=COALESCE(started_ms, excluded.started_ms), '
+      '  isolate_id=COALESCE(excluded.isolate_id, isolate_id)',
+      [sessionId, connId, host, port, path, startedMs, isolateId],
+    );
+  }
+
+  /// Appends one reassembled, decompressed WebSocket message. Frames are
+  /// drained exactly once from the companion buffer, so plain inserts (no
+  /// dedup) are correct.
+  void insertWsFrame(
+    int sessionId, {
+    required int connId,
+    int? tsMs,
+    required String direction,
+    required String opcode,
+    int? length,
+    required bool isText,
+    required bool compressed,
+    String? preview,
+  }) {
+    _db.execute(
+      'INSERT INTO websocket_frames(session_id, conn_id, ts_ms, direction, opcode, length, is_text, compressed, preview) '
+      'VALUES (?,?,?,?,?,?,?,?,?)',
+      [
+        sessionId,
+        connId,
+        tsMs,
+        direction,
+        opcode,
+        length,
+        isText ? 1 : 0,
+        compressed ? 1 : 0,
+        preview,
+      ],
+    );
+  }
+
+  /// One row per WebSocket connection with frame counts, byte totals, and last
+  /// activity. Newest-first by start time.
+  List<Map<String, Object?>> queryWsConnections({
+    required int sessionId,
+    int limit = 50,
+  }) {
+    final rows = _db.select(
+      'SELECT c.session_id, c.conn_id, c.host, c.port, c.path, c.started_ms, c.isolate_id, '
+      '  COUNT(f.id) AS frame_count, '
+      "  SUM(CASE WHEN f.direction='out' THEN 1 ELSE 0 END) AS out_count, "
+      "  SUM(CASE WHEN f.direction='in' THEN 1 ELSE 0 END) AS in_count, "
+      '  COALESCE(SUM(f.length),0) AS total_bytes, '
+      '  MAX(f.ts_ms) AS last_ms '
+      'FROM websocket_connections c '
+      'LEFT JOIN websocket_frames f '
+      '  ON f.session_id=c.session_id AND f.conn_id=c.conn_id '
+      'WHERE c.session_id=? '
+      'GROUP BY c.session_id, c.conn_id '
+      'ORDER BY c.started_ms DESC LIMIT ?',
+      [sessionId, limit],
+    );
+    return rows.map(_rowToMap).toList();
+  }
+
+  /// Frames for one connection, newest-first by insertion order, optionally
+  /// filtered by direction ('out' | 'in').
+  List<Map<String, Object?>> queryWsFrames({
+    required int sessionId,
+    required int connId,
+    String? direction,
+    int limit = 100,
+  }) {
+    final clauses = <String>['session_id = ?', 'conn_id = ?'];
+    final params = <Object?>[sessionId, connId];
+    if (direction != null && direction.isNotEmpty) {
+      clauses.add('direction = ?');
+      params.add(direction);
+    }
+    final rows = _db.select(
+      'SELECT * FROM websocket_frames WHERE ${clauses.join(' AND ')} ORDER BY id DESC LIMIT ?',
+      [...params, limit],
+    );
+    return rows.map(_rowToMap).toList();
+  }
+
+  Map<String, Object?>? getWsConnection(int sessionId, int connId) {
+    final rows = _db.select(
+      'SELECT * FROM websocket_connections WHERE session_id=? AND conn_id=?',
+      [sessionId, connId],
+    );
+    if (rows.isEmpty) return null;
+    return _rowToMap(rows.first);
+  }
+
   // ----- logs -----
 
   int insertLog({
@@ -1154,6 +1266,8 @@ class CapturesDao {
       'http_requests',
       'http_bodies',
       'socket_events',
+      'websocket_connections',
+      'websocket_frames',
       'log_records',
       'alerts',
       'http_search_map',
