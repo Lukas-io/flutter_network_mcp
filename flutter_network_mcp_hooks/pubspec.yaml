@@ -1,0 +1,15 @@
+name: flutter_network_mcp_hooks
+description: >-
+  Companion runtime hooks for flutter_network_mcp. Captures WebSocket frames
+  the Dart VM service cannot see and drains them via a VM service extension
+  the MCP polls. Add as a dev_dependency and call install() in debug mode.
+version: 0.1.0
+publish_to: none
+repository: https://github.com/Lukas-io/flutter_network_mcp
+
+environment:
+  sdk: ^3.5.0
+
+dev_dependencies:
+  lints: ^4.0.0
+  test: ^1.24.0

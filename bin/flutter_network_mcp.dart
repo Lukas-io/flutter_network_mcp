@@ -114,7 +114,8 @@ Future<void> _runMain(List<String> args) async {
       'capabilities',
       help:
           'Comma-separated allowlist of categories to enable. Options: '
-          'http, sockets, logs, alerts, search, sessions, sql, admin. '
+          'http, sockets, realtime, logs, alerts, search, sessions, sql, '
+          'admin. '
           'Lifecycle (status/attach/detach) is always on. Falls back to '
           'FLUTTER_NETWORK_MCP_CAPABILITIES. Mutually exclusive with --disable.',
     )

@@ -36,10 +36,20 @@ class VmClient {
   VmService? _service;
   Uri? _connectedUri;
 
+  /// VM service extension the `flutter_network_mcp_hooks` companion registers
+  /// to surface captured WebSocket frames (0.9.0 / schema v8).
+  static const String realtimeExtension =
+      'ext.flutter_network_mcp.getRealtimeProfile';
+
   /// All known HTTP-profiling isolates, keyed by isolate id. Populated by
   /// [discoverHttpProfilingIsolates] and refreshed by the capture writer's
   /// periodic re-scan (Phase 10).
   final Map<String, IsolateInfo> _isolates = {};
+
+  /// Isolates that expose [realtimeExtension] (the companion package's drain
+  /// endpoint). Subset of [_isolates], populated by discovery. Empty when the
+  /// app does not install `flutter_network_mcp_hooks`.
+  final Set<String> _realtimeIsolates = {};
 
   bool get isConnected => _service != null;
   Uri? get connectedUri => _connectedUri;
@@ -53,6 +63,13 @@ class VmClient {
   /// Snapshot of every currently-tracked HTTP-profiling isolate.
   List<IsolateInfo> get httpProfilingIsolates =>
       List.unmodifiable(_isolates.values);
+
+  /// Isolate ids exposing the companion's realtime drain extension.
+  List<String> get realtimeIsolates => List.unmodifiable(_realtimeIsolates);
+
+  /// True when the app has installed `flutter_network_mcp_hooks` (at least one
+  /// isolate exposes [realtimeExtension]).
+  bool get hasRealtimeExtension => _realtimeIsolates.isNotEmpty;
 
   VmService get service =>
       _service ?? (throw StateError('VM service is not connected.'));
@@ -85,6 +102,7 @@ class VmClient {
     final vm = service;
     final info = await vm.getVM();
     final found = <String, IsolateInfo>{};
+    final realtime = <String>{};
     for (final ref in info.isolates ?? const <IsolateRef>[]) {
       final id = ref.id;
       if (id == null) continue;
@@ -97,10 +115,14 @@ class VmClient {
           number: isolate.number ?? ref.number,
         );
       }
+      if (rpcs.contains(realtimeExtension)) realtime.add(id);
     }
     _isolates
       ..clear()
       ..addAll(found);
+    _realtimeIsolates
+      ..clear()
+      ..addAll(realtime);
     return httpProfilingIsolates;
   }
 
@@ -163,6 +185,23 @@ class VmClient {
     return service.clearSocketProfile(isolateId);
   }
 
+  /// Drains the companion package's WebSocket capture buffer via
+  /// [realtimeExtension]. Returns the decoded payload
+  /// (`{ok, installed, connections, frames}` on drain; `{ok, cleared}` when
+  /// `clear` is set). Throws if the isolate does not expose the extension
+  /// (i.e. the app has not installed `flutter_network_mcp_hooks`).
+  Future<Map<String, Object?>> getRealtimeProfile(
+    String isolateId, {
+    bool clear = false,
+  }) async {
+    final response = await service.callServiceExtension(
+      realtimeExtension,
+      isolateId: isolateId,
+      args: clear ? {'clear': 'true'} : null,
+    );
+    return response.json ?? const {};
+  }
+
   // ===== Back-compat single-isolate facades =====
   //
   // These delegate to the per-isolate variants using the first known
@@ -205,6 +244,7 @@ class VmClient {
     final svc = _service;
     _service = null;
     _isolates.clear();
+    _realtimeIsolates.clear();
     _connectedUri = null;
     if (svc != null) await svc.dispose();
   }
