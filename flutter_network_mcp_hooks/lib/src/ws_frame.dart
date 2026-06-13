@@ -32,11 +32,20 @@ class WsOpcode {
 
 /// One decoded WebSocket frame: header flags + the UNMASKED payload bytes.
 class WsFrame {
-  WsFrame({required this.fin, required this.opcode, required this.payload});
+  WsFrame({
+    required this.fin,
+    required this.opcode,
+    required this.payload,
+    this.rsv1 = false,
+  });
 
   final bool fin;
   final int opcode;
   final Uint8List payload;
+
+  /// RSV1 bit. With permessage-deflate (RFC 7692) it marks the first frame of
+  /// a COMPRESSED message; the payload is then raw DEFLATE, not the final data.
+  final bool rsv1;
 
   bool get isText => opcode == WsOpcode.text;
   bool get isBinary => opcode == WsOpcode.binary;
@@ -99,6 +108,7 @@ class WsFrameDecoder {
     final b0 = b[i];
     final b1 = b[i + 1];
     final fin = (b0 & 0x80) != 0;
+    final rsv1 = (b0 & 0x40) != 0;
     final opcode = b0 & 0x0F;
     final masked = (b1 & 0x80) != 0;
     var len = b1 & 0x7F;
@@ -137,7 +147,7 @@ class WsFrameDecoder {
     i += len;
 
     return _Parsed(
-      WsFrame(fin: fin, opcode: opcode, payload: payload),
+      WsFrame(fin: fin, opcode: opcode, payload: payload, rsv1: rsv1),
       i,
     );
   }
