@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'capture_buffer.dart';
+import 'realtime_extension.dart';
 import 'ws_frame.dart';
 
 /// Installs the runtime hooks that capture WebSocket frames. Call once, in
@@ -32,6 +33,8 @@ class FlutterNetworkMcpHooks {
     HttpOverrides.global = _HooksHttpOverrides(_previous);
     _installed = true;
     RealtimeCapture.instance.installed = true;
+    // Surface the capture buffer to the MCP over the VM service.
+    RealtimeExtension.register();
   }
 
   /// Restores the previous [HttpOverrides]. Mainly for tests.
