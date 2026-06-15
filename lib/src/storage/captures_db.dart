@@ -517,10 +517,11 @@ class CapturesDao {
     List<String>? argKeys,
     int? durationMs,
     int? resultBytes,
+    int? estimatedTokens,
   }) {
     _db.execute(
       'INSERT INTO tool_events(ts_ms, correlation_id, tool, outcome, arg_keys, '
-      'duration_ms, result_bytes) VALUES (?,?,?,?,?,?,?)',
+      'duration_ms, result_bytes, estimated_tokens) VALUES (?,?,?,?,?,?,?,?)',
       [
         tsMs,
         correlationId,
@@ -529,6 +530,7 @@ class CapturesDao {
         argKeys == null ? null : jsonEncode(argKeys),
         durationMs,
         resultBytes,
+        estimatedTokens,
       ],
     );
   }
@@ -583,7 +585,7 @@ class CapturesDao {
     if (sinceMs == null) {
       return _db
           .select(
-            'SELECT correlation_id, tool, outcome, duration_ms, result_bytes '
+            'SELECT correlation_id, tool, outcome, duration_ms, result_bytes, estimated_tokens '
             'FROM tool_events ORDER BY correlation_id, id LIMIT ?',
             [limit],
           )
@@ -592,7 +594,7 @@ class CapturesDao {
     }
     return _db
         .select(
-          'SELECT correlation_id, tool, outcome, duration_ms, result_bytes '
+          'SELECT correlation_id, tool, outcome, duration_ms, result_bytes, estimated_tokens '
           'FROM tool_events WHERE ts_ms >= ? ORDER BY correlation_id, id LIMIT ?',
           [sinceMs, limit],
         )
@@ -612,7 +614,7 @@ class CapturesDao {
     return _db
         .select(
           'SELECT id, ts_ms, correlation_id, tool, outcome, duration_ms, '
-          'result_bytes FROM tool_events WHERE id > ? '
+          'result_bytes, estimated_tokens FROM tool_events WHERE id > ? '
           'ORDER BY correlation_id, id LIMIT ?',
           [afterId, limit],
         )

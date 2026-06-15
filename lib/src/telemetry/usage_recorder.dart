@@ -87,6 +87,7 @@ class UsageRecorder {
         argKeys: argKeysFrom(request.arguments),
         durationMs: durationMs,
         resultBytes: resultBytesOf(result),
+        estimatedTokens: _estimateTokens(result),
       );
     } catch (e) {
       io.stderr.writeln('UsageRecorder: record failed (ignored): $e');
@@ -119,6 +120,14 @@ class UsageRecorder {
       if (c is TextContent) n += c.text.length;
     }
     return n;
+  }
+
+  /// Rough token estimate for the result text (4 chars per token, UTF-8 proxy).
+  /// Null when the result is empty or null so the DB column stays NULL rather
+  /// than storing a meaningless 0.
+  static int? _estimateTokens(CallToolResult? result) {
+    final bytes = resultBytesOf(result);
+    return bytes > 0 ? (bytes / 4).round() : null;
   }
 
   static String _randomToken() {

@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.8.14] — 2026-06-14
+
+### Changed — token usage tracking in usage_stats
+
+Adds estimated token cost tracking to the tool-usage telemetry pipeline (schema v8).
+
+- Every tool call now records `estimated_tokens` (result text length / 4, a UTF-8 approximation) alongside the existing `result_bytes` in the `tool_events` table.
+- `usage_stats` surfaces two new per-tool fields: `avgEstimatedTokens` (mean tokens per call) and `totalEstimatedTokens` (lifetime sum). The top-level response also gains `totalEstimatedTokens` across all tools in the window.
+- Schema migrated v7 to v8 via `ALTER TABLE tool_events ADD COLUMN estimated_tokens INTEGER`. Additive; existing rows get NULL and are excluded from averages.
+- 216 tests green; `dart analyze` clean.
+
 ## [0.8.13] — 2026-06-13
 
 ### Changed — compact, accurate tool definitions
