@@ -184,12 +184,22 @@ FutureOr<CallToolResult> networkList(CallToolRequest request) async {
       );
     }
 
+    final noFilters = activeFilters.isEmpty;
+    final isFullRescan = sinceArg != null && sinceArg <= 0;
+
     final nextSteps = <String>[];
     if (filtered.isNotEmpty) {
+      if (noFilters && isFullRescan && caps.isEnabled(Category.search)) {
+        nextSteps.add(
+          'network_search query:"..." — if you are looking for a specific '
+          'endpoint or value, search is faster and uses fewer tokens than '
+          're-calling network_list',
+        );
+      }
       nextSteps.add(
         'network_get id:"${filtered.first['id']}" — full headers + body for the top match',
       );
-      if (caps.isEnabled(Category.search)) {
+      if (caps.isEnabled(Category.search) && !(noFilters && isFullRescan)) {
         nextSteps.add('network_search query:"..." — find requests by body/url content');
       }
       if (caps.isEnabled(Category.alerts)) {
@@ -197,12 +207,15 @@ FutureOr<CallToolResult> networkList(CallToolRequest request) async {
       }
     } else {
       if (cursor != null) {
-        // The read was incremental and came back empty, but the session may
-        // already hold requests. Lead with since:0 so the agent sees them
-        // instead of concluding there is no traffic.
         nextSteps.add(
           'network_list since:0 to re-scan everything captured this session '
           '(this read was incremental and only shows new requests)',
+        );
+      }
+      if (caps.isEnabled(Category.search)) {
+        nextSteps.add(
+          'network_search query:"..." — searches body, URL, and headers; '
+          'faster than repeated network_list calls when looking for something specific',
         );
       }
       nextSteps.add('Drive the app to generate traffic, then call network_list again');
@@ -278,12 +291,22 @@ FutureOr<CallToolResult> _historyList(
       );
     }
 
+    final noFilters = activeFilters.isEmpty;
+    final isFullRescan = sinceArg == null || sinceArg <= 0;
+
     final nextSteps = <String>[];
     if (out.isNotEmpty) {
+      if (noFilters && isFullRescan && caps.isEnabled(Category.search)) {
+        nextSteps.add(
+          'network_search sessionId:$sid query:"..." — if you are looking for '
+          'a specific endpoint or value, search is faster and uses fewer tokens '
+          'than re-calling network_list',
+        );
+      }
       nextSteps.add(
         'network_get id:"${out.first['id']}" — full headers + body for the top match',
       );
-      if (caps.isEnabled(Category.search)) {
+      if (caps.isEnabled(Category.search) && !(noFilters && isFullRescan)) {
         nextSteps.add('network_search sessionId:$sid query:"..." — full-text search this session');
       }
       if (maxStart != null) {
