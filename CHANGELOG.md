@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.8.15] — 2026-06-14
+
+### Changed — network_list nudges agents toward network_search
+
+When an agent calls `network_list` with `since:0` (explicit full re-scan) and no filters, the top `nextSteps` hint now surfaces `network_search` first: "if you are looking for a specific endpoint or value, search is faster and uses fewer tokens than re-calling network_list." Applies to both live and history modes. The empty-result path also now surfaces the search hint explicitly. No behaviour change for filtered or incremental reads. 216 tests green.
+
 ## [0.8.13] — 2026-06-13
 
 ### Changed — compact, accurate tool definitions
