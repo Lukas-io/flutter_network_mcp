@@ -3,7 +3,7 @@
 // Bump [currentVersion] when changing this file and add a migration block in
 // the migration switch in database.dart.
 
-const int currentVersion = 7;
+const int currentVersion = 8;
 
 const List<String> initialSchema = [
   '''
@@ -164,14 +164,15 @@ const List<String> initialSchema = [
   ''',
   '''
   CREATE TABLE tool_events (
-    id             INTEGER PRIMARY KEY AUTOINCREMENT,
-    ts_ms          INTEGER NOT NULL,
-    correlation_id TEXT NOT NULL,
-    tool           TEXT NOT NULL,
-    outcome        TEXT NOT NULL,
-    arg_keys       TEXT,
-    duration_ms    INTEGER,
-    result_bytes   INTEGER
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts_ms            INTEGER NOT NULL,
+    correlation_id   TEXT NOT NULL,
+    tool             TEXT NOT NULL,
+    outcome          TEXT NOT NULL,
+    arg_keys         TEXT,
+    duration_ms      INTEGER,
+    result_bytes     INTEGER,
+    estimated_tokens INTEGER
   )
   ''',
   'CREATE INDEX idx_tool_events_corr ON tool_events(correlation_id, ts_ms)',
@@ -312,4 +313,11 @@ const List<String> migrationV6toV7 = [
   ''',
   'CREATE INDEX IF NOT EXISTS idx_tool_events_corr ON tool_events(correlation_id, ts_ms)',
   'CREATE INDEX IF NOT EXISTS idx_tool_events_tool ON tool_events(tool, ts_ms)',
+];
+
+/// v7 -> v8: token-usage tracking. Adds [estimated_tokens] to [tool_events]
+/// (result_bytes / 4, a UTF-8 approximation). Surfaced in [usage_stats] as
+/// avgEstimatedTokens and totalEstimatedTokens per tool.
+const List<String> migrationV7toV8 = [
+  'ALTER TABLE tool_events ADD COLUMN estimated_tokens INTEGER',
 ];
