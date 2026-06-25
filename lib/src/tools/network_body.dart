@@ -159,17 +159,30 @@ FutureOr<CallToolResult> networkBody(CallToolRequest request) async {
         }
       }
       if (!fetched) {
-        return errorResult(
-          'body fetch failed: ${lastError ?? "no isolate had id $id"}',
-          extra: {
-            'id': id,
-            'triedIsolates': candidateIsolates,
-            'nextSteps': const [
-              'network_get id:<id> — confirm the request still exists',
-              'Pass isolateId explicitly if you know which isolate produced this',
-            ],
-          },
-        );
+        // Live fetch failed (the VM stopped responding and the RPC hit its
+        // deadline, or the request is in-flight/collected). Degrade to the
+        // persisted body if the writer already captured it, flagged so the
+        // agent knows it is the DB snapshot rather than dead-ending.
+        final dbBytes = CapturesDao().getBody(scope.sessionId, id, which);
+        if (dbBytes != null && dbBytes.isNotEmpty) {
+          bytes = dbBytes;
+          final dbRow = CapturesDao().getHttpRequest(scope.sessionId, id);
+          mimeType = dbRow?['content_type'] as String?;
+          source = 'live-db-fallback';
+        } else {
+          return errorResult(
+            'body fetch failed: ${lastError ?? "no isolate had id $id"}',
+            extra: {
+              'id': id,
+              'triedIsolates': candidateIsolates,
+              'nextSteps': const [
+                'network_query sql:"SELECT which,size FROM http_bodies WHERE vm_id=\'<id>\'" — check whether the body is persisted',
+                'network_get id:<id> — confirm the request still exists',
+                'network_status — check whether the VM service is responsive (the app may be paused at a breakpoint)',
+              ],
+            },
+          );
+        }
       }
     }
 
@@ -212,6 +225,12 @@ FutureOr<CallToolResult> networkBody(CallToolRequest request) async {
         : 'Returned bytes $start–$end of $total for $which body of $id (${decoded?.encoding ?? "n/a"}); call again with offset:$nextOffset for more.';
 
     final warnings = <String>[];
+    if (source == 'live-db-fallback') {
+      warnings.add(
+        'Live body fetch failed (VM unresponsive or request gone); returned '
+        'the persisted DB copy instead.',
+      );
+    }
     if (decode == 'utf8' && decoded?.encoding == 'base64') {
       warnings.add('Requested utf8 decode but content appears non-text — returned base64 instead.');
     }
