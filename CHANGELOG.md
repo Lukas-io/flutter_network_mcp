@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.9.0] — 2026-06-25
+
+### Added — Tier-2 telemetry: recovery paths + self-correction effectiveness
+
+Measures whether the agent-intuitive features actually work, pure aggregation over the Tier-1 data (no new capture, no DB migration).
+
+- **Outcome-tagged transitions**: every tool->next-tool edge now carries `fromOutcome` (the prior call's ok/error/empty). Turns the playbook into recovery paths, "when network_get errors, what does the agent do next?"
+- **`selfCorrection`**: after a tool returned an error/empty (and therefore a recovery payload, errorKind nextSteps, inline schema, or availableHosts), did the NEXT call in the same turn succeed? Reported per (tool, signal) with `occurrences` / `recovered` / `recoveryRate`. This is the direct measure of whether schema-on-error and availableHosts actually help.
+
+Collector: `tool_transitions` gains `from_outcome`; new `tool_self_correction` table; `migrations/002-tier2-recovery.sql` migrates an existing deployment; README documents the recovery-path + effectiveness queries. Privacy-safe (counts only). 245 tests green.
+
 ## [0.8.15] — 2026-06-25
 
 ### Added — Tier-1 telemetry datapoints (error composition, context cost, degradation)

@@ -152,10 +152,36 @@ async function insertUsageRollup(db, p, now) {
       db
         .prepare(
           `INSERT INTO tool_transitions
-            (rollup_id, machine_hash, from_tool, to_tool, count)
-           VALUES (?,?,?,?,?)`,
+            (rollup_id, machine_hash, from_tool, from_outcome, to_tool, count)
+           VALUES (?,?,?,?,?,?)`,
         )
-        .bind(rollupId, machine, tr.from ?? null, tr.to ?? null, tr.count ?? 0),
+        .bind(
+          rollupId,
+          machine,
+          tr.from ?? null,
+          tr.fromOutcome ?? null,
+          tr.to ?? null,
+          tr.count ?? 0,
+        ),
+    );
+  }
+
+  for (const sc of p.selfCorrection ?? []) {
+    stmts.push(
+      db
+        .prepare(
+          `INSERT INTO tool_self_correction
+            (rollup_id, machine_hash, tool, signal, occurrences, recovered)
+           VALUES (?,?,?,?,?,?)`,
+        )
+        .bind(
+          rollupId,
+          machine,
+          sc.tool ?? null,
+          sc.signal ?? null,
+          sc.occurrences ?? 0,
+          sc.recovered ?? 0,
+        ),
     );
   }
 
