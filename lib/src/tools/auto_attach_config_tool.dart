@@ -3,36 +3,28 @@ import 'dart:async';
 import 'package:dart_mcp/server.dart';
 
 import '../config/auto_attach_config.dart';
+import 'error_kind.dart';
 import 'result.dart';
 
 final autoAttachConfigTool = Tool(
   name: 'auto_attach_config',
   description:
-      'Reads + mutates the persistent auto-attach config at '
-      '<data-dir>/auto-attach.json. Lets the agent honor the '
-      '0.6.2-shipped autoAttachSuggestion without asking the user to '
-      'edit shell rc — confirm with the user, then call this tool with '
-      'action:"add" to persist. Resolution order at next launch is '
-      'file → env var → CLI flag (each overriding the prior), so this '
-      'file is the durable default.',
+      'Read or persist the auto-attach allowlist at '
+      '<data-dir>/auto-attach.json. Lets the agent honor an '
+      'autoAttachSuggestion without the user editing shell rc (confirm '
+      'first, then action:"add").',
   inputSchema: Schema.object(
     properties: {
       'action': Schema.string(
-        description:
-            '"list" (default — read current state, no writes), "add" '
-            '(append app to allowlist), "remove" (drop app from allowlist), '
-            '"clear" (empty the allowlist + denylist completely).',
+        description: '"list" (default), "add", "remove", "clear".',
       ),
       'app': Schema.string(
         description:
-            'Allowlist pattern to add or remove. Case-insensitive '
-            'substring matched against DTD app names — typically the '
-            'package name like "sanga_mobile". Required for add / remove.',
+            'Allowlist pattern (case-insensitive substring of the app name, '
+            'e.g. "sanga_mobile"). Required for add/remove.',
       ),
       'deny': Schema.string(
-        description:
-            'Denylist pattern to add. Optional; supply alongside `app` '
-            'on an "add" call to also extend the denylist (rarely used).',
+        description: 'Denylist pattern to add alongside app (rare).',
       ),
     },
   ),
@@ -57,6 +49,7 @@ FutureOr<CallToolResult> autoAttachConfig(CallToolRequest request) async {
       return errorResult(
         'auto_attach_config: unknown action "$action". Expected '
         'list | add | remove | clear.',
+        kind: ErrorKind.badArgument,
       );
   }
 }
@@ -78,6 +71,7 @@ CallToolResult _add({required String? app, required String? deny}) {
   if (app == null || app.isEmpty) {
     return errorResult(
       'auto_attach_config add: `app` is required.',
+      kind: ErrorKind.badArgument,
       extra: const {
         'nextSteps': [
           'auto_attach_config action:"add" app:"sanga_mobile"',
@@ -123,6 +117,7 @@ CallToolResult _remove({required String? app}) {
   if (app == null || app.isEmpty) {
     return errorResult(
       'auto_attach_config remove: `app` is required.',
+      kind: ErrorKind.badArgument,
     );
   }
   final current = AutoAttachConfig.allowedPatterns.toList();

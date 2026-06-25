@@ -83,6 +83,58 @@ void main() {
         reason: 'must not bridge across the turn boundary');
   });
 
+  test('errorKinds breakdown + degraded count per tool (Tier-1 datapoints)', () {
+    final rows = [
+      {'correlation_id': 't', 'tool': 'network_get', 'outcome': 'error', 'error_kind': 'unresponsive_vm'},
+      {'correlation_id': 't', 'tool': 'network_get', 'outcome': 'error', 'error_kind': 'unresponsive_vm'},
+      {'correlation_id': 't', 'tool': 'network_get', 'outcome': 'error', 'error_kind': 'not_found'},
+      {'correlation_id': 't', 'tool': 'network_get', 'outcome': 'ok', 'degraded': 1},
+      {'correlation_id': 't', 'tool': 'network_get', 'outcome': 'ok'},
+    ];
+    final get = toolNamed(summarizeUsage(rows), 'network_get');
+    expect(get['errorKinds'], {'unresponsive_vm': 2, 'not_found': 1});
+    expect(get['degraded'], 1);
+    // errorKinds is sorted busiest-first.
+    expect((get['errorKinds'] as Map).keys.first, 'unresponsive_vm');
+  });
+
+  test('no error_kind / no degraded -> fields omitted (back-compat)', () {
+    final rows = [
+      {'correlation_id': 't', 'tool': 'x', 'outcome': 'ok'},
+    ];
+    final x = toolNamed(summarizeUsage(rows), 'x');
+    expect(x.containsKey('errorKinds'), isFalse);
+    expect(x.containsKey('degraded'), isFalse);
+  });
+
+  test('selfCorrection: after an error, did the next call recover (Tier-2)', () {
+    final rows = [
+      {'correlation_id': 't1', 'tool': 'network_get', 'outcome': 'error', 'error_kind': 'unresponsive_vm'},
+      {'correlation_id': 't1', 'tool': 'network_search', 'outcome': 'ok'},
+      {'correlation_id': 't2', 'tool': 'network_get', 'outcome': 'error', 'error_kind': 'unresponsive_vm'},
+      {'correlation_id': 't2', 'tool': 'network_get', 'outcome': 'error', 'error_kind': 'unresponsive_vm'},
+    ];
+    final sc = (summarizeUsage(rows)['selfCorrection'] as List)
+        .cast<Map<String, Object?>>();
+    final entry = sc.firstWhere(
+        (e) => e['tool'] == 'network_get' && e['signal'] == 'unresponsive_vm');
+    expect(entry['occurrences'], 2);
+    expect(entry['recovered'], 1);
+    expect(entry['recoveryRate'], closeTo(0.5, 0.001));
+  });
+
+  test('transitions are tagged with the prior call outcome (Tier-2)', () {
+    final rows = [
+      {'correlation_id': 't', 'tool': 'network_get', 'outcome': 'error', 'error_kind': 'not_found'},
+      {'correlation_id': 't', 'tool': 'network_search', 'outcome': 'ok'},
+    ];
+    final trans = (summarizeUsage(rows)['transitions'] as List)
+        .cast<Map<String, Object?>>();
+    final t = trans.firstWhere((x) => x['from'] == 'network_get');
+    expect(t['fromOutcome'], 'error');
+    expect(t['to'], 'network_search');
+  });
+
   test('p50/p95 latency from durations', () {
     final rows = [
       for (var i = 1; i <= 100; i++) ev('t', 'x', 'ok', dur: i * 10),

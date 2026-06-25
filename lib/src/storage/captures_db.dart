@@ -12,8 +12,6 @@ import 'database.dart';
 class CapturesDao {
   sql.Database get _db => CapturesDatabase.instance.raw;
 
-  // ----- sessions -----
-
   int createSession({
     required String? appName,
     required String? vmServiceUri,
@@ -102,8 +100,6 @@ class CapturesDao {
     if (rows.isEmpty) return null;
     return _rowToMap(rows.first);
   }
-
-  // ----- http -----
 
   /// Upserts a request summary. Returns true if a new row was inserted.
   ///
@@ -321,8 +317,6 @@ class CapturesDao {
     if (raw is List<int>) return Uint8List.fromList(raw);
     return null;
   }
-
-  // ----- sockets -----
 
   void upsertSocket(
     int sessionId,
@@ -616,8 +610,6 @@ class CapturesDao {
     return rows.map(_rowToMap).toList();
   }
 
-  // ----- tool usage analytics (#79, Phase 1) -----
-
   /// Records one tool call. Privacy-safe by construction: [argKeys] are the
   /// parameter NAMES the agent passed, never their values; no URLs / hosts /
   /// bodies / log text are stored.
@@ -629,10 +621,14 @@ class CapturesDao {
     List<String>? argKeys,
     int? durationMs,
     int? resultBytes,
+    int? estimatedTokens,
+    String? errorKind,
+    bool degraded = false,
   }) {
     _db.execute(
       'INSERT INTO tool_events(ts_ms, correlation_id, tool, outcome, arg_keys, '
-      'duration_ms, result_bytes) VALUES (?,?,?,?,?,?,?)',
+      'duration_ms, result_bytes, estimated_tokens, error_kind, degraded) '
+      'VALUES (?,?,?,?,?,?,?,?,?,?)',
       [
         tsMs,
         correlationId,
@@ -641,6 +637,9 @@ class CapturesDao {
         argKeys == null ? null : jsonEncode(argKeys),
         durationMs,
         resultBytes,
+        estimatedTokens,
+        errorKind,
+        degraded ? 1 : 0,
       ],
     );
   }
@@ -695,7 +694,7 @@ class CapturesDao {
     if (sinceMs == null) {
       return _db
           .select(
-            'SELECT correlation_id, tool, outcome, duration_ms, result_bytes '
+            'SELECT correlation_id, tool, outcome, duration_ms, result_bytes, estimated_tokens, error_kind, degraded '
             'FROM tool_events ORDER BY correlation_id, id LIMIT ?',
             [limit],
           )
@@ -704,7 +703,7 @@ class CapturesDao {
     }
     return _db
         .select(
-          'SELECT correlation_id, tool, outcome, duration_ms, result_bytes '
+          'SELECT correlation_id, tool, outcome, duration_ms, result_bytes, estimated_tokens, error_kind, degraded '
           'FROM tool_events WHERE ts_ms >= ? ORDER BY correlation_id, id LIMIT ?',
           [sinceMs, limit],
         )
@@ -724,15 +723,13 @@ class CapturesDao {
     return _db
         .select(
           'SELECT id, ts_ms, correlation_id, tool, outcome, duration_ms, '
-          'result_bytes FROM tool_events WHERE id > ? '
+          'result_bytes, estimated_tokens, error_kind, degraded FROM tool_events WHERE id > ? '
           'ORDER BY correlation_id, id LIMIT ?',
           [afterId, limit],
         )
         .map(_rowToMap)
         .toList();
   }
-
-  // ----- alerts -----
 
   /// Inserts or merges an alert.
   ///
@@ -801,9 +798,6 @@ class CapturesDao {
       );
       return true;
     } on sql.SqliteException catch (e) {
-      // The legacy UNIQUE(session_id, kind, source_id) constraint catches
-      // the rare race where the same source event delivers twice (e.g. a
-      // duplicate VM-service tick). Treat as already-handled.
       if (e.extendedResultCode == 2067) return false;
       rethrow;
     }
@@ -949,7 +943,6 @@ class CapturesDao {
   }
 
   static String _severityRankSql(String col, String op, int rank) {
-    // SQLite CASE expression: maps severity string → numeric for comparison.
     return '(CASE $col '
         '''WHEN 'critical' THEN 4 '''
         '''WHEN 'error' THEN 3 '''
@@ -957,8 +950,6 @@ class CapturesDao {
         '''WHEN 'info' THEN 1 '''
         'ELSE 0 END) $op $rank';
   }
-
-  // ----- ignored hosts -----
 
   bool addIgnoredHost(String host, {String? reason}) {
     final before = _db.select('SELECT 1 FROM ignored_hosts WHERE host=?', [host]);
@@ -989,13 +980,9 @@ class CapturesDao {
     return {for (final r in rows) r['host'] as String};
   }
 
-  // ----- session note -----
-
   void setSessionNote(int sessionId, String? note) {
     _db.execute('UPDATE sessions SET note=? WHERE id=?', [note, sessionId]);
   }
-
-  // ----- FTS5 search -----
 
   /// Indexes a (utf8-decoded) request/response body pair into the FTS table.
   /// Pass `null` for empty bodies. Idempotent on (session_id, vm_id).
@@ -1018,9 +1005,6 @@ class CapturesDao {
         'INSERT INTO http_search(rowid, url, content_request, content_response) VALUES (?,?,?,?)',
         [rowid, url, requestText ?? '', responseText ?? ''],
       );
-      // Update isolate_id if the row was missing it (e.g. first indexed
-      // before isolate tagging arrived) — COALESCE preserves an existing
-      // tag rather than overwriting with NULL.
       _db.execute(
         'UPDATE http_search_map SET isolate_id = COALESCE(?, isolate_id) '
         'WHERE session_id=? AND vm_id=?',
@@ -1046,10 +1030,6 @@ class CapturesDao {
     String? isolateId,
     int limit = 20,
   }) {
-    // Wrap the user query as an FTS5 phrase so characters like '-', ':', '('
-    // don't get parsed as FTS5 operators. Anyone wanting raw operator syntax
-    // (AND/OR/NEAR) can pre-quote pieces themselves; this only protects the
-    // default case. Double-quote characters in the query are doubled to escape.
     final phrase = '"${query.replaceAll('"', '""')}"';
     final String matchExpr;
     switch (which) {
@@ -1167,14 +1147,11 @@ class CapturesDao {
     return out;
   }
 
-  // ----- session maintenance -----
-
   /// Deletes a session and (via CASCADE) all its requests, bodies, sockets,
   /// logs, alerts, and FTS index rows.
   bool deleteSession(int sessionId) {
     final exists = _db.select('SELECT 1 FROM sessions WHERE id=?', [sessionId]);
     if (exists.isEmpty) return false;
-    // Manually drop FTS rows since SQLite FTS5 doesn't honor FK cascades.
     _db.execute(
       'DELETE FROM http_search WHERE rowid IN (SELECT rowid FROM http_search_map WHERE session_id=?)',
       [sessionId],
@@ -1287,7 +1264,6 @@ class CapturesDao {
     final pageSize = _db.select('PRAGMA page_size').first['page_size'] as int;
     final journalMode = _db.select('PRAGMA journal_mode').first['journal_mode'];
     final fileBytes = pageCount * pageSize;
-    // Bodies on-disk size: sum of size column.
     final bodiesBytes = _db
             .select('SELECT COALESCE(SUM(size),0) AS n FROM http_bodies')
             .first['n'] as int? ??
@@ -1313,8 +1289,6 @@ class CapturesDao {
     _db.execute('VACUUM');
     _db.execute('PRAGMA optimize');
   }
-
-  // ----- redacted_headers (config) -----
 
   bool addRedactedHeader(String name, {String? reason}) {
     final norm = name.trim().toLowerCase();
@@ -1357,8 +1331,6 @@ class CapturesDao {
     return {...defaults, ...extra.map((r) => r['name'] as String)};
   }
 
-  // ----- alert_patterns (config) -----
-
   int addAlertPattern({
     required String kind,
     required String regex,
@@ -1368,8 +1340,7 @@ class CapturesDao {
     if (kind.trim().isEmpty || regex.trim().isEmpty) {
       throw ArgumentError('kind and regex are required');
     }
-    _severityRank(severity); // validates
-    // Validate regex compiles.
+    _severityRank(severity);
     RegExp(regex, multiLine: true);
     _db.execute(
       'INSERT INTO alert_patterns(kind, regex, severity, label, added_at) VALUES (?,?,?,?,?)',
@@ -1391,8 +1362,6 @@ class CapturesDao {
     return rows.map(_rowToMap).toList();
   }
 
-  // ----- raw query -----
-
   /// Read-only SQL escape hatch. Caps row count, per-cell length, and BLOB
   /// values get summarized as `{type:'blob', size:N}` so a `SELECT * FROM
   /// http_bodies` doesn't dump megabytes back through MCP.
@@ -1409,8 +1378,6 @@ class CapturesDao {
     if (trimmed.contains(';')) {
       throw ArgumentError('Multiple statements are not allowed.');
     }
-    // Wrap in a subquery so we can apply the row cap regardless of whether
-    // the user already wrote their own LIMIT.
     final result = _db.select('SELECT * FROM ($trimmed) LIMIT $rowCap');
     return result.map((r) => _capRow(r, cellMaxChars)).toList();
   }
@@ -1435,7 +1402,53 @@ class CapturesDao {
     return out;
   }
 
-  // ----- helpers -----
+  /// Table name -> column names for the user-facing capture tables. Returned
+  /// inline on a network_query SQL error so the agent can fix its query on the
+  /// next call instead of guessing or looping. Excludes sqlite internals and
+  /// FTS shadow tables.
+  Map<String, List<String>> schemaDigest() {
+    const hidden = {
+      'http_search',
+      '_meta',
+    };
+    final out = <String, List<String>>{};
+    final tables = _db.select(
+      "SELECT name FROM sqlite_schema WHERE type='table' "
+      "AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '%_fts%' "
+      "AND name NOT LIKE 'http_search_%' ORDER BY name",
+    );
+    for (final t in tables) {
+      final name = t['name'] as String?;
+      if (name == null || hidden.contains(name)) continue;
+      final cols = _db.select('PRAGMA table_info($name)');
+      out[name] = [for (final c in cols) c['name'] as String];
+    }
+    return out;
+  }
+
+  /// Distinct request hosts captured in [sessionId], busiest first. Returned
+  /// inline when network_search finds nothing, so the agent can pick a real
+  /// term instead of retrying blind.
+  List<String> distinctHosts(int sessionId, {int limit = 15}) {
+    final rows = _db.select(
+      'SELECT host, COUNT(*) AS n FROM http_requests '
+      'WHERE session_id=? AND host IS NOT NULL AND host != \'\' '
+      'GROUP BY host ORDER BY n DESC LIMIT ?',
+      [sessionId, limit],
+    );
+    return [for (final r in rows) r['host'] as String];
+  }
+
+  /// Number of requests in [sessionId] whose bodies are indexed for full-text
+  /// search. Lets network_search tell "nothing indexed yet" (writer still
+  /// backfilling) apart from "your term did not match".
+  int searchIndexSize(int sessionId) {
+    final rows = _db.select(
+      'SELECT COUNT(*) AS n FROM http_search_map WHERE session_id=?',
+      [sessionId],
+    );
+    return (rows.first['n'] as int?) ?? 0;
+  }
 
   Map<String, Object?> _rowToMap(sql.Row r) {
     return {for (final k in r.keys) k: r[k]};

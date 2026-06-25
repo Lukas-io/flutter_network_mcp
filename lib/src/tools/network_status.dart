@@ -54,28 +54,21 @@ Map<String, Object?> attachedStatusEntry(AttachedSession a) {
 final networkStatusTool = Tool(
   name: 'network_status',
   description:
-      'Call this FIRST, every session. Tells you: which apps are reachable '
-      'to attach to (`knownApps` — pick one of these for network_attach), '
-      'WHICH sessions are currently attached (`attached: []` list — '
-      'multi-attach in 0.6.0 allows N concurrent sessions), what alerts '
-      'are queued, what capabilities are enabled, and which DB on disk '
-      'you\'re writing to. Auto-opens the DTD connection so `knownApps` '
-      'populates without a separate attach step — pass `connectDtd:false` '
-      'to skip that probe. Reads `nextSteps` from the response to know '
-      'what to call next.',
+      'Call first, every session. Reports apps you can attach to (knownApps), '
+      'which sessions are attached, queued alerts, enabled capabilities, and '
+      'the DB path. Auto-opens DTD so knownApps populates. Follow its '
+      'nextSteps.',
   inputSchema: Schema.object(
     properties: {
       'connectDtd': Schema.bool(
         description:
-            'When true (default), opportunistically opens the DTD connection '
-            'to populate knownApps. Set false for a pure in-process state read.',
+            'Open DTD to populate knownApps. Default true; false for a pure '
+            'state read.',
       ),
       'attachIfOne': Schema.bool(
         description:
-            'When true AND zero sessions are currently attached AND exactly '
-            'one app is visible on DTD, auto-attaches and includes the '
-            'attach result under `autoAttached`. Default false — status '
-            'stays a read-only check.',
+            'If nothing is attached and exactly one app is visible, attach it '
+            '(returned under autoAttached). Default false.',
       ),
     },
   ),

@@ -5,6 +5,7 @@ import 'package:dart_mcp/server.dart';
 import '../state/session.dart';
 import '../storage/captures_db.dart';
 import '../util/filters.dart';
+import 'error_kind.dart';
 import 'result.dart';
 
 const int _kMaxSessions = 8;
@@ -14,62 +15,38 @@ const int _kPairsHardMax = 100;
 final networkCorrelateTool = Tool(
   name: 'network_correlate',
   description:
-      'Find correlated HTTP requests across multiple captured sessions — '
-      'the typed companion to network_query SQL for the common '
-      '"webhook originator + receiver" pattern. Example: sanga_mobile '
-      'sends POST /webhook/order with body containing "txn-abc-123"; '
-      'sanga_driver receives POST /handlers/webhook a few hundred ms '
-      'later with the same id in its body. `network_correlate` finds '
-      'both halves in one call.\n\n'
-      '**Required:** `sessionIds:[int]` (explicit, no auto-resolve — '
-      'cross-session aggregation is intentional, the agent must pick '
-      'which apps to compare) and `pattern:string` (substring searched '
-      'via FTS5 in URLs and/or bodies). **Optional:** `timeWindowMs` to '
-      'only return pairs whose start times fall within that window of '
-      'each other; `which` to scope to url / request / response only. '
-      'Hard caps: 8 sessions per call, 100 pair results, 500 raw matches '
-      'per session.',
+      'Find correlated HTTP requests across sessions (the typed version of '
+      'network_query for the "webhook originator + receiver" pattern: one app '
+      'sends a request carrying a shared id, another receives it). Requires '
+      'explicit sessionIds (cross-session is intentional) and a pattern '
+      'substring.',
   inputSchema: Schema.object(
     properties: {
       'sessionIds': Schema.list(
         description:
-            'REQUIRED — list of session ids to correlate across. Get them '
-            'from network_status.attached[].sessionId or session_list. '
-            'Hard cap of 8 sessions per call (cross-session aggregation '
-            'is bounded by design — use network_query for wider sweeps).',
+            'REQUIRED. Session ids to correlate across (from network_status '
+            'or session_list). Cap 8.',
         items: Schema.int(),
       ),
       'pattern': Schema.string(
         description:
-            'REQUIRED — substring to search for (a correlation id, a '
-            'shared URL fragment, an error string). Phrase-quoted in '
-            'FTS5 so hyphens / colons / special chars work naturally.',
+            'REQUIRED. Substring to match (a correlation id, shared URL '
+            'fragment, error string).',
       ),
       'which': Schema.string(
-        description:
-            'Column to match: "url" | "request" | "response" | "any" '
-            '(default). Use "response" to chase responses containing an '
-            'error id; "request" to chase shared body fields; "url" for '
-            'matching path fragments.',
+        description: 'Match "url" | "request" | "response" | "any" (default).',
       ),
       'timeWindowMs': Schema.int(
         description:
-            'Optional — only return pairs whose start times fall within '
-            'this many milliseconds of each other. Useful for tight '
-            'request → webhook pairs (try 1000–5000ms). Omit to return '
-            'every pair regardless of timing.',
+            'Only return pairs whose start times are within this many ms of '
+            'each other (try 1000-5000). Omit for all pairs.',
       ),
       'limit': Schema.int(
-        description:
-            'Max pairs returned (default 20, hard cap 100). Pairs are '
-            'sorted by smallest time delta first (tightest pairs at the '
-            'top). Per-session match cap is separate (perSessionLimit).',
+        description: 'Max pairs (default 20, cap 100), tightest first.',
       ),
       'perSessionLimit': Schema.int(
         description:
-            'Max raw matches per session BEFORE pairing (default 100, '
-            'hard cap 500). Bounds memory + context regardless of pattern '
-            'noisiness — a single noisy session can\'t drown the others.',
+            'Max raw matches per session before pairing (default 100, cap 500).',
       ),
     },
     required: ['sessionIds', 'pattern'],
@@ -79,11 +56,11 @@ final networkCorrelateTool = Tool(
 FutureOr<CallToolResult> networkCorrelate(CallToolRequest request) async {
   final args = request.arguments ?? const <String, Object?>{};
 
-  // Parse + validate sessionIds.
   final sessionsRaw = args['sessionIds'];
   if (sessionsRaw is! List || sessionsRaw.isEmpty) {
     return errorResult(
       'Missing or invalid `sessionIds` — must be a non-empty list of ints.',
+      kind: ErrorKind.badArgument,
       extra: const {
         'nextSteps': [
           'network_status — list currently-attached session ids',
@@ -98,6 +75,7 @@ FutureOr<CallToolResult> networkCorrelate(CallToolRequest request) async {
     if (v is! int) {
       return errorResult(
         'sessionIds must contain only integers; got `${v.runtimeType}`.',
+        kind: ErrorKind.badArgument,
         extra: const {
           'nextSteps': [
             'Retry with sessionIds:[14,15] — integers, not strings',
@@ -112,6 +90,7 @@ FutureOr<CallToolResult> networkCorrelate(CallToolRequest request) async {
       'Too many sessionIds (${sessionIds.length}); hard cap is '
       '$_kMaxSessions per call. Pick the most relevant subset, or use '
       'network_query for unrestricted SQL.',
+      kind: ErrorKind.badArgument,
       extra: {
         'sessionIdsRequested': sessionIds,
         'cap': _kMaxSessions,
@@ -126,6 +105,7 @@ FutureOr<CallToolResult> networkCorrelate(CallToolRequest request) async {
   final pattern = args['pattern'] as String?;
   if (pattern == null || pattern.trim().isEmpty) {
     return errorResult('Missing or empty `pattern` — must be a non-empty string.',
+        kind: ErrorKind.badArgument,
         extra: const {
       'nextSteps': [
         'Retry with pattern:"<correlation id or substring>"',
@@ -137,6 +117,7 @@ FutureOr<CallToolResult> networkCorrelate(CallToolRequest request) async {
   if (!const {'url', 'request', 'response', 'any'}.contains(whichArg)) {
     return errorResult(
       '`which` must be one of: url | request | response | any.',
+      kind: ErrorKind.badArgument,
       extra: const {
         'nextSteps': ['Retry with which:"any" (the default)'],
       },
@@ -147,6 +128,7 @@ FutureOr<CallToolResult> networkCorrelate(CallToolRequest request) async {
   if (timeWindowMs != null && timeWindowMs < 0) {
     return errorResult(
       '`timeWindowMs` must be >= 0.',
+      kind: ErrorKind.badArgument,
       extra: const {
         'nextSteps': ['Omit timeWindowMs for no window, or pass a positive int'],
       },
@@ -160,7 +142,6 @@ FutureOr<CallToolResult> networkCorrelate(CallToolRequest request) async {
     hardMax: _kPerSessionHardMax,
   );
 
-  // Run the FTS5 query for each session.
   final List<Map<String, Object?>> allMatches;
   try {
     allMatches = CapturesDao().correlateAcrossSessions(
@@ -170,7 +151,7 @@ FutureOr<CallToolResult> networkCorrelate(CallToolRequest request) async {
       perSessionLimit: perSessionLimit,
     );
   } catch (e) {
-    return errorResult('network_correlate failed: $e', extra: {
+    return errorResult('network_correlate failed: $e', kind: ErrorKind.badQuery, extra: {
       'sessionIds': sessionIds,
       'pattern': pattern,
       'nextSteps': const [
@@ -180,8 +161,6 @@ FutureOr<CallToolResult> networkCorrelate(CallToolRequest request) async {
     });
   }
 
-  // Group matches by session + tag with appName from the registry when
-  // the session is currently attached.
   final registry = SessionRegistry.instance;
   final perSessionMatches = <int, List<Map<String, Object?>>>{
     for (final sid in sessionIds) sid: [],
@@ -206,10 +185,6 @@ FutureOr<CallToolResult> networkCorrelate(CallToolRequest request) async {
   }
   final totalMatches = allMatches.length;
 
-  // Build cross-session pairs. Tightest time delta first.
-  // For >2 sessions, every unordered pair of sessions contributes its own
-  // cross-product. This stays bounded by the per-session cap × pair-of-
-  // sessions count, and the hard `limit` ceiling.
   final pairs = <Map<String, Object?>>[];
   for (int i = 0; i < sessionIds.length; i++) {
     for (int j = i + 1; j < sessionIds.length; j++) {

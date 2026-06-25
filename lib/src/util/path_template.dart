@@ -30,7 +30,6 @@
 String pathTemplate(String path) {
   if (path.isEmpty) return path;
 
-  // Strip query + fragment. Path identity is routing-level; params aren't.
   var working = path;
   final qIdx = working.indexOf('?');
   if (qIdx != -1) working = working.substring(0, qIdx);

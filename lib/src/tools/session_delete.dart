@@ -5,20 +5,20 @@ import 'package:dart_mcp/server.dart';
 import '../config/capabilities.dart';
 import '../state/session.dart';
 import '../storage/captures_db.dart';
+import 'error_kind.dart';
 import 'result.dart';
 
 final sessionDeleteTool = Tool(
   name: 'session_delete',
   description:
-      'Permanently deletes a session and ALL its captured data: requests, '
-      'bodies, sockets, logs, alerts, and search index rows. Cannot be '
-      'undone. Default is dry-run; pass `confirm:true` to actually delete. '
-      'Refuses to delete the LIVE session (detach first).',
+      'Permanently deletes a session and all its data (requests, bodies, '
+      'sockets, logs, alerts, index). Cannot be undone; dry-run unless '
+      'confirm:true. Refuses the live session (detach first).',
   inputSchema: Schema.object(
     properties: {
       'id': Schema.int(description: 'Session id to delete.'),
       'confirm': Schema.bool(
-        description: 'Required true to actually delete. Default false (dry-run reports what would be removed).',
+        description: 'Required true to delete; default false (dry-run).',
       ),
     },
     required: ['id'],
@@ -31,14 +31,14 @@ FutureOr<CallToolResult> sessionDelete(CallToolRequest request) async {
   final id = args['id'] as int?;
   final confirm = (args['confirm'] as bool?) ?? false;
   if (id == null) {
-    return errorResult('Missing required arg `id`.', extra: const {
+    return errorResult('Missing required arg `id`.', kind: ErrorKind.badArgument, extra: const {
       'nextSteps': ['session_list — find a session id'],
     });
   }
 
   final session = Session.instance;
   if (session.liveSessionId == id) {
-    return errorResult('Cannot delete the live session — call network_detach first.', extra: {
+    return errorResult('Cannot delete the live session — call network_detach first.', kind: ErrorKind.badArgument, extra: {
       'liveSessionId': id,
       'nextSteps': const [
         'network_detach — gracefully end the live session',
@@ -50,7 +50,7 @@ FutureOr<CallToolResult> sessionDelete(CallToolRequest request) async {
   final dao = CapturesDao();
   final row = dao.getSessionWithCounts(id);
   if (row == null) {
-    return errorResult('Session $id not found.', extra: const {
+    return errorResult('Session $id not found.', kind: ErrorKind.notFound, extra: const {
       'nextSteps': ['session_list — see valid session ids'],
     });
   }

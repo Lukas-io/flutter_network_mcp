@@ -4,16 +4,15 @@ import 'package:dart_mcp/server.dart';
 
 import '../alerts/alert_rules.dart';
 import '../storage/captures_db.dart';
+import 'error_kind.dart';
 import 'result.dart';
 
 final alertPatternsTool = Tool(
   name: 'alert_patterns',
   description:
-      'Manage custom alert regex patterns. The detector evaluates these '
-      'against every captured log message (in addition to the built-in '
-      'flutter_error and log_keyword rules). Useful for project-specific '
-      'signals like "\\[OrderService\\].*fail" or "websocket: dropping '
-      'frame". Patterns are persisted in the DB and hydrated on server start.',
+      'Manage custom alert regex patterns matched against every captured log '
+      'message (alongside the built-in flutter_error / log_keyword rules), '
+      'for project-specific signals. Persisted in the DB.',
   inputSchema: Schema.object(
     properties: {
       'action': Schema.string(description: '"list" (default) | "add" | "remove".'),
@@ -74,17 +73,17 @@ FutureOr<CallToolResult> alertPatterns(CallToolRequest request) async {
         final severity = args['severity'] as String?;
         final label = args['label'] as String?;
         if (kind == null || kind.isEmpty) {
-          return errorResult('`kind` is required for action=add.', extra: const {
+          return errorResult('`kind` is required for action=add.', kind: ErrorKind.badArgument, extra: const {
             'nextSteps': ['Retry with kind:"<your-label>" (free text, e.g. "order_fail")'],
           });
         }
         if (regex == null || regex.isEmpty) {
-          return errorResult('`regex` is required for action=add.', extra: const {
+          return errorResult('`regex` is required for action=add.', kind: ErrorKind.badArgument, extra: const {
             'nextSteps': ['Retry with regex:"<Dart RegExp source>"'],
           });
         }
         if (severity == null || severity.isEmpty) {
-          return errorResult('`severity` is required for action=add.', extra: const {
+          return errorResult('`severity` is required for action=add.', kind: ErrorKind.badArgument, extra: const {
             'nextSteps': ['Retry with severity:"warning" (or info | error | critical)'],
           });
         }
@@ -117,7 +116,7 @@ FutureOr<CallToolResult> alertPatterns(CallToolRequest request) async {
       case 'remove':
         final id = args['id'] as int?;
         if (id == null) {
-          return errorResult('`id` is required for action=remove.', extra: const {
+          return errorResult('`id` is required for action=remove.', kind: ErrorKind.badArgument, extra: const {
             'nextSteps': ['alert_patterns action:"list" — find the id to remove'],
           });
         }
@@ -136,20 +135,20 @@ FutureOr<CallToolResult> alertPatterns(CallToolRequest request) async {
           ],
         });
       default:
-        return errorResult('`action` must be list, add, or remove.', extra: const {
+        return errorResult('`action` must be list, add, or remove.', kind: ErrorKind.badArgument, extra: const {
           'nextSteps': ['Retry with action:"list" to inspect current patterns'],
         });
     }
   } on ArgumentError catch (e) {
-    return errorResult('alert_patterns: ${e.message}', extra: const {
+    return errorResult('alert_patterns: ${e.message}', kind: ErrorKind.badArgument, extra: const {
       'nextSteps': ['Verify severity is one of: info, warning, error, critical'],
     });
   } on FormatException catch (e) {
-    return errorResult('Invalid regex: ${e.message}', extra: const {
+    return errorResult('Invalid regex: ${e.message}', kind: ErrorKind.badQuery, extra: const {
       'nextSteps': ['Test your regex pattern locally before submitting'],
     });
   } catch (e) {
-    return errorResult('alert_patterns failed: $e', extra: const {
+    return errorResult('alert_patterns failed: $e', kind: ErrorKind.internal, extra: const {
       'nextSteps': ['alert_patterns action:"list" — see what is currently registered'],
     });
   }

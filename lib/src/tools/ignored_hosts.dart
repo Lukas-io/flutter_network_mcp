@@ -4,21 +4,20 @@ import 'package:dart_mcp/server.dart';
 
 import '../state/session.dart';
 import '../storage/captures_db.dart';
+import 'error_kind.dart';
 import 'result.dart';
 
 final ignoredHostsTool = Tool(
   name: 'ignored_hosts',
   description:
-      'Manage the host allowlist. The capture writer SKIPS any HTTP request '
-      'whose host matches an entry — useful for filtering out analytics, '
-      'crash reporters, and noisy telemetry so the agent sees only the '
-      'requests that matter. Exact hostname match (case-insensitive). '
-      'Already-captured rows are NOT removed; only NEW captures are filtered.',
+      'Manage the host skiplist: the capture writer drops requests whose host '
+      'matches an entry (analytics, crash reporters, noisy telemetry). Exact '
+      'case-insensitive match; only new captures are filtered.',
   inputSchema: Schema.object(
     properties: {
       'action': Schema.string(description: '"list" (default) | "add" | "remove".'),
       'host': Schema.string(description: 'Hostname (required for add/remove). No scheme, no port.'),
-      'reason': Schema.string(description: 'Optional reason — surfaces in list output.'),
+      'reason': Schema.string(description: 'Optional reason shown in list output.'),
     },
   ),
 );
@@ -58,14 +57,13 @@ FutureOr<CallToolResult> ignoredHosts(CallToolRequest request) async {
         });
       case 'add':
         if (host == null || host.isEmpty) {
-          return errorResult('`host` is required for action=add.', extra: const {
+          return errorResult('`host` is required for action=add.', kind: ErrorKind.badArgument, extra: const {
             'nextSteps': ['Retry with host:"<exact hostname, no scheme/port>"'],
           });
         }
         final isNew = dao.addIgnoredHost(host, reason: reason);
         Session.instance.captureWriter.refreshIgnoredHosts();
 
-        // Quick check: how many already-captured rows reference this host?
         int existingCount = 0;
         try {
           final rows = dao.rawSelect(
@@ -95,7 +93,7 @@ FutureOr<CallToolResult> ignoredHosts(CallToolRequest request) async {
         });
       case 'remove':
         if (host == null || host.isEmpty) {
-          return errorResult('`host` is required for action=remove.', extra: const {
+          return errorResult('`host` is required for action=remove.', kind: ErrorKind.badArgument, extra: const {
             'nextSteps': ['ignored_hosts action:"list" — find the host to remove'],
           });
         }
@@ -113,12 +111,12 @@ FutureOr<CallToolResult> ignoredHosts(CallToolRequest request) async {
           ],
         });
       default:
-        return errorResult('`action` must be list, add, or remove.', extra: const {
+        return errorResult('`action` must be list, add, or remove.', kind: ErrorKind.badArgument, extra: const {
           'nextSteps': ['Retry with action:"list" to inspect current entries'],
         });
     }
   } catch (e) {
-    return errorResult('ignored_hosts failed: $e', extra: const {
+    return errorResult('ignored_hosts failed: $e', kind: ErrorKind.internal, extra: const {
       'nextSteps': ['ignored_hosts action:"list" — confirm current state'],
     });
   }

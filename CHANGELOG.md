@@ -4,6 +4,86 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.9.6] — 2026-06-25
+
+### Fixed — network_drift covers the whole timeline (not just recent N)
+
+network_drift previously scanned the most-recent 100 responses, so on a high-volume session the earliest pre-drift samples fell outside the window and a real shape change could read as "no drift" (found during the 0.9.5 live test). It now samples from BOTH ends of the timeline (oldest + newest), adds a `sinceMs` time window (0 = whole session), raises the decode cap to 1000, and reports `matchedTotal`. The oldest shape is always compared against the newest. 266 tests green.
+
+## [0.9.5] — 2026-06-25
+
+### Added — network_report (one-call session health triage)
+
+Capstone of the 0.9.x line. New tool: in one call, returns the worst error endpoints (ranked by error-rate x volume), the slowest endpoints (p95), pending alert count, and a **recommended next action** tailored to what is actually wrong, e.g. "Top problem: POST /login is failing 100% of 5 calls" -> network_search + network_drift it. Insight, not raw rows: the orientation call to run after network_status. Synthesizes the per-endpoint aggregator, the alert pipeline, and points at the 0.9.x tools (network_drift, alerts_drain). 264 tests green.
+
+## [0.9.4] — 2026-06-25
+
+### Added — network_replay_as_test (captured request -> runnable Dart test)
+
+New tool: emits a runnable Dart test (package:http + package:test) that replays a captured request and asserts its status code (optionally `assertBodyContains`). Uses a uniform `http.Request` so every method + body works. Auth headers are redacted (commented out) by default so the test is shareable; the agent fills in real credentials. Lets the agent iterate a regression test instead of re-driving the app (FUTURE_FEATURES backlog #1). 261 tests green.
+
+## [0.9.3] — 2026-06-25
+
+### Added — network_drift (response shape-drift detection)
+
+New tool: detects when an endpoint's response JSON contract changes mid-session. Decodes the captured JSON responses for a filtered endpoint (hostContains / pathContains), flattens each to a keyPath->type shape, and reports fields `added`, `removed`, or `changed` type vs the first sample, plus `firstDriftAt` (the request id + time where it changed). Answers "did the API contract drift" without eyeballing bodies. int/double both map to `number` and a lone null sample is ignored, so no false drift. Pure shape helpers (`jsonShape`, `diffShapes`) are tested. 258 tests green.
+
+## [0.9.2] — 2026-06-25
+
+### Added — network_diff_session ("what changed between two runs")
+
+New tool: diffs the current session against a baseline session by endpoint (method + host + pathTemplate, ids collapsed). Returns `newEndpoints` (appeared today), `goneEndpoints` (disappeared), and `changed` (a material error-rate shift >= 0.1 or a p95 latency regression of 2x either way, with now/baseline/delta). Answers "what is different about today's run" in one call instead of eyeballing two network_summarize outputs. Reuses the network_summarize per-endpoint aggregator; diff logic is a pure, tested function. 253 tests green.
+
+## [0.9.1] — 2026-06-25
+
+### Added — token-budget-aware responses
+
+`network_list` accepts a `maxTokens` budget (per-call, or a sticky `session_configure maxResponseTokens` default that applies session-wide). When set, the requests array is trimmed newest-first to fit, and the response reports `budget: {maxTokens, dropped}` plus a warning to page or raise the budget. Telemetry showed `network_list` is by far the heaviest tool (~11k tokens/call, ~46k max), so this directly reins in the agent's biggest context cost. Applies to both live and history reads; a tiny budget always keeps at least one row. Shared `trimToTokenBudget` helper. 249 tests green; logs_tail extension to follow.
+
+## [0.9.0] — 2026-06-25
+
+### Added — Tier-2 telemetry: recovery paths + self-correction effectiveness
+
+Measures whether the agent-intuitive features actually work, pure aggregation over the Tier-1 data (no new capture, no DB migration).
+
+- **Outcome-tagged transitions**: every tool->next-tool edge now carries `fromOutcome` (the prior call's ok/error/empty). Turns the playbook into recovery paths, "when network_get errors, what does the agent do next?"
+- **`selfCorrection`**: after a tool returned an error/empty (and therefore a recovery payload, errorKind nextSteps, inline schema, or availableHosts), did the NEXT call in the same turn succeed? Reported per (tool, signal) with `occurrences` / `recovered` / `recoveryRate`. This is the direct measure of whether schema-on-error and availableHosts actually help.
+
+Collector: `tool_transitions` gains `from_outcome`; new `tool_self_correction` table; `migrations/002-tier2-recovery.sql` migrates an existing deployment; README documents the recovery-path + effectiveness queries. Privacy-safe (counts only). 245 tests green.
+
+## [0.8.15] — 2026-06-25
+
+### Added — Tier-1 telemetry datapoints (error composition, context cost, degradation)
+
+Three richer signals now flow through the usage pipeline, so analysis answers "why", not just "how often". Schema v8 to v9.
+
+- **`errorKinds`** per tool: error calls are broken down by their typed `ErrorKind` (`bad_argument` / `unresponsive_vm` / `not_found` / ...). Turns a flat error rate into an actionable composition, `bad_argument`-heavy means the schema/docs confuse agents; `unresponsive_vm` means infra; `not_found` means stale ids.
+- **`degraded`** per tool: counts calls that fell back from the primary path (live VM read to DB snapshot), a direct measure of live-path reliability.
+- **`estimated_tokens`** is now shipped to the collector (captured locally since 0.8.14 but not stored server-side), so context-cost ranking is first-class.
+
+`tool_events` gains `error_kind` + `degraded` columns (v8 to v9 migration). `usage_stats` surfaces all three. Collector: `tool_stats` gains `estimated_tokens` + `degraded`, plus a new `tool_error_kinds` table; `collector/migrations/001-tier1-datapoints.sql` migrates an existing deployment. All privacy-safe (kinds, counts, sizes; never values/URLs/bodies). 243 tests green.
+
+## [0.8.14] — 2026-06-14
+
+### Changed — token usage tracking in usage_stats
+
+Adds estimated token cost tracking to the tool-usage telemetry pipeline (schema v8).
+
+- Every tool call now records `estimated_tokens` (result text length / 4, a UTF-8 approximation) alongside the existing `result_bytes` in the `tool_events` table.
+- `usage_stats` surfaces two new per-tool fields: `avgEstimatedTokens` (mean tokens per call) and `totalEstimatedTokens` (lifetime sum). The top-level response also gains `totalEstimatedTokens` across all tools in the window.
+- Schema migrated v7 to v8 via `ALTER TABLE tool_events ADD COLUMN estimated_tokens INTEGER`. Additive; existing rows get NULL and are excluded from averages.
+- 216 tests green; `dart analyze` clean.
+
+## [0.8.13] — 2026-06-13
+
+### Changed — compact, accurate tool definitions
+
+Rewrote every tool `description` and schema-property description (and the server `instructions` field) for the agent's handshake budget: one tight sentence on when/what plus the key constraint, dropping version tags, markdown, mechanism history, em dashes, and anything the schema already states. The recurring params (`sessionId` / `appNameContains` / `isolateId` / `since`) are standardized to one short phrasing across all read tools.
+
+- The `tools/list` handshake payload drops from **~46 KB to ~29 KB (about 36% off)**, so every agent session loads a leaner, sharper surface. ~16.9 KB of description text cut across 37 files.
+- Accuracy preserved: each tool still states when to reach for it and its one gotcha. No behaviour change (descriptions are strings); 216 tests still green.
+- The usage telemetry (live since 0.8.12) will show which tools get mispicked or never called, to guide further pruning with data instead of guesses.
+
 ## [0.8.12] — 2026-06-12
 
 ### Changed — telemetry collector is live

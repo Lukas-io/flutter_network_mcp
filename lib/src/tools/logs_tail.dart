@@ -8,6 +8,7 @@ import '../state/session.dart';
 import '../storage/captures_db.dart';
 import '../util/filters.dart';
 import '../util/scope.dart';
+import 'error_kind.dart';
 import 'result.dart';
 
 const int _kMessageTruncateBytes = 2048;
@@ -16,65 +17,48 @@ const int _kSevereLevel = 1200;
 final logsTailTool = Tool(
   name: 'logs_tail',
   description:
-      'Read recent app logs — the running app\'s `print`, `developer.log`, '
-      'stdout, and stderr. Use this when correlating a log line with a '
-      'nearby HTTP request, chasing an exception spotted via alerts_drain, '
-      'or just inspecting what the app is doing. Newest-first, '
-      'cursor-paginated (pass `since` for incremental polling). Live mode '
-      'reads from an in-memory ring buffer (size configurable via '
-      '`FLUTTER_NETWORK_MCP_LOG_BUFFER`, default 500); after session_open it '
-      'reads persisted log_records for the viewed session instead. Filter by '
-      '`levelMin` to suppress noisy info logs, or `messageContains` (one tag '
-      'or a list of tags, OR-matched) to grep the message body when loggers '
-      'are unnamed.',
+      'Read recent app logs (print, developer.log, stdout, stderr), '
+      'newest-first. Filter by levelMin or messageContains (one tag or a '
+      'list, OR-matched) when loggers are unnamed. After session_open, reads '
+      'history.',
   inputSchema: Schema.object(
     properties: {
       'sessionId': Schema.int(
         description:
-            'Which session\'s logs to read. Omit to auto-resolve: explicit '
-            'view (session_open) → sole attached session → error if 2+ '
-            'attached.',
+            'Session to read from. Omit to auto-resolve (the sole attached '
+            'session, or the one you opened).',
       ),
       'appNameContains': Schema.string(
-        description:
-            'Alternative to sessionId — case-insensitive substring on a '
-            'currently-attached app name.',
+        description: 'Pick the session by app-name substring instead of sessionId.',
       ),
       'since': Schema.int(
         description:
-            'Cursor — local id from a prior nextCursor. Omit to fetch the '
-            'most recent up to `limit`.',
+            'Cursor (a prior nextCursor). Omit for the most recent up to limit.',
       ),
       'levelMin': Schema.int(
         description:
-            'Minimum severity (package:logging scale 0–2000; WARNING=900, '
-            'SEVERE=1200). Applies only to Logging records, not stdout/stderr.',
+            'Min severity (logging scale: WARNING 900, SEVERE 1200). Logging '
+            'records only, not stdout/stderr.',
       ),
       'loggerContains': Schema.string(
-        description: 'Substring match (case-insensitive) on logger name.',
+        description: 'Case-insensitive substring on the logger name.',
       ),
       'messageContains': Schema.list(
         description:
-            'Substring match(es) (case-insensitive) on the log MESSAGE body, '
-            'OR-combined. Use this when loggers are unnamed (so loggerContains '
-            'matches nothing). Pass one tag, e.g. ["[EventTracker]"], or '
-            'several to get them all in one call, e.g. '
-            '["EventTracker","KycTier"]. Filtering happens server-side, so it '
-            'cuts response size before it reaches you.',
+            'Substring(s) on the message body, OR-matched. One tag or a list, '
+            'e.g. ["EventTracker","KycTier"]. Use when loggers are unnamed.',
         items: Schema.string(),
       ),
       'source': Schema.string(
-        description: '"logging" | "stdout" | "stderr". Omit for all sources.',
+        description: '"logging" | "stdout" | "stderr". Omit for all.',
       ),
       'isolateId': Schema.string(
         description:
-            'Optional: restrict to one isolate within the session. Get the id '
-            'from network_status.attached[].isolates[]. Omit to merge every '
-            'isolate (the default). VM-level events with no isolate context '
-            '(rare on these streams) are EXCLUDED when this filter is set.',
+            'Restrict to one isolate (id from network_status). Omit to merge '
+            'all isolates.',
       ),
       'limit': Schema.int(
-        description: 'Max records returned (default 100, hard cap 500). Newest-first.',
+        description: 'Max records (default 100, cap 500).',
       ),
     },
   ),
@@ -87,8 +71,6 @@ FutureOr<CallToolResult> logsTail(CallToolRequest request) async {
   if (scopeErr != null) return scopeErr;
   scope!;
 
-  // Sticky defaults (#18): inherit from session_configure when an arg is
-  // omitted; an explicitly-passed arg (even null) wins for this call.
   final sf = SessionFilters.instance;
   final sinceId = args['since'] as int?;
   final levelMin =
@@ -143,7 +125,7 @@ FutureOr<CallToolResult> logsTail(CallToolRequest request) async {
         caps: caps,
       ), scopeSessionId: scope.sessionId);
     } catch (e) {
-      return errorResult('history query failed: $e', extra: {
+      return errorResult('history query failed: $e', kind: ErrorKind.internal, extra: {
         'sessionId': sid,
         'nextSteps': const [
           'session_close — return to live mode',
@@ -153,7 +135,6 @@ FutureOr<CallToolResult> logsTail(CallToolRequest request) async {
     }
   }
 
-  // Live mode — read this attached session's own ring buffer.
   final attached = SessionRegistry.instance.attachedById(scope.sessionId)!;
   final entries = attached.logBuffer.tail(
     sinceId: sinceId,
@@ -243,9 +224,6 @@ Map<String, Object?> _buildResponse({
   final sessionId = scope.sessionId;
   final filters =
       _filterDesc(levelMin, loggerContains, messageContains, sourceFilter);
-  // Buffer is "near capacity" at 80% full; reads its real configured size
-  // (FLUTTER_NETWORK_MCP_LOG_BUFFER / per-attach override), not a hardcoded
-  // 500, so the warning stays correct when the user bumps the buffer (#21).
   final nearCapacity = source == 'live' &&
       bufferSize != null &&
       bufferCapacity != null &&

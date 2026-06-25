@@ -5,51 +5,37 @@ import 'package:dart_mcp/server.dart';
 import '../storage/captures_db.dart';
 import '../util/path_template.dart';
 import '../util/scope.dart';
+import 'error_kind.dart';
 import 'result.dart';
 
 final networkSummarizeTool = Tool(
   name: 'network_summarize',
   description:
-      'One digest row per endpoint over a time window. Returns count, '
-      'status distribution, p50/p95 latency, and error rate per '
-      '(method, host, pathTemplate) bucket. Path templates collapse '
-      'dynamic ids — /api/users/42 and /api/users/91 group as '
-      'GET api.example.com/api/users/N. Use this AS THE FIRST CALL '
-      'after network_status when you want the shape of the captured '
-      'session — typically much cheaper than network_list + manual '
-      'bucketing.',
+      'One digest row per endpoint: count, status distribution, p50/p95 '
+      'latency, error rate, by (method, host, pathTemplate). Path templates '
+      'collapse ids (/api/users/42 and /91 -> /api/users/N). Good first call '
+      'after network_status for the session shape; cheaper than network_list.',
   inputSchema: Schema.object(
     properties: {
       'sessionId': Schema.int(
         description:
-            'Which session to summarize. Omit to auto-resolve: explicit '
-            'view (session_open) → sole attached session → error if 2+ '
-            'attached.',
+            'Session to read from. Omit to auto-resolve (the sole attached '
+            'session, or the one you opened).',
       ),
       'appNameContains': Schema.string(
-        description:
-            'Alternative to sessionId — case-insensitive substring match '
-            'against currently-attached app names.',
+        description: 'Pick the session by app-name substring instead of sessionId.',
       ),
       'sinceMs': Schema.int(
-        description:
-            'Relative time window in milliseconds. Default 3600000 (1 '
-            'hour). Pass 0 to summarize the entire session.',
+        description: 'Window in ms. Default 3600000 (1h); 0 for the whole session.',
       ),
       'hostContains': Schema.string(
-        description:
-            'Substring filter on host. Case-insensitive. Reduces the '
-            'read-then-aggregate workload when only one host matters.',
+        description: 'Case-insensitive host substring.',
       ),
       'limit': Schema.int(
-        description:
-            'Max endpoint rows returned (default 50, hard cap 200). '
-            'Sorted by count desc.',
+        description: 'Max endpoint rows (default 50, cap 200).',
       ),
       'minCount': Schema.int(
-        description:
-            'Drop endpoints with fewer than this many requests. Default '
-            '1 (no filter).',
+        description: 'Drop endpoints with fewer than this many requests. Default 1.',
       ),
     },
   ),
@@ -58,7 +44,7 @@ final networkSummarizeTool = Tool(
 const int _kRawRowsCap = 10000;
 const int _kLimitDefault = 50;
 const int _kLimitHardCap = 200;
-const int _kSinceMsDefault = 3600000; // 1 hour
+const int _kSinceMsDefault = 3600000;
 
 FutureOr<CallToolResult> networkSummarize(CallToolRequest request) async {
   final args = request.arguments ?? const <String, Object?>{};
@@ -86,13 +72,15 @@ FutureOr<CallToolResult> networkSummarize(CallToolRequest request) async {
       limit: _kRawRowsCap,
     );
   } catch (e) {
-    return errorResult('network_summarize query failed: $e', extra: {
-      'sessionId': scope.sessionId,
-      'nextSteps': const [
-        'network_status — confirm the session is reachable',
-        'network_list — try the raw list to isolate the issue',
-      ],
-    });
+    return errorResult('network_summarize query failed: $e',
+        kind: ErrorKind.internal,
+        extra: {
+          'sessionId': scope.sessionId,
+          'nextSteps': const [
+            'network_status — confirm the session is reachable',
+            'network_list — try the raw list to isolate the issue',
+          ],
+        });
   }
 
   final endpoints = summarizeRequests(rows, minCount: minCount);
@@ -211,9 +199,6 @@ class _Bucket {
       statusDist[status] = (statusDist[status] ?? 0) + 1;
       if (status >= 400) errorCount++;
     } else {
-      // Null status = request errored before response. Counts as an error
-      // and falls into the synthetic "error" bucket so the agent sees the
-      // shape.
       errorCount++;
       statusDist[0] = (statusDist[0] ?? 0) + 1;
     }
@@ -229,7 +214,6 @@ class _Bucket {
     final p95 = _percentile(sortedDur, 0.95);
     final errorRate = count == 0 ? 0.0 : errorCount / count;
     final endpoint = '$method ${host.isEmpty ? "" : host}$template'.trim();
-    // statusDist keys must be String for JSON.
     final statusOut = <String, int>{};
     for (final entry in statusDist.entries) {
       statusOut[entry.key == 0 ? 'error' : entry.key.toString()] = entry.value;
