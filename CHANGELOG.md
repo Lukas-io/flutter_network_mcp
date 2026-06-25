@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.9.6] — 2026-06-25
+
+### Fixed — network_drift covers the whole timeline (not just recent N)
+
+network_drift previously scanned the most-recent 100 responses, so on a high-volume session the earliest pre-drift samples fell outside the window and a real shape change could read as "no drift" (found during the 0.9.5 live test). It now samples from BOTH ends of the timeline (oldest + newest), adds a `sinceMs` time window (0 = whole session), raises the decode cap to 1000, and reports `matchedTotal`. The oldest shape is always compared against the newest. 266 tests green.
+
 ## [0.9.5] — 2026-06-25
 
 ### Added — network_report (one-call session health triage)
