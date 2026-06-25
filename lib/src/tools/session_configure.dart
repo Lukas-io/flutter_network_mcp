@@ -9,13 +9,11 @@ import 'result.dart';
 final sessionConfigureTool = Tool(
   name: 'session_configure',
   description:
-      'Set process-wide STICKY DEFAULT filters that logs_tail and network_list '
-      'inherit whenever you omit the matching argument (#18). Set once (e.g. '
-      'levelMin + messageContains for logs, statusMin for HTTP), then read '
-      'without repeating them. An argument you DO pass on a read still wins for '
-      'that call. Pass a field to set it, pass it as null to unset just that '
-      'field, clear:true to reset all, or no args to view the current '
-      'defaults. In-memory only; resets on server restart.',
+      'Set process-wide sticky default filters that logs_tail and '
+      'network_list inherit when you omit the matching arg (set levelMin / '
+      'messageContains / statusMin once, then read without repeating them). '
+      'An arg you pass still wins. Pass null to unset a field, clear:true to '
+      'reset all, no args to view. In-memory; resets on restart.',
   inputSchema: Schema.object(
     properties: {
       'levelMin': Schema.int(description: 'Default logs_tail levelMin.'),
@@ -36,6 +34,12 @@ final sessionConfigureTool = Tool(
           Schema.string(description: 'Default network_list hostContains.'),
       'statusMin': Schema.int(description: 'Default network_list statusMin.'),
       'statusMax': Schema.int(description: 'Default network_list statusMax.'),
+      'maxResponseTokens': Schema.int(
+        description:
+            'Per-response token budget. network_list / logs_tail trim their '
+            'arrays to fit (newest-first) and report budget.dropped. Keeps '
+            'big reads from flooding the agent context.',
+      ),
       'clear': Schema.bool(description: 'Reset ALL sticky defaults to none.'),
     },
   ),
@@ -65,6 +69,9 @@ FutureOr<CallToolResult> sessionConfigure(CallToolRequest request) async {
   }
   if (args.containsKey('statusMin')) sf.statusMin = args['statusMin'] as int?;
   if (args.containsKey('statusMax')) sf.statusMax = args['statusMax'] as int?;
+  if (args.containsKey('maxResponseTokens')) {
+    sf.maxResponseTokens = args['maxResponseTokens'] as int?;
+  }
 
   final block = sf.toBlock();
   final summary = sf.isEmpty

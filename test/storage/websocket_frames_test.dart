@@ -100,13 +100,14 @@ void main() {
       expect(outbound.map((r) => r['preview']), equals(['m2', 'm0']));
     });
 
-    test('migrates a v7 database up, recreating the ws tables', () {
-      // Simulate a pre-0.9.0 (v7) db: drop the ws tables and rewind the
-      // recorded schema version, then reopen so the migration runs.
+    test('migrates a pre-ws database up, recreating the ws tables', () {
+      // Simulate a pre-ws db: drop the ws tables and rewind the recorded
+      // schema version to v9 (the ws tables landed in the v9 -> v10 migration),
+      // then reopen so that migration runs.
       final raw = CapturesDatabase.instance.raw;
       raw.execute('DROP TABLE websocket_frames');
       raw.execute('DROP TABLE websocket_connections');
-      raw.execute("UPDATE _meta SET value='7' WHERE key='schema_version'");
+      raw.execute("UPDATE _meta SET value='9' WHERE key='schema_version'");
       CapturesDatabase.instance.close();
 
       CapturesDatabase.open(dataDir: dir.path);

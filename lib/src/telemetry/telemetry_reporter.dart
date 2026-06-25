@@ -52,24 +52,16 @@ class TelemetryReporter {
       );
       final jsonStr = jsonEncode(payload);
 
-      // Always write the audit log first. Failure is non-fatal (the
-      // network attempt still runs).
       try {
         AuditLog.append(dataDir, jsonStr);
       } catch (_) {/* audit log is best-effort */}
 
-      // Network POST only when a real endpoint is baked in. Path B
-      // (default 0.7.1) ships with empty constant, so audit-log-only.
       if (kCollectorEndpoint.isNotEmpty) {
         await postTelemetry(jsonStr)
             .timeout(kTelemetryTimeout)
             .catchError((_) => -1);
       }
     } catch (_) {
-      // Belt-and-suspenders: nothing inside this method should propagate.
-      // The runZonedGuarded handler is the last line of defense before
-      // process exit; an exception here would replace the original
-      // error in stderr — unacceptable.
     }
   }
 

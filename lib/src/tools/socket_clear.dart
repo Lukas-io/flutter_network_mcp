@@ -4,31 +4,24 @@ import 'package:dart_mcp/server.dart';
 
 import '../state/session.dart';
 import '../util/scope.dart';
+import 'error_kind.dart';
 import 'result.dart';
 
 final socketClearTool = Tool(
   name: 'socket_clear',
   description:
-      'Wipes the LIVE in-VM socket profile on the attached isolate. **Does '
-      'NOT touch the persistent DB** — captured rows in `socket_events` '
-      'remain queryable.',
+      'Wipes the LIVE in-VM socket profile. Does NOT touch the persistent DB '
+      '(socket_events rows stay queryable).',
   inputSchema: Schema.object(
     properties: {
       'sessionId': Schema.int(
-        description:
-            'Which attached session to clear. Omit when exactly one is '
-            'attached; required when 2+ are attached (multi-attach).',
+        description: 'Attached session to clear. Omit when exactly one is attached.',
       ),
       'appNameContains': Schema.string(
-        description:
-            'Alternative to sessionId — case-insensitive substring on a '
-            'currently-attached app name.',
+        description: 'Pick the session by app-name substring instead of sessionId.',
       ),
       'isolateId': Schema.string(
-        description:
-            'Optional: clear only this isolate\'s socket profile. Get the id '
-            'from network_status.attached[].isolates[]. Omit to clear every '
-            'isolate in the session (the default).',
+        description: 'Clear only this isolate. Omit to clear all.',
       ),
     },
   ),
@@ -43,6 +36,7 @@ FutureOr<CallToolResult> socketClear(CallToolRequest request) async {
   if (!scope.isLive) {
     return errorResult(
       'Cannot clear a historical session — there is no live VM to clear.',
+      kind: ErrorKind.noSession,
       extra: {
         'scope': scope.toBlock(),
         'nextSteps': const [
@@ -56,6 +50,7 @@ FutureOr<CallToolResult> socketClear(CallToolRequest request) async {
   if (!attached.socketProfilingEnabled) {
     return errorResult(
       'Socket profiling is not enabled for any of this session\'s isolates.',
+      kind: ErrorKind.capabilityDisabled,
       extra: const {
         'nextSteps': [
           'network_status — confirm socketProfilingEnabled',
@@ -75,8 +70,6 @@ FutureOr<CallToolResult> socketClear(CallToolRequest request) async {
       await attached.vm.clearSocketProfileForIsolate(isoId);
       cleared.add(isoId);
     } catch (e) {
-      // Socket profiling might be enabled on only some isolates — ignore
-      // misses on isolates that don't support it.
       failed.add({'isolateId': isoId, 'error': e.toString()});
     }
   }

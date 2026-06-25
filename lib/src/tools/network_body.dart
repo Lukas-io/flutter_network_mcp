@@ -8,6 +8,7 @@ import '../state/session.dart';
 import '../storage/captures_db.dart';
 import '../util/body_decoder.dart';
 import '../util/scope.dart';
+import 'error_kind.dart';
 import 'result.dart';
 
 const int _kMaxBodyChunk = 262144;
@@ -16,43 +17,31 @@ const int _kDefaultLen = 16384;
 final networkBodyTool = Tool(
   name: 'network_body',
   description:
-      'Fetch the rest of a body that network_get truncated. Call this '
-      'whenever a network_get response carries `truncated:true` plus a '
-      '`totalSize` larger than what was returned — that\'s the signal you '
-      'are missing data. Byte-range paged via `offset` + `length`; returns '
-      '`nextOffset` so you can iterate. Auto-decodes utf8 for text content '
-      'types, base64 for binary. Works against both live and history '
-      'sessions (history needs the writer\'s ~2s body backfill to have run).',
+      'Fetch more of a body that network_get truncated (its response had '
+      'truncated:true with a larger totalSize). Byte-range paged via '
+      'offset+length; returns nextOffset to iterate. Auto-decodes text/binary.',
   inputSchema: Schema.object(
     properties: {
       'id': Schema.string(description: 'Request id from network_list / network_search.'),
       'which': Schema.string(description: '"request" or "response".'),
       'sessionId': Schema.int(
         description:
-            'Which session the request belongs to. Omit to auto-resolve: '
-            'explicit view (session_open) → sole attached session → error '
-            'if 2+ attached.',
+            'Session to read from. Omit to auto-resolve (the sole attached '
+            'session, or the one you opened).',
       ),
       'appNameContains': Schema.string(
-        description:
-            'Alternative to sessionId — case-insensitive substring on a '
-            'currently-attached app name.',
+        description: 'Pick the session by app-name substring instead of sessionId.',
       ),
       'isolateId': Schema.string(
         description:
-            'Optional: tells the live VM lookup which isolate to ask. Omit '
-            'and the tool resolves from the DB row (the capture writer tags '
-            'every request with its isolate) or tries each known isolate. '
-            'Set explicitly to skip resolution.',
+            'Restrict to one isolate (id from network_status). Omit to '
+            'auto-resolve.',
       ),
       'offset': Schema.int(
-        description:
-            'Byte offset to start at. Default 0. Clamped to [0, totalSize].',
+        description: 'Byte offset to start at. Default 0.',
       ),
       'length': Schema.int(
-        description:
-            'Bytes to read (default 16384, hard cap 262144). Returned size '
-            'may be smaller when offset+length > totalSize.',
+        description: 'Bytes to read (default 16384, cap 262144).',
       ),
       'decode': Schema.string(
         description:
@@ -70,16 +59,19 @@ FutureOr<CallToolResult> networkBody(CallToolRequest request) async {
   final id = args['id'] as String?;
   final whichArg = args['which'] as String?;
   if (id == null || id.isEmpty) {
-    return errorResult('Missing required arg `id`.', extra: const {
-      'nextSteps': [
-        'network_list — list captured requests and pick an id',
-        'network_search query:"..." — find a request by content',
-      ],
-    });
+    return errorResult('Missing required arg `id`.',
+        kind: ErrorKind.badArgument,
+        extra: const {
+          'nextSteps': [
+            'network_list — list captured requests and pick an id',
+            'network_search query:"..." — find a request by content',
+          ],
+        });
   }
   if (whichArg != 'request' && whichArg != 'response') {
     return errorResult(
       '`which` must be "request" or "response".',
+      kind: ErrorKind.badArgument,
       extra: const {
         'nextSteps': [
           'Retry with which:"response" (most common)',
@@ -100,9 +92,11 @@ FutureOr<CallToolResult> networkBody(CallToolRequest request) async {
       : (lengthArg > _kMaxBodyChunk ? _kMaxBodyChunk : lengthArg);
   final decode = (args['decode'] as String?) ?? 'auto';
   if (decode != 'auto' && decode != 'utf8' && decode != 'base64') {
-    return errorResult('`decode` must be one of: auto, utf8, base64.', extra: const {
-      'nextSteps': ['Retry with decode:"auto" (recommended)'],
-    });
+    return errorResult('`decode` must be one of: auto, utf8, base64.',
+        kind: ErrorKind.badArgument,
+        extra: const {
+          'nextSteps': ['Retry with decode:"auto" (recommended)'],
+        });
   }
 
   Uint8List? bytes;
@@ -119,20 +113,20 @@ FutureOr<CallToolResult> networkBody(CallToolRequest request) async {
       final row = dao.getHttpRequest(sid, id);
       if (row != null) mimeType = row['content_type'] as String?;
       if (row == null) {
-        return errorResult('Request `$id` not found in session $sid.', extra: {
-          'sessionId': sid,
-          'nextSteps': const [
-            'network_list — list valid request ids in this session',
-            'session_list — confirm the session id is correct',
-          ],
-        });
+        return errorResult('Request `$id` not found in session $sid.',
+            kind: ErrorKind.notFound,
+            extra: {
+              'sessionId': sid,
+              'nextSteps': const [
+                'network_list — list valid request ids in this session',
+                'session_list — confirm the session id is correct',
+              ],
+            });
       }
     } else {
       source = 'live';
       final attached = SessionRegistry.instance.attachedById(scope.sessionId)!;
       final isolateFilter = args['isolateId'] as String?;
-      // Same isolate-resolution priority as network_get: explicit arg →
-      // DB-recorded isolate_id → try each known isolate.
       String? resolvedIsolateId = isolateFilter;
       if (resolvedIsolateId == null) {
         final dbRow = CapturesDao().getHttpRequest(scope.sessionId, id);
@@ -144,6 +138,7 @@ FutureOr<CallToolResult> networkBody(CallToolRequest request) async {
       if (candidateIsolates.isEmpty) {
         return errorResult(
           'No HTTP-profiling isolates known for this session.',
+          kind: ErrorKind.unresponsiveVm,
           extra: const {
             'nextSteps': [
               'network_status — verify the session\'s isolates list',
@@ -171,17 +166,27 @@ FutureOr<CallToolResult> networkBody(CallToolRequest request) async {
         }
       }
       if (!fetched) {
-        return errorResult(
-          'body fetch failed: ${lastError ?? "no isolate had id $id"}',
-          extra: {
-            'id': id,
-            'triedIsolates': candidateIsolates,
-            'nextSteps': const [
-              'network_get id:<id> — confirm the request still exists',
-              'Pass isolateId explicitly if you know which isolate produced this',
-            ],
-          },
-        );
+        final dbBytes = CapturesDao().getBody(scope.sessionId, id, which);
+        if (dbBytes != null && dbBytes.isNotEmpty) {
+          bytes = dbBytes;
+          final dbRow = CapturesDao().getHttpRequest(scope.sessionId, id);
+          mimeType = dbRow?['content_type'] as String?;
+          source = 'live-db-fallback';
+        } else {
+          return errorResult(
+            'body fetch failed: ${lastError ?? "no isolate had id $id"}',
+            kind: ErrorKind.unresponsiveVm,
+            extra: {
+              'id': id,
+              'triedIsolates': candidateIsolates,
+              'nextSteps': const [
+                'network_query sql:"SELECT which,size FROM http_bodies WHERE vm_id=\'<id>\'" — check whether the body is persisted',
+                'network_get id:<id> — confirm the request still exists',
+                'network_status — check whether the VM service is responsive (the app may be paused at a breakpoint)',
+              ],
+            },
+          );
+        }
       }
     }
 
@@ -212,9 +217,6 @@ FutureOr<CallToolResult> networkBody(CallToolRequest request) async {
     final start = offset < 0 ? 0 : (offset > total ? total : offset);
     final end = (start + length) > total ? total : (start + length);
     final slice = Uint8List.sublistView(bytes, start, end);
-    // network_body is the byte-range API — caller's offset/length must map
-    // 1:1 to the captured bytes. Semantic truncation would break the
-    // contract.
     final decoded = decodeBody(slice, mimeType, decode: decode, maxBytes: -1, semantic: false);
     final returnedSize = end - start;
     final nextOffset = end < total ? end : null;
@@ -224,6 +226,12 @@ FutureOr<CallToolResult> networkBody(CallToolRequest request) async {
         : 'Returned bytes $start–$end of $total for $which body of $id (${decoded?.encoding ?? "n/a"}); call again with offset:$nextOffset for more.';
 
     final warnings = <String>[];
+    if (source == 'live-db-fallback') {
+      warnings.add(
+        'Live body fetch failed (VM unresponsive or request gone); returned '
+        'the persisted DB copy instead.',
+      );
+    }
     if (decode == 'utf8' && decoded?.encoding == 'base64') {
       warnings.add('Requested utf8 decode but content appears non-text — returned base64 instead.');
     }
@@ -259,13 +267,15 @@ FutureOr<CallToolResult> networkBody(CallToolRequest request) async {
       'nextSteps': nextSteps,
     }, scopeSessionId: scope.sessionId);
   } catch (e) {
-    return errorResult('body fetch failed: $e', extra: {
-      'id': id,
-      'which': which,
-      'nextSteps': const [
-        'network_get id:<id> — confirm the request still exists',
-        'network_status — check zombie-DTD state if reading live',
-      ],
-    });
+    return errorResult('body fetch failed: $e',
+        kind: ErrorKind.internal,
+        extra: {
+          'id': id,
+          'which': which,
+          'nextSteps': const [
+            'network_get id:<id> — confirm the request still exists',
+            'network_status — check zombie-DTD state if reading live',
+          ],
+        });
   }
 }

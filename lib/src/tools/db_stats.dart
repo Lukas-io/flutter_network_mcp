@@ -5,6 +5,7 @@ import 'package:dart_mcp/server.dart';
 import '../config/capabilities.dart';
 import '../storage/captures_db.dart';
 import '../storage/database.dart';
+import 'error_kind.dart';
 import 'result.dart';
 
 const int _kWarnSizeMb = 100;
@@ -13,12 +14,9 @@ const double _kBodiesHeavyRatio = 0.7;
 final dbStatsTool = Tool(
   name: 'db_stats',
   description:
-      'Check on the captures DB — file size on disk, per-table row counts, '
-      'body BLOB bytes, pending-alert count, journal mode, file path. Use '
-      'when the DB might be getting big (run this before `db_vacuum` so '
-      'you know whether vacuum will actually reclaim much), when '
-      'investigating which tables have grown most, or just to see where '
-      'on disk your captures live.',
+      'Inspect the captures DB: file size, per-table row counts, body BLOB '
+      'bytes, pending alerts, journal mode, path. Run before db_vacuum to see '
+      'if it will reclaim much.',
   inputSchema: Schema.object(properties: {}),
 );
 
@@ -76,7 +74,7 @@ FutureOr<CallToolResult> dbStats(CallToolRequest request) async {
       'nextSteps': nextSteps,
     });
   } catch (e) {
-    return errorResult('db_stats failed: $e', extra: const {
+    return errorResult('db_stats failed: $e', kind: ErrorKind.internal, extra: const {
       'nextSteps': [
         'Confirm the DB is open (server started with --data-dir or default)',
       ],

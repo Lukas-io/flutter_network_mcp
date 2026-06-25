@@ -111,7 +111,6 @@ Future<void> runUsage(List<String> args) async {
     return;
   }
 
-  // Default: per-tool summary with outcome breakdown.
   final counts = dao.toolEventCounts(sinceMs: sinceMs);
   if (asJson) {
     io.stdout.writeln(jsonEncode({'total': total, 'counts': counts}));

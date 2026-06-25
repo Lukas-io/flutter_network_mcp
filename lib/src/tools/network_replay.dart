@@ -6,6 +6,7 @@ import 'package:dart_mcp/server.dart';
 import '../config/capabilities.dart';
 import '../storage/captures_db.dart';
 import '../util/scope.dart';
+import 'error_kind.dart';
 import 'result.dart';
 
 const _kDefaultBodyTruncate = 4096;
@@ -14,33 +15,25 @@ const _kMaxBodyTruncate = 262144;
 final networkReplayTool = Tool(
   name: 'network_replay',
   description:
-      'Emits a runnable curl command for a captured HTTP request. Sensitive '
-      'headers are redacted by default (built-in set + names added via the '
-      'redacted_headers tool). Request body is truncated to '
-      '`bodyTruncateBytes` (default 4 KB) so the response stays context-safe. '
-      'Pass `redact:false` for unredacted headers (local debugging only); '
-      '`bodyTruncateBytes:0` for the full body up to 256 KB.',
+      'Emit a runnable curl for a captured request. Auth headers redacted by '
+      'default; body truncated to bodyTruncateBytes (default 4 KB). '
+      'redact:false for unredacted (local only); bodyTruncateBytes:0 for full.',
   inputSchema: Schema.object(
     properties: {
       'id': Schema.string(description: 'Request id from network_list / network_search.'),
       'sessionId': Schema.int(
         description:
-            'Which session the request belongs to. Omit to auto-resolve: '
-            'explicit view (session_open) → sole attached session → error '
-            'if 2+ attached.',
+            'Session to read from. Omit to auto-resolve (the sole attached '
+            'session, or the one you opened).',
       ),
       'appNameContains': Schema.string(
-        description:
-            'Alternative to sessionId — case-insensitive substring on a '
-            'currently-attached app name.',
+        description: 'Pick the session by app-name substring instead of sessionId.',
       ),
       'redact': Schema.bool(
-        description: 'Mask auth-like headers with <redacted> (default true). Set false only for local terminal use.',
+        description: 'Mask auth-like headers (default true). false only for local terminal use.',
       ),
       'bodyTruncateBytes': Schema.int(
-        description:
-            'Max bytes of body inlined into the curl. Default 4096, hard cap 262144. '
-            'Pass 0 to use the hard cap.',
+        description: 'Max body bytes in the curl (default 4096, cap 262144; 0 = cap).',
       ),
     },
     required: ['id'],
@@ -52,12 +45,14 @@ FutureOr<CallToolResult> networkReplay(CallToolRequest request) async {
   final caps = CapabilityConfig.instance;
   final id = args['id'] as String?;
   if (id == null || id.isEmpty) {
-    return errorResult('Missing required arg `id`.', extra: const {
-      'nextSteps': [
-        'network_list — list captured requests and pick an id',
-        'network_search query:"..." — find a request by content',
-      ],
-    });
+    return errorResult('Missing required arg `id`.',
+        kind: ErrorKind.badArgument,
+        extra: const {
+          'nextSteps': [
+            'network_list — list captured requests and pick an id',
+            'network_search query:"..." — find a request by content',
+          ],
+        });
   }
   final (scope, scopeErr) = resolveScope(args);
   if (scopeErr != null) return scopeErr;
@@ -73,13 +68,15 @@ FutureOr<CallToolResult> networkReplay(CallToolRequest request) async {
     final dao = CapturesDao();
     final row = dao.getHttpRequest(sessionId, id);
     if (row == null) {
-      return errorResult('Request `$id` not found in session $sessionId.', extra: {
-        'sessionId': sessionId,
-        'nextSteps': const [
-          'network_list — list valid ids in this session',
-          'session_list — confirm the session exists',
-        ],
-      });
+      return errorResult('Request `$id` not found in session $sessionId.',
+          kind: ErrorKind.notFound,
+          extra: {
+            'sessionId': sessionId,
+            'nextSteps': const [
+              'network_list — list valid ids in this session',
+              'session_list — confirm the session exists',
+            ],
+          });
     }
     final method = (row['method'] as String?) ?? 'GET';
     final url = (row['url'] as String?) ?? '';
@@ -115,7 +112,6 @@ FutureOr<CallToolResult> networkReplay(CallToolRequest request) async {
         final text = utf8.decode(clipped, allowMalformed: false);
         buf.write(" --data-raw '${_shellEscape(text)}'");
       } catch (_) {
-        // Not valid utf8 — curl can't inline binary safely.
         buf.write(' --data-binary @-');
         bodyIsBinary = true;
       }
@@ -168,14 +164,16 @@ FutureOr<CallToolResult> networkReplay(CallToolRequest request) async {
       'nextSteps': nextSteps,
     }, scopeSessionId: scope.sessionId);
   } catch (e) {
-    return errorResult('network_replay failed: $e', extra: {
-      'sessionId': sessionId,
-      'id': id,
-      'nextSteps': const [
-        'network_list — confirm the id is valid',
-        'network_get id:"..." — see the underlying request data',
-      ],
-    });
+    return errorResult('network_replay failed: $e',
+        kind: ErrorKind.internal,
+        extra: {
+          'sessionId': sessionId,
+          'id': id,
+          'nextSteps': const [
+            'network_list — confirm the id is valid',
+            'network_get id:"..." — see the underlying request data',
+          ],
+        });
   }
 }
 

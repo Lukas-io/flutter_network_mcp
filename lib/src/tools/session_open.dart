@@ -5,15 +5,15 @@ import 'package:dart_mcp/server.dart';
 import '../config/capabilities.dart';
 import '../state/session.dart';
 import '../storage/captures_db.dart';
+import 'error_kind.dart';
 import 'result.dart';
 
 final sessionOpenTool = Tool(
   name: 'session_open',
   description:
-      'Switches the read pointer used by network_list, network_get, '
-      'network_body, socket_list, socket_get, logs_tail, network_search, and '
-      'network_diff to the given session. The live capture continues '
-      'writing into its own session regardless. Call session_close to revert.',
+      'Point the read tools (network_list/get/body, socket_list/get, '
+      'logs_tail, network_search/diff) at a past session. Live capture keeps '
+      'writing its own session; session_close reverts.',
   inputSchema: Schema.object(
     properties: {
       'id': Schema.int(description: 'Session id from session_list.'),
@@ -27,7 +27,7 @@ FutureOr<CallToolResult> sessionOpen(CallToolRequest request) async {
   final caps = CapabilityConfig.instance;
   final id = args['id'] as int?;
   if (id == null) {
-    return errorResult('Missing required arg `id`.', extra: const {
+    return errorResult('Missing required arg `id`.', kind: ErrorKind.badArgument, extra: const {
       'nextSteps': [
         'session_list — find a session id',
       ],
@@ -38,7 +38,7 @@ FutureOr<CallToolResult> sessionOpen(CallToolRequest request) async {
     final dao = CapturesDao();
     final row = dao.getSession(id);
     if (row == null) {
-      return errorResult('Session $id not found.', extra: const {
+      return errorResult('Session $id not found.', kind: ErrorKind.notFound, extra: const {
         'nextSteps': [
           'session_list — see valid session ids',
         ],
@@ -84,7 +84,7 @@ FutureOr<CallToolResult> sessionOpen(CallToolRequest request) async {
       'nextSteps': nextSteps,
     });
   } catch (e) {
-    return errorResult('session_open failed: $e', extra: {
+    return errorResult('session_open failed: $e', kind: ErrorKind.internal, extra: {
       'sessionId': id,
       'nextSteps': const [
         'session_list — confirm the session id exists',

@@ -1,9 +1,6 @@
-// Schema for the captures database.
-//
-// Bump [currentVersion] when changing this file and add a migration block in
-// the migration switch in database.dart.
-
-const int currentVersion = 8;
+/// Captures-DB schema version. Bump this AND add a migration block in the
+/// `_migrationFor` switch in `database.dart` whenever a table here changes.
+const int currentVersion = 10;
 
 const List<String> initialSchema = [
   '''
@@ -194,14 +191,17 @@ const List<String> initialSchema = [
   ''',
   '''
   CREATE TABLE tool_events (
-    id             INTEGER PRIMARY KEY AUTOINCREMENT,
-    ts_ms          INTEGER NOT NULL,
-    correlation_id TEXT NOT NULL,
-    tool           TEXT NOT NULL,
-    outcome        TEXT NOT NULL,
-    arg_keys       TEXT,
-    duration_ms    INTEGER,
-    result_bytes   INTEGER
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts_ms            INTEGER NOT NULL,
+    correlation_id   TEXT NOT NULL,
+    tool             TEXT NOT NULL,
+    outcome          TEXT NOT NULL,
+    arg_keys         TEXT,
+    duration_ms      INTEGER,
+    result_bytes     INTEGER,
+    estimated_tokens INTEGER,
+    error_kind       TEXT,
+    degraded         INTEGER NOT NULL DEFAULT 0
   )
   ''',
   'CREATE INDEX idx_tool_events_corr ON tool_events(correlation_id, ts_ms)',
@@ -344,14 +344,12 @@ const List<String> migrationV6toV7 = [
   'CREATE INDEX IF NOT EXISTS idx_tool_events_tool ON tool_events(tool, ts_ms)',
 ];
 
-/// v7 -> v8: WebSocket frame capture (0.9.0). The dart:io VM profiler stops at
-/// the HTTP upgrade, so post-upgrade frames are invisible to getHttpProfile.
-/// The `flutter_network_mcp_hooks` companion package captures frames in-app and
-/// the MCP drains them over `ext.flutter_network_mcp.getRealtimeProfile` into
-/// these two tables: one connection row per upgraded socket, one frame row per
-/// reassembled, decompressed message. Apps without the companion installed
-/// simply leave these tables empty.
-const List<String> migrationV7toV8 = [
+/// v9 -> v10: WebSocket frame capture (0.9.0, shelved companion). The dart:io
+/// VM profiler stops at the HTTP upgrade, so post-upgrade frames are invisible
+/// to getHttpProfile. The `flutter_network_mcp_hooks` companion captures frames
+/// in-app; the MCP drains them over `ext.flutter_network_mcp.getRealtimeProfile`
+/// into these two tables. Apps without the companion leave them empty.
+const List<String> migrationV9toV10 = [
   '''
   CREATE TABLE IF NOT EXISTS websocket_connections (
     session_id  INTEGER NOT NULL,
@@ -382,4 +380,20 @@ const List<String> migrationV7toV8 = [
   ''',
   'CREATE INDEX IF NOT EXISTS idx_ws_conn_session ON websocket_connections(session_id, started_ms)',
   'CREATE INDEX IF NOT EXISTS idx_ws_frames_conn ON websocket_frames(session_id, conn_id, id)',
+];
+
+/// v7 -> v8: token-usage tracking. Adds [estimated_tokens] to [tool_events]
+/// (result_bytes / 4, a UTF-8 approximation). Surfaced in [usage_stats] as
+/// avgEstimatedTokens and totalEstimatedTokens per tool.
+const List<String> migrationV7toV8 = [
+  'ALTER TABLE tool_events ADD COLUMN estimated_tokens INTEGER',
+];
+
+/// v8 -> v9: richer outcome datapoints on [tool_events]. `error_kind` carries
+/// the typed ErrorKind wire string for error calls (so the rollup can break
+/// errors down by reason, not just count them); `degraded` flags calls that
+/// fell back from their primary path (e.g. live VM read -> DB snapshot).
+const List<String> migrationV8toV9 = [
+  'ALTER TABLE tool_events ADD COLUMN error_kind TEXT',
+  'ALTER TABLE tool_events ADD COLUMN degraded INTEGER NOT NULL DEFAULT 0',
 ];

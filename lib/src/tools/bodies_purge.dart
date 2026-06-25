@@ -3,26 +3,23 @@ import 'dart:async';
 import 'package:dart_mcp/server.dart';
 
 import '../storage/captures_db.dart';
+import 'error_kind.dart';
 import 'result.dart';
 
 final bodiesPurgeTool = Tool(
   name: 'bodies_purge',
   description:
-      'Drops captured request/response BLOBs while preserving http_requests '
-      'summary metadata. Useful to shrink the DB without losing the trace '
-      'of what happened. Pass `sessionId` for a single session, '
-      '`olderThanMs` to purge across sessions, or both. Default is dry-run; '
-      'pass `confirm:true` to actually delete.',
+      'Drops captured request/response bodies but keeps the request '
+      'metadata, to shrink the DB. Scope with sessionId and/or olderThanMs. '
+      'Dry-run unless confirm:true.',
   inputSchema: Schema.object(
     properties: {
       'sessionId': Schema.int(description: 'Restrict to a session id.'),
       'olderThanMs': Schema.int(
-        description:
-            'Millis-since-epoch. Bodies of requests whose start time is older '
-            'than this are purged.',
+        description: 'Ms-since-epoch; purge bodies of requests older than this.',
       ),
       'confirm': Schema.bool(
-        description: 'Required true to actually purge. Default false (dry-run reports what would go).',
+        description: 'Required true to purge; default false (dry-run).',
       ),
     },
   ),
@@ -37,6 +34,7 @@ FutureOr<CallToolResult> bodiesPurge(CallToolRequest request) async {
   if (sessionId == null && olderThanMs == null) {
     return errorResult(
       'Pass at least one of `sessionId` or `olderThanMs` — refusing to purge every body in the DB.',
+      kind: ErrorKind.badArgument,
       extra: const {
         'nextSteps': [
           'session_list — find sessionId(s) worth purging',
@@ -91,7 +89,7 @@ FutureOr<CallToolResult> bodiesPurge(CallToolRequest request) async {
       ],
     });
   } catch (e) {
-    return errorResult('bodies_purge failed: $e', extra: {
+    return errorResult('bodies_purge failed: $e', kind: ErrorKind.internal, extra: {
       'sessionId': sessionId,
       'olderThanMs': olderThanMs,
       'nextSteps': const [

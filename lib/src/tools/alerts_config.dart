@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:dart_mcp/server.dart';
 
 import '../alerts/alert_rules.dart';
+import 'error_kind.dart';
 import 'result.dart';
 
 const _ruleKeys = [
@@ -17,10 +18,9 @@ const _ruleKeys = [
 final alertsConfigTool = Tool(
   name: 'alerts_config',
   description:
-      'Read or update alert rule settings. Pass no args (or `get:true`) for '
-      'a read. Pass `set:{slowThresholdMs?, rules?:{rule_key:bool}}` to '
-      'mutate. Changes apply IMMEDIATELY to subsequent capture ticks and log '
-      'events — no restart needed. Per-process; resets on server restart.',
+      'Read or update alert rules. No args (or get:true) reads; '
+      'set:{slowThresholdMs?, rules?:{rule_key:bool}} mutates. Applies '
+      'immediately; per-process, resets on restart.',
   inputSchema: Schema.object(
     properties: {
       'get': Schema.bool(description: 'True (default when `set` not given) to read current config.'),
@@ -58,7 +58,7 @@ FutureOr<CallToolResult> alertsConfig(CallToolRequest request) async {
         rules: setArg['rules'] as Map<String, dynamic>?,
       );
     } catch (e) {
-      return errorResult('alerts_config: $e', extra: const {
+      return errorResult('alerts_config: $e', kind: ErrorKind.badArgument, extra: const {
         'nextSteps': [
           'alerts_config get:true — see current config',
           'Re-call with corrected values',

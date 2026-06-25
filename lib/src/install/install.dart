@@ -48,9 +48,6 @@ Future<void> runInstall(List<String> args) async {
     return;
   }
 
-  // Resolve the git SHA from the source dir so we can bake it into the
-  // binary. `network_status` then surfaces it so the agent can tell what
-  // build is running.
   final sha = currentCommitSha();
   io.stderr.writeln(
     'flutter_network_mcp install: compiling $source\n'
@@ -92,8 +89,6 @@ Future<void> runInstall(List<String> args) async {
     return;
   }
 
-  // Mark that the user wants AOT — the future `update` subcommand reads
-  // this to decide whether to re-compile after `pub global activate`.
   _writeCompiledMarker();
 
   io.stderr.writeln(
@@ -114,8 +109,6 @@ String? _resolveSourcePath() {
     return script;
   }
 
-  // Already AOT-compiled — `Platform.script` is the binary path. Search
-  // pub-cache for the most-recently-modified activated source.
   final cache = _pubCacheDir();
   if (cache == null) return null;
   final gitDir = io.Directory(p.join(cache, 'git'));

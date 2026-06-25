@@ -4,32 +4,25 @@ import 'package:dart_mcp/server.dart';
 
 import '../state/session.dart';
 import '../util/scope.dart';
+import 'error_kind.dart';
 import 'result.dart';
 
 final networkClearTool = Tool(
   name: 'network_clear',
   description:
-      'Wipes the LIVE in-VM HTTP profile on the attached isolate and resets '
-      'the session cursor. **Does NOT touch the persistent DB** — past '
-      'captures stay queryable via session_open. Use bodies_purge / '
-      'session_delete for DB-side cleanup.',
+      'Wipes the LIVE in-VM HTTP profile and resets the session cursor. Does '
+      'NOT touch the persistent DB (use bodies_purge / session_delete for '
+      'that).',
   inputSchema: Schema.object(
     properties: {
       'sessionId': Schema.int(
-        description:
-            'Which attached session to clear. Omit when exactly one is '
-            'attached; required when 2+ are attached (multi-attach).',
+        description: 'Attached session to clear. Omit when exactly one is attached.',
       ),
       'appNameContains': Schema.string(
-        description:
-            'Alternative to sessionId — case-insensitive substring on a '
-            'currently-attached app name.',
+        description: 'Pick the session by app-name substring instead of sessionId.',
       ),
       'isolateId': Schema.string(
-        description:
-            'Optional: clear only this isolate\'s HTTP profile. Get the id '
-            'from network_status.attached[].isolates[]. Omit to clear every '
-            'isolate in the session (the default).',
+        description: 'Clear only this isolate. Omit to clear all.',
       ),
     },
   ),
@@ -44,6 +37,7 @@ FutureOr<CallToolResult> networkClear(CallToolRequest request) async {
   if (!scope.isLive) {
     return errorResult(
       'Cannot clear a historical session — there is no live VM to clear.',
+      kind: ErrorKind.noSession,
       extra: {
         'scope': scope.toBlock(),
         'nextSteps': const [
@@ -56,15 +50,13 @@ FutureOr<CallToolResult> networkClear(CallToolRequest request) async {
   }
   final attached = SessionRegistry.instance.attachedById(scope.sessionId)!;
   final isolateFilter = args['isolateId'] as String?;
-  // Multi-isolate: clear every isolate's profile by default; with the
-  // filter, clear just the one. Per-isolate try/catch so one VM hiccup
-  // doesn't stop the rest.
   final isolates = isolateFilter == null
       ? [for (final iso in attached.vm.httpProfilingIsolates) iso.id]
       : [isolateFilter];
   if (isolates.isEmpty) {
     return errorResult(
       'No HTTP-profiling isolates known for this session.',
+      kind: ErrorKind.noSession,
       extra: const {
         'nextSteps': [
           'network_status — verify the session\'s isolates list',

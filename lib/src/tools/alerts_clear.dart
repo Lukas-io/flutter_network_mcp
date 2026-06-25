@@ -4,29 +4,24 @@ import 'package:dart_mcp/server.dart';
 
 import '../storage/captures_db.dart';
 import '../util/scope.dart';
+import 'error_kind.dart';
 import 'result.dart';
 
 final alertsClearTool = Tool(
   name: 'alerts_clear',
   description:
-      'Permanently DELETES alert rows from the DB. Scoped per-session so '
-      'multi-attach can\'t accidentally cross-delete. Default is the safe '
-      'path: only already-drained alerts (`drainedOnly:true`). To also '
-      'remove undrained (unread) alerts you must explicitly pass '
-      '`drainedOnly:false` AND `confirm:true` so they cannot be lost by '
-      'accident.',
+      'Permanently DELETES alert rows from the DB, scoped per-session. '
+      'Default deletes only drained alerts; to also delete undrained ones '
+      'pass drainedOnly:false AND confirm:true.',
   inputSchema: Schema.object(
     properties: {
       'sessionId': Schema.int(
         description:
-            'Which session to clear alerts from. Omit to auto-resolve: '
-            'explicit view (session_open) → sole attached session → error '
-            'if 2+ attached. For cross-session bulk clear use network_query.',
+            'Session to clear. Omit to auto-resolve (the sole attached, or '
+            'the opened). Cross-session bulk: use network_query.',
       ),
       'appNameContains': Schema.string(
-        description:
-            'Alternative to sessionId — case-insensitive substring on a '
-            'currently-attached app name.',
+        description: 'Pick the session by app-name substring instead of sessionId.',
       ),
       'severityMin': Schema.string(
         description: '"info" | "warning" | "error" | "critical".',
@@ -54,6 +49,7 @@ FutureOr<CallToolResult> alertsClear(CallToolRequest request) async {
   if (!drainedOnly && !confirm) {
     return errorResult(
       'Deleting undrained alerts requires `confirm:true`. They have not been read yet.',
+      kind: ErrorKind.badArgument,
       extra: {
         'sessionId': sessionId,
         'drainedOnly': false,
@@ -110,7 +106,7 @@ FutureOr<CallToolResult> alertsClear(CallToolRequest request) async {
       ],
     }, scopeSessionId: scope.sessionId);
   } catch (e) {
-    return errorResult('alerts_clear failed: $e', extra: {
+    return errorResult('alerts_clear failed: $e', kind: ErrorKind.internal, extra: {
       'sessionId': sessionId,
       'nextSteps': const [
         'session_list — confirm sessionId is valid',

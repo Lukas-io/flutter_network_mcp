@@ -59,11 +59,10 @@ class UsageReporter {
       if (last != null &&
           DateTime.now().millisecondsSinceEpoch - last <
               autoShipMinInterval.inMilliseconds) {
-        return; // shipped recently; nothing to do
+        return;
       }
       await ship(dataDir: dir);
     } catch (_) {
-      // Startup path: a telemetry hiccup must never disturb the server.
     }
   }
 
@@ -133,7 +132,6 @@ class UsageReporter {
       );
     }
 
-    // Durable record first; the network send is best-effort on top of it.
     var auditWritten = true;
     try {
       AuditLog.append(dir, jsonStr);
@@ -148,12 +146,9 @@ class UsageReporter {
             await postTelemetry(jsonStr).timeout(kTelemetryTimeout);
         posted = status >= 200 && status < 300;
       } catch (_) {
-        // Best-effort: the audit log already holds the rollup.
       }
     }
 
-    // Advance the watermark once the rollup is durably recorded, so the
-    // same events never ship twice.
     _writeState(
       dir,
       _ShipState(
@@ -218,7 +213,6 @@ class UsageReporter {
         shipCount: (m['shipCount'] as int?) ?? 0,
       );
     } catch (_) {
-      // A corrupt / hand-edited state file resets to "ship from the start".
       return const _ShipState();
     }
   }
@@ -291,6 +285,7 @@ Map<String, Object?> buildUsagePayload({
     'totalTurns': stats['totalTurns'],
     'tools': stats['tools'],
     'transitions': stats['transitions'],
+    if (stats['selfCorrection'] != null) 'selfCorrection': stats['selfCorrection'],
     'reportedAt': DateTime.now().toUtc().toIso8601String(),
   };
 }

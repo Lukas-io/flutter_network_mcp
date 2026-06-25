@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:dart_mcp/server.dart';
 
 import '../storage/captures_db.dart';
+import 'error_kind.dart';
 import 'result.dart';
 
 final dbVacuumTool = Tool(
@@ -50,7 +51,7 @@ FutureOr<CallToolResult> dbVacuum(CallToolRequest request) async {
       ],
     });
   } catch (e) {
-    return errorResult('db_vacuum failed: $e', extra: const {
+    return errorResult('db_vacuum failed: $e', kind: ErrorKind.internal, extra: const {
       'nextSteps': [
         'Confirm the DB is not locked by another process',
         'db_stats — check current state',

@@ -1,9 +1,11 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io' as io;
 
 import 'package:dart_mcp/server.dart';
 
 import '../telemetry/path_redactor.dart';
+import 'error_kind.dart';
 import 'result.dart';
 
 const String _kRepo = 'Lukas-io/flutter_network_mcp';
@@ -13,34 +15,27 @@ const String _kIssueNewBase =
 final reportIssueTool = Tool(
   name: 'report_issue',
   description:
-      'File a GitHub issue against this MCP from an agent turn — no need '
-      'to copy-paste anywhere. Two types: "bug" (code issue, wrong output, '
-      'crash) or "ux" (works but feels awkward / confusing / slow / unclear). '
-      'When `gh` CLI is available, posts via `gh issue create`. Otherwise '
-      'returns a paste-ready GitHub deep-link URL the user can open in one '
-      'click. Titles + bodies are PATH-REDACTED before they leave the '
-      'machine — same redactor that scrubs telemetry stack frames.',
+      'File a GitHub issue against this MCP from an agent turn. type "bug" '
+      '(wrong output / crash) or "ux" (awkward / confusing / slow). Posts via '
+      'gh CLI if available, else returns a paste-ready URL. Titles and bodies '
+      'are path-redacted before submission.',
   inputSchema: Schema.object(
     properties: {
       'type': Schema.string(
         description: '"bug" or "ux". Picks the matching label + template.',
       ),
       'title': Schema.string(
-        description:
-            'One-line summary of the issue. Will be path-redacted before '
-            'submission.',
+        description: 'One-line summary. Path-redacted before submission.',
       ),
       'body': Schema.string(
         description:
-            'Issue body in GitHub-flavored markdown. Include context the '
-            'maintainer needs — what broke, what you expected, the failing '
-            'tool call. Will be path-redacted before submission.',
+            'Issue body (markdown): what broke, what you expected, the '
+            'failing tool call. Path-redacted.',
       ),
       'auto': Schema.bool(
         description:
-            'When true (default), tries `gh issue create` and reports the '
-            'resulting URL. When false (or `gh` isn\'t installed), returns '
-            'a paste-ready deep-link URL instead.',
+            'Try gh issue create (default true); false returns a paste-ready '
+            'URL.',
       ),
     },
     required: ['type', 'title', 'body'],
@@ -57,53 +52,56 @@ FutureOr<CallToolResult> reportIssue(CallToolRequest request) async {
   if (type == null || (type != 'bug' && type != 'ux')) {
     return errorResult(
       'report_issue: `type` must be "bug" or "ux", got "$type".',
+      kind: ErrorKind.badArgument,
       extra: const {
         'nextSteps': ['Retry with type:"bug" or type:"ux"'],
       },
     );
   }
   if (titleRaw == null || titleRaw.isEmpty) {
-    return errorResult('report_issue: `title` is required.');
+    return errorResult('report_issue: `title` is required.', kind: ErrorKind.badArgument);
   }
   if (bodyRaw == null || bodyRaw.isEmpty) {
-    return errorResult('report_issue: `body` is required.');
+    return errorResult('report_issue: `body` is required.', kind: ErrorKind.badArgument);
   }
 
   final title = redactPath(titleRaw);
   final body = redactPath(bodyRaw);
   final labels = _labelsForType(type);
 
-  // gh CLI path. Only attempt when auto=true (default).
   if (auto && _isGhInstalled()) {
     try {
-      final result = await io.Process.run('gh', [
-        'issue',
-        'create',
-        '--repo',
-        _kRepo,
-        '--title',
-        title,
-        '--body',
-        body,
-        '--label',
-        labels.join(','),
-      ]);
+      final existing = await _existingLabels();
+      var applied = selectApplicableLabels(labels, existing);
+
+      var result = await _ghIssueCreate(title, body, applied);
+      if (result.exitCode != 0 &&
+          applied.isNotEmpty &&
+          isMissingLabelError(result.stderr as String)) {
+        applied = const [];
+        result = await _ghIssueCreate(title, body, applied);
+      }
+
       if (result.exitCode == 0) {
         final url = (result.stdout as String).trim();
+        final dropped = labels.where((l) => !applied.contains(l)).toList();
         return jsonResult({
           'filed': true,
           'method': 'gh-cli',
           'type': type,
-          'labels': labels,
+          'labels': applied,
+          if (dropped.isNotEmpty) 'droppedLabels': dropped,
           'title': title,
           'url': url,
           'nextSteps': [
             'Mention the URL to the user: $url',
+            if (dropped.isNotEmpty)
+              'Skipped label(s) not present in the repo so they could not '
+                  'block filing: ${dropped.join(", ")}',
             'Optionally save a session_note linking to the issue for future continuity',
           ],
         });
       }
-      // gh ran but errored — fall through to paste-ready with stderr included.
       return jsonResult({
         'filed': false,
         'method': 'paste-ready',
@@ -124,7 +122,6 @@ FutureOr<CallToolResult> reportIssue(CallToolRequest request) async {
         ],
       });
     } on io.ProcessException catch (e) {
-      // gh disappeared between the install check and now — fall through.
       io.stderr.writeln(
         'report_issue: gh CLI invocation failed (${e.message}); falling '
         'back to paste-ready URL.',
@@ -132,7 +129,6 @@ FutureOr<CallToolResult> reportIssue(CallToolRequest request) async {
     }
   }
 
-  // Paste-ready fallback. Always available — works on any machine.
   return jsonResult({
     'filed': false,
     'method': 'paste-ready',
@@ -174,6 +170,77 @@ bool _isGhInstalled() {
   } catch (_) {
     return false;
   }
+}
+
+/// Runs `gh issue create` against [_kRepo]. The `--label` flag is omitted
+/// entirely when [labels] is empty (passing an empty `--label` is itself an
+/// error), so callers can request "no labels" cleanly.
+Future<io.ProcessResult> _ghIssueCreate(
+  String title,
+  String body,
+  List<String> labels,
+) {
+  return io.Process.run('gh', [
+    'issue',
+    'create',
+    '--repo',
+    _kRepo,
+    '--title',
+    title,
+    '--body',
+    body,
+    if (labels.isNotEmpty) ...['--label', labels.join(',')],
+  ]);
+}
+
+/// Best-effort fetch of the repo's existing label names via
+/// `gh label list --json name`. Returns null when the lookup fails (gh
+/// error, offline, bad JSON) so the caller falls back to its
+/// retry-without-labels safety net instead of guessing the label set.
+Future<Set<String>?> _existingLabels() async {
+  try {
+    final r = await io.Process.run('gh', [
+      'label',
+      'list',
+      '--repo',
+      _kRepo,
+      '--json',
+      'name',
+      '-L',
+      '200',
+    ]);
+    if (r.exitCode != 0) return null;
+    final decoded = jsonDecode(r.stdout as String);
+    if (decoded is! List) return null;
+    return decoded
+        .whereType<Map<String, dynamic>>()
+        .map((m) => m['name']?.toString())
+        .whereType<String>()
+        .toSet();
+  } catch (_) {
+    return null;
+  }
+}
+
+/// Keeps only [desired] labels that exist in the repo. When [existing] is
+/// null (the label lookup failed) the desired labels pass through unchanged,
+/// leaving the create's retry-without-labels path as the safety net. A label
+/// the tool injects must never block a valid filing. Public for testing.
+List<String> selectApplicableLabels(
+  List<String> desired,
+  Set<String>? existing,
+) {
+  if (existing == null) return desired;
+  return desired.where(existing.contains).toList();
+}
+
+/// True when a `gh issue create` stderr indicates a label could not be
+/// attached because it does not exist (so a retry without labels is worth
+/// trying). Public for testing.
+bool isMissingLabelError(String stderr) {
+  final s = stderr.toLowerCase();
+  return s.contains('not found') &&
+      (s.contains('label') || s.contains('could not add'));
 }
 
 /// Builds the GitHub "new issue" deep link with `title=`, `body=`, and

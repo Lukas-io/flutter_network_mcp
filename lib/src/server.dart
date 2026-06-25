@@ -31,8 +31,12 @@ import 'tools/network_get.dart';
 import 'tools/network_list.dart';
 import 'tools/network_query.dart';
 import 'tools/network_replay.dart';
+import 'tools/network_replay_as_test.dart';
 import 'tools/network_search.dart';
 import 'tools/network_status.dart';
+import 'tools/network_diff_session.dart';
+import 'tools/network_drift.dart';
+import 'tools/network_report.dart';
 import 'tools/network_summarize.dart';
 import 'tools/report_issue.dart';
 import 'tools/redacted_headers.dart';
@@ -64,39 +68,26 @@ base class FlutterNetworkMcpServer extends MCPServer with ToolsSupport {
           ),
           instructions:
               'Read HTTP, sockets, and logs from a running Flutter/Dart app, '
-              'live or from history. network_status → alerts_drain → '
-              'network_search / network_list / logs_tail. session_delete + '
-              'db_vacuum keep the DB lean. See docs/tools for per-tool guides '
-              'including when NOT to use each tool.\n\n'
-              'FILING FEEDBACK (you, the agent, are the channel; use the '
-              'report_issue tool). Proactively OFFER to file when ANY of these '
-              'happens: (1) the user voices friction ("why did it not...", "I '
-              'wish it...", "this is annoying"); (2) you hit a tool error or '
-              'surprising output and have to work around it; (3) a non-trivial '
-              'debugging session finishes, or the user signals done ("thanks", '
-              '"moving on"). How to offer, one short line: "That '
-              '[friction / workaround] would help the flutter_network_mcp '
-              'maintainer. Want me to file a quick issue? I will draft it, you '
-              'just approve." On yes, call report_issue (type:"bug" for wrong '
-              'output / crashes / errors, type:"ux" for anything awkward, slow, '
-              'or confusing); it submits via the gh CLI or returns a '
-              'paste-ready body. Rules: ask before filing; at most once per '
-              'conversation unless the user invites more; only file with a '
-              'CONCRETE repro or a specific friction point, never a generic '
-              '"it was great".',
+              'live or from history. Start with network_status; it reports '
+              'what is reachable and its nextSteps tell you what to call next. '
+              'See docs/tools for per-tool guides.\n\n'
+              'You are the maintainer feedback channel. When the user voices '
+              'friction, you hit a surprising tool error you have to work '
+              'around, or a debugging session wraps up, OFFER (at most once '
+              'per conversation, only with a concrete repro) to file via '
+              'report_issue. One line: "Want me to file a quick issue for the '
+              'maintainer? I will draft it, you approve." Use type:"bug" for '
+              'wrong output or crashes, "ux" for anything awkward or confusing.',
         ) {
     final caps = CapabilityConfig.instance;
 
-    // Lifecycle — always available.
     _register(networkStatusTool, (req) => networkStatus(req, defaultDtdUri));
     _register(networkAttachTool, (req) => networkAttach(req, defaultDtdUri));
     _register(networkDetachTool, networkDetach);
     _register(networkDiscoverDtdTool, networkDiscoverDtd);
     _register(reportIssueTool, reportIssue);
     _register(autoAttachConfigTool, autoAttachConfig);
-    // Sticky default filters tune whatever read tools are enabled (#18).
     _register(sessionConfigureTool, sessionConfigure);
-    // Usage analytics is process-wide + always available (#79 Phase 2).
     _register(usageStatsTool, usageStats);
 
     if (caps.isEnabled(Category.http)) {
@@ -106,7 +97,11 @@ base class FlutterNetworkMcpServer extends MCPServer with ToolsSupport {
       _register(networkClearTool, networkClear);
       _register(networkDiffTool, networkDiff);
       _register(networkReplayTool, networkReplay);
+      _register(networkReplayAsTestTool, networkReplayAsTest);
       _register(networkSummarizeTool, networkSummarize);
+      _register(networkDiffSessionTool, networkDiffSession);
+      _register(networkDriftTool, networkDrift);
+      _register(networkReportTool, networkReport);
     }
 
     if (caps.isEnabled(Category.sockets)) {
@@ -127,9 +122,6 @@ base class FlutterNetworkMcpServer extends MCPServer with ToolsSupport {
       _register(logsClearTool, logsClear);
     }
 
-    // #18: log<->network correlation bridges the http + logs surfaces, so it
-    // is available whenever either side is on (it returns only the enabled
-    // sides).
     if (caps.isEnabled(Category.http) || caps.isEnabled(Category.logs)) {
       _register(correlateAtTool, correlateAt);
     }
