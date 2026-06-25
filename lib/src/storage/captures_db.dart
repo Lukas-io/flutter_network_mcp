@@ -508,10 +508,13 @@ class CapturesDao {
     int? durationMs,
     int? resultBytes,
     int? estimatedTokens,
+    String? errorKind,
+    bool degraded = false,
   }) {
     _db.execute(
       'INSERT INTO tool_events(ts_ms, correlation_id, tool, outcome, arg_keys, '
-      'duration_ms, result_bytes, estimated_tokens) VALUES (?,?,?,?,?,?,?,?)',
+      'duration_ms, result_bytes, estimated_tokens, error_kind, degraded) '
+      'VALUES (?,?,?,?,?,?,?,?,?,?)',
       [
         tsMs,
         correlationId,
@@ -521,6 +524,8 @@ class CapturesDao {
         durationMs,
         resultBytes,
         estimatedTokens,
+        errorKind,
+        degraded ? 1 : 0,
       ],
     );
   }
@@ -575,7 +580,7 @@ class CapturesDao {
     if (sinceMs == null) {
       return _db
           .select(
-            'SELECT correlation_id, tool, outcome, duration_ms, result_bytes, estimated_tokens '
+            'SELECT correlation_id, tool, outcome, duration_ms, result_bytes, estimated_tokens, error_kind, degraded '
             'FROM tool_events ORDER BY correlation_id, id LIMIT ?',
             [limit],
           )
@@ -584,7 +589,7 @@ class CapturesDao {
     }
     return _db
         .select(
-          'SELECT correlation_id, tool, outcome, duration_ms, result_bytes, estimated_tokens '
+          'SELECT correlation_id, tool, outcome, duration_ms, result_bytes, estimated_tokens, error_kind, degraded '
           'FROM tool_events WHERE ts_ms >= ? ORDER BY correlation_id, id LIMIT ?',
           [sinceMs, limit],
         )
@@ -604,7 +609,7 @@ class CapturesDao {
     return _db
         .select(
           'SELECT id, ts_ms, correlation_id, tool, outcome, duration_ms, '
-          'result_bytes, estimated_tokens FROM tool_events WHERE id > ? '
+          'result_bytes, estimated_tokens, error_kind, degraded FROM tool_events WHERE id > ? '
           'ORDER BY correlation_id, id LIMIT ?',
           [afterId, limit],
         )
