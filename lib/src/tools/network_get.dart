@@ -140,6 +140,23 @@ FutureOr<CallToolResult> networkGet(CallToolRequest request) async {
     }
   }
   if (found == null) {
+    // Consistent degradation (matches network_list / network_body): if the
+    // request is persisted, serve the DB copy flagged source:live-db-fallback
+    // rather than dead-ending. Only error when it isn't anywhere to be found.
+    if (CapturesDao().getHttpRequest(scope.sessionId, id) != null) {
+      return _historyGet(
+        scope: scope,
+        id: id,
+        includeBodies: includeBodies,
+        includeEvents: includeEvents,
+        maxBytes: maxBytes,
+        headerTruncateBytes: headerTruncateBytes,
+        caps: caps,
+        degradedFrom:
+            'Live fetch failed (${lastError ?? "no isolate had id $id"}); '
+            'returned the persisted DB copy instead.',
+      );
+    }
     return errorResult(
       'getHttpProfileRequest failed: ${lastError ?? "no isolate had id $id"}',
       extra: {
@@ -272,6 +289,7 @@ FutureOr<CallToolResult> _historyGet({
   required int maxBytes,
   required int headerTruncateBytes,
   required CapabilityConfig caps,
+  String? degradedFrom,
 }) {
   final sid = scope.sessionId;
   try {
@@ -323,6 +341,9 @@ FutureOr<CallToolResult> _historyGet({
       requestError: hasError ? '(see has_error flag)' : null,
       responseError: null,
     );
+    if (degradedFrom != null) {
+      warnings.insert(0, degradedFrom);
+    }
     if (reqBlob == null && includeBodies) {
       warnings.add('Request body not persisted yet (writer may still be backfilling).');
     }
@@ -344,7 +365,8 @@ FutureOr<CallToolResult> _historyGet({
     );
 
     return jsonResult({
-      'source': 'history',
+      'source': degradedFrom != null ? 'live-db-fallback' : 'history',
+      if (degradedFrom != null) 'degraded': true,
       'scope': scope.toBlock(),
       'sessionId': sid,
       if (row['isolate_id'] != null) 'isolateId': row['isolate_id'],
