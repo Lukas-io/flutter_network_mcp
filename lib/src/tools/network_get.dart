@@ -146,9 +146,10 @@ FutureOr<CallToolResult> networkGet(CallToolRequest request) async {
         'id': id,
         'triedIsolates': candidateIsolates,
         'nextSteps': const [
+          'network_search query:"..." — DB-backed search; works when the live path is down (in-flight/collected request)',
+          'network_query sql:"SELECT * FROM http_requests WHERE vm_id=?" — read the persisted row for this id',
           'Verify the id exists via network_list',
           'network_status — check VM service / zombie-DTD state',
-          'Pass isolateId explicitly if you know which isolate produced this request',
         ],
       },
     );
@@ -175,7 +176,12 @@ CallToolResult _buildLiveResponse({
   required int headerTruncateBytes,
   required CapabilityConfig caps,
 }) {
-  final reqCt = firstHeader(r.request?.headers, 'content-type');
+  // Guard the request-side header read (#41): r.request.headers throws
+  // HttpProfileRequestError once the request hasError. Response fields are
+  // plain (non-throwing).
+  final reqCt = (r.request?.hasError ?? false)
+      ? null
+      : firstHeader(r.request?.headers, 'content-type');
   final respCt = firstHeader(r.response?.headers, 'content-type');
   final reqBody = includeBodies
       ? decodeBody(r.requestBody, reqCt, maxBytes: maxBytes)?.toJson()
