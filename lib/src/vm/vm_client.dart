@@ -1,5 +1,28 @@
+import 'dart:async';
+import 'dart:io' as io;
+
 import 'package:vm_service/vm_service.dart';
 import 'package:vm_service/vm_service_io.dart';
+
+/// Thrown when a VM service RPC does not respond within the configured
+/// deadline. A live VM service connection can accept the WebSocket yet stop
+/// answering RPCs (app paused at a breakpoint, backgrounded/suspended by the
+/// OS, or a wedged DDS). Without a deadline every such call awaits forever;
+/// this turns the hang into a typed, catchable failure so tools degrade
+/// gracefully instead of blocking for minutes.
+class VmRpcTimeoutException implements Exception {
+  VmRpcTimeoutException(this.operation, this.deadline);
+
+  /// The RPC that timed out, e.g. `getHttpProfileRequest`.
+  final String operation;
+  final Duration deadline;
+
+  @override
+  String toString() =>
+      'VM service did not respond to $operation within '
+      '${deadline.inMilliseconds}ms — the app may be paused at a breakpoint, '
+      'backgrounded, or the DDS is unresponsive.';
+}
 
 /// One isolate worth tracking for HTTP/socket profiling. Captured when
 /// [VmClient.discoverHttpProfilingIsolates] runs.
@@ -57,6 +80,43 @@ class VmClient {
   VmService get service =>
       _service ?? (throw StateError('VM service is not connected.'));
 
+  /// Per-RPC deadline. Every `ext.dart.io.*` call is bounded by this so a
+  /// live-but-unresponsive VM can never hang a tool indefinitely. Defaults to
+  /// 10s (40x the slowest normal call observed in telemetry); override with
+  /// `FLUTTER_NETWORK_MCP_RPC_TIMEOUT_MS` (clamped to a 1s floor).
+  static final Duration rpcDeadline = _deadlineFromEnv();
+
+  static Duration _deadlineFromEnv() {
+    final raw =
+        int.tryParse(io.Platform.environment['FLUTTER_NETWORK_MCP_RPC_TIMEOUT_MS'] ?? '');
+    if (raw == null || raw < 1000) return const Duration(seconds: 10);
+    return Duration(milliseconds: raw);
+  }
+
+  /// Wraps a VM service RPC [future] with [rpcDeadline]. On expiry it throws a
+  /// [VmRpcTimeoutException] tagged with [operation] instead of awaiting
+  /// forever. The underlying request is abandoned (not cancellable in the VM
+  /// service protocol), which is harmless: the data lives in the VM's ring
+  /// buffer and a later call re-reads it. Visible for testing via [boundForTest].
+  Future<T> _bounded<T>(String operation, Future<T> future) {
+    return future.timeout(
+      rpcDeadline,
+      onTimeout: () => throw VmRpcTimeoutException(operation, rpcDeadline),
+    );
+  }
+
+  /// Test seam for the bounded-RPC behaviour without a live VM.
+  static Future<T> boundForTest<T>(
+    String operation,
+    Future<T> future, {
+    required Duration deadline,
+  }) {
+    return future.timeout(
+      deadline,
+      onTimeout: () => throw VmRpcTimeoutException(operation, deadline),
+    );
+  }
+
   Future<void> connect(Uri vmServiceUri) async {
     if (_service != null) await disconnect();
     final svc = await vmServiceConnectUri(_toWsUri(vmServiceUri));
@@ -83,12 +143,12 @@ class VmClient {
   /// to pick up newly-spawned isolates.
   Future<List<IsolateInfo>> discoverHttpProfilingIsolates() async {
     final vm = service;
-    final info = await vm.getVM();
+    final info = await _bounded('getVM', vm.getVM());
     final found = <String, IsolateInfo>{};
     for (final ref in info.isolates ?? const <IsolateRef>[]) {
       final id = ref.id;
       if (id == null) continue;
-      final isolate = await vm.getIsolate(id);
+      final isolate = await _bounded('getIsolate', vm.getIsolate(id));
       final rpcs = isolate.extensionRPCs ?? const <String>[];
       if (rpcs.contains('ext.dart.io.getHttpProfile')) {
         found[id] = IsolateInfo(
@@ -125,42 +185,57 @@ class VmClient {
   Future<HttpTimelineLoggingState> enableHttpLoggingForIsolate(
     String isolateId,
   ) {
-    return service.httpEnableTimelineLogging(isolateId, true);
+    return _bounded(
+      'httpEnableTimelineLogging',
+      service.httpEnableTimelineLogging(isolateId, true),
+    );
   }
 
   Future<HttpProfile> getHttpProfileForIsolate(
     String isolateId, {
     DateTime? updatedSince,
   }) {
-    return service.getHttpProfile(isolateId, updatedSince: updatedSince);
+    return _bounded(
+      'getHttpProfile',
+      service.getHttpProfile(isolateId, updatedSince: updatedSince),
+    );
   }
 
   Future<HttpProfileRequest> getHttpProfileRequestForIsolate(
     String isolateId,
     String requestId,
   ) {
-    return service.getHttpProfileRequest(isolateId, requestId);
+    return _bounded(
+      'getHttpProfileRequest',
+      service.getHttpProfileRequest(isolateId, requestId),
+    );
   }
 
   Future<Success> clearHttpProfileForIsolate(String isolateId) {
-    return service.clearHttpProfile(isolateId);
+    return _bounded('clearHttpProfile', service.clearHttpProfile(isolateId));
   }
 
   /// Returns true if socket profiling is available + enabled (best effort)
   /// for [isolateId].
   Future<bool> enableSocketProfilingForIsolate(String isolateId) async {
-    final available = await service.isSocketProfilingAvailable(isolateId);
+    final available = await _bounded(
+      'isSocketProfilingAvailable',
+      service.isSocketProfilingAvailable(isolateId),
+    );
     if (!available) return false;
-    final state = await service.socketProfilingEnabled(isolateId, true);
+    final state = await _bounded(
+      'socketProfilingEnabled',
+      service.socketProfilingEnabled(isolateId, true),
+    );
     return state.enabled;
   }
 
   Future<SocketProfile> getSocketProfileForIsolate(String isolateId) {
-    return service.getSocketProfile(isolateId);
+    return _bounded('getSocketProfile', service.getSocketProfile(isolateId));
   }
 
   Future<Success> clearSocketProfileForIsolate(String isolateId) {
-    return service.clearSocketProfile(isolateId);
+    return _bounded('clearSocketProfile', service.clearSocketProfile(isolateId));
   }
 
   // ===== Back-compat single-isolate facades =====
