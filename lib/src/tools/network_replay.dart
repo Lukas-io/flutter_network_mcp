@@ -6,6 +6,7 @@ import 'package:dart_mcp/server.dart';
 import '../config/capabilities.dart';
 import '../storage/captures_db.dart';
 import '../util/scope.dart';
+import 'error_kind.dart';
 import 'result.dart';
 
 const _kDefaultBodyTruncate = 4096;
@@ -44,12 +45,14 @@ FutureOr<CallToolResult> networkReplay(CallToolRequest request) async {
   final caps = CapabilityConfig.instance;
   final id = args['id'] as String?;
   if (id == null || id.isEmpty) {
-    return errorResult('Missing required arg `id`.', extra: const {
-      'nextSteps': [
-        'network_list — list captured requests and pick an id',
-        'network_search query:"..." — find a request by content',
-      ],
-    });
+    return errorResult('Missing required arg `id`.',
+        kind: ErrorKind.badArgument,
+        extra: const {
+          'nextSteps': [
+            'network_list — list captured requests and pick an id',
+            'network_search query:"..." — find a request by content',
+          ],
+        });
   }
   final (scope, scopeErr) = resolveScope(args);
   if (scopeErr != null) return scopeErr;
@@ -65,13 +68,15 @@ FutureOr<CallToolResult> networkReplay(CallToolRequest request) async {
     final dao = CapturesDao();
     final row = dao.getHttpRequest(sessionId, id);
     if (row == null) {
-      return errorResult('Request `$id` not found in session $sessionId.', extra: {
-        'sessionId': sessionId,
-        'nextSteps': const [
-          'network_list — list valid ids in this session',
-          'session_list — confirm the session exists',
-        ],
-      });
+      return errorResult('Request `$id` not found in session $sessionId.',
+          kind: ErrorKind.notFound,
+          extra: {
+            'sessionId': sessionId,
+            'nextSteps': const [
+              'network_list — list valid ids in this session',
+              'session_list — confirm the session exists',
+            ],
+          });
     }
     final method = (row['method'] as String?) ?? 'GET';
     final url = (row['url'] as String?) ?? '';
@@ -107,7 +112,6 @@ FutureOr<CallToolResult> networkReplay(CallToolRequest request) async {
         final text = utf8.decode(clipped, allowMalformed: false);
         buf.write(" --data-raw '${_shellEscape(text)}'");
       } catch (_) {
-        // Not valid utf8 — curl can't inline binary safely.
         buf.write(' --data-binary @-');
         bodyIsBinary = true;
       }
@@ -160,14 +164,16 @@ FutureOr<CallToolResult> networkReplay(CallToolRequest request) async {
       'nextSteps': nextSteps,
     }, scopeSessionId: scope.sessionId);
   } catch (e) {
-    return errorResult('network_replay failed: $e', extra: {
-      'sessionId': sessionId,
-      'id': id,
-      'nextSteps': const [
-        'network_list — confirm the id is valid',
-        'network_get id:"..." — see the underlying request data',
-      ],
-    });
+    return errorResult('network_replay failed: $e',
+        kind: ErrorKind.internal,
+        extra: {
+          'sessionId': sessionId,
+          'id': id,
+          'nextSteps': const [
+            'network_list — confirm the id is valid',
+            'network_get id:"..." — see the underlying request data',
+          ],
+        });
   }
 }
 

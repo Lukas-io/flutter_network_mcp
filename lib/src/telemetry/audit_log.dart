@@ -176,7 +176,6 @@ class AuditEntry {
     if (parts.length != 4) return null;
     final ts = DateTime.tryParse(parts[0]);
     if (ts == null) return null;
-    // Hash format sanity — 64 hex chars.
     if (parts[1].length != 64 || parts[3].length != 64) return null;
     return AuditEntry(
       ts: ts,

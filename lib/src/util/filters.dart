@@ -1,5 +1,3 @@
-// Tiny helpers shared by `_list`-style tools.
-
 bool methodMatches(String reqMethod, List<String>? methods) {
   if (methods == null || methods.isEmpty) return true;
   final m = reqMethod.toUpperCase();

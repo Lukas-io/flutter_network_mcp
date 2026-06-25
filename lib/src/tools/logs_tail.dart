@@ -8,6 +8,7 @@ import '../state/session.dart';
 import '../storage/captures_db.dart';
 import '../util/filters.dart';
 import '../util/scope.dart';
+import 'error_kind.dart';
 import 'result.dart';
 
 const int _kMessageTruncateBytes = 2048;
@@ -70,8 +71,6 @@ FutureOr<CallToolResult> logsTail(CallToolRequest request) async {
   if (scopeErr != null) return scopeErr;
   scope!;
 
-  // Sticky defaults (#18): inherit from session_configure when an arg is
-  // omitted; an explicitly-passed arg (even null) wins for this call.
   final sf = SessionFilters.instance;
   final sinceId = args['since'] as int?;
   final levelMin =
@@ -126,7 +125,7 @@ FutureOr<CallToolResult> logsTail(CallToolRequest request) async {
         caps: caps,
       ), scopeSessionId: scope.sessionId);
     } catch (e) {
-      return errorResult('history query failed: $e', extra: {
+      return errorResult('history query failed: $e', kind: ErrorKind.internal, extra: {
         'sessionId': sid,
         'nextSteps': const [
           'session_close — return to live mode',
@@ -136,7 +135,6 @@ FutureOr<CallToolResult> logsTail(CallToolRequest request) async {
     }
   }
 
-  // Live mode — read this attached session's own ring buffer.
   final attached = SessionRegistry.instance.attachedById(scope.sessionId)!;
   final entries = attached.logBuffer.tail(
     sinceId: sinceId,
@@ -226,9 +224,6 @@ Map<String, Object?> _buildResponse({
   final sessionId = scope.sessionId;
   final filters =
       _filterDesc(levelMin, loggerContains, messageContains, sourceFilter);
-  // Buffer is "near capacity" at 80% full; reads its real configured size
-  // (FLUTTER_NETWORK_MCP_LOG_BUFFER / per-attach override), not a hardcoded
-  // 500, so the warning stays correct when the user bumps the buffer (#21).
   final nearCapacity = source == 'live' &&
       bufferSize != null &&
       bufferCapacity != null &&

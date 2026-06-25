@@ -8,6 +8,7 @@ import '../state/session.dart';
 import '../storage/captures_db.dart';
 import '../util/body_decoder.dart';
 import '../util/scope.dart';
+import 'error_kind.dart';
 import 'result.dart';
 
 const int _kMaxBodyChunk = 262144;
@@ -58,16 +59,19 @@ FutureOr<CallToolResult> networkBody(CallToolRequest request) async {
   final id = args['id'] as String?;
   final whichArg = args['which'] as String?;
   if (id == null || id.isEmpty) {
-    return errorResult('Missing required arg `id`.', extra: const {
-      'nextSteps': [
-        'network_list — list captured requests and pick an id',
-        'network_search query:"..." — find a request by content',
-      ],
-    });
+    return errorResult('Missing required arg `id`.',
+        kind: ErrorKind.badArgument,
+        extra: const {
+          'nextSteps': [
+            'network_list — list captured requests and pick an id',
+            'network_search query:"..." — find a request by content',
+          ],
+        });
   }
   if (whichArg != 'request' && whichArg != 'response') {
     return errorResult(
       '`which` must be "request" or "response".',
+      kind: ErrorKind.badArgument,
       extra: const {
         'nextSteps': [
           'Retry with which:"response" (most common)',
@@ -88,9 +92,11 @@ FutureOr<CallToolResult> networkBody(CallToolRequest request) async {
       : (lengthArg > _kMaxBodyChunk ? _kMaxBodyChunk : lengthArg);
   final decode = (args['decode'] as String?) ?? 'auto';
   if (decode != 'auto' && decode != 'utf8' && decode != 'base64') {
-    return errorResult('`decode` must be one of: auto, utf8, base64.', extra: const {
-      'nextSteps': ['Retry with decode:"auto" (recommended)'],
-    });
+    return errorResult('`decode` must be one of: auto, utf8, base64.',
+        kind: ErrorKind.badArgument,
+        extra: const {
+          'nextSteps': ['Retry with decode:"auto" (recommended)'],
+        });
   }
 
   Uint8List? bytes;
@@ -107,20 +113,20 @@ FutureOr<CallToolResult> networkBody(CallToolRequest request) async {
       final row = dao.getHttpRequest(sid, id);
       if (row != null) mimeType = row['content_type'] as String?;
       if (row == null) {
-        return errorResult('Request `$id` not found in session $sid.', extra: {
-          'sessionId': sid,
-          'nextSteps': const [
-            'network_list — list valid request ids in this session',
-            'session_list — confirm the session id is correct',
-          ],
-        });
+        return errorResult('Request `$id` not found in session $sid.',
+            kind: ErrorKind.notFound,
+            extra: {
+              'sessionId': sid,
+              'nextSteps': const [
+                'network_list — list valid request ids in this session',
+                'session_list — confirm the session id is correct',
+              ],
+            });
       }
     } else {
       source = 'live';
       final attached = SessionRegistry.instance.attachedById(scope.sessionId)!;
       final isolateFilter = args['isolateId'] as String?;
-      // Same isolate-resolution priority as network_get: explicit arg →
-      // DB-recorded isolate_id → try each known isolate.
       String? resolvedIsolateId = isolateFilter;
       if (resolvedIsolateId == null) {
         final dbRow = CapturesDao().getHttpRequest(scope.sessionId, id);
@@ -132,6 +138,7 @@ FutureOr<CallToolResult> networkBody(CallToolRequest request) async {
       if (candidateIsolates.isEmpty) {
         return errorResult(
           'No HTTP-profiling isolates known for this session.',
+          kind: ErrorKind.unresponsiveVm,
           extra: const {
             'nextSteps': [
               'network_status — verify the session\'s isolates list',
@@ -159,10 +166,6 @@ FutureOr<CallToolResult> networkBody(CallToolRequest request) async {
         }
       }
       if (!fetched) {
-        // Live fetch failed (the VM stopped responding and the RPC hit its
-        // deadline, or the request is in-flight/collected). Degrade to the
-        // persisted body if the writer already captured it, flagged so the
-        // agent knows it is the DB snapshot rather than dead-ending.
         final dbBytes = CapturesDao().getBody(scope.sessionId, id, which);
         if (dbBytes != null && dbBytes.isNotEmpty) {
           bytes = dbBytes;
@@ -172,6 +175,7 @@ FutureOr<CallToolResult> networkBody(CallToolRequest request) async {
         } else {
           return errorResult(
             'body fetch failed: ${lastError ?? "no isolate had id $id"}',
+            kind: ErrorKind.unresponsiveVm,
             extra: {
               'id': id,
               'triedIsolates': candidateIsolates,
@@ -213,9 +217,6 @@ FutureOr<CallToolResult> networkBody(CallToolRequest request) async {
     final start = offset < 0 ? 0 : (offset > total ? total : offset);
     final end = (start + length) > total ? total : (start + length);
     final slice = Uint8List.sublistView(bytes, start, end);
-    // network_body is the byte-range API — caller's offset/length must map
-    // 1:1 to the captured bytes. Semantic truncation would break the
-    // contract.
     final decoded = decodeBody(slice, mimeType, decode: decode, maxBytes: -1, semantic: false);
     final returnedSize = end - start;
     final nextOffset = end < total ? end : null;
@@ -266,13 +267,15 @@ FutureOr<CallToolResult> networkBody(CallToolRequest request) async {
       'nextSteps': nextSteps,
     }, scopeSessionId: scope.sessionId);
   } catch (e) {
-    return errorResult('body fetch failed: $e', extra: {
-      'id': id,
-      'which': which,
-      'nextSteps': const [
-        'network_get id:<id> — confirm the request still exists',
-        'network_status — check zombie-DTD state if reading live',
-      ],
-    });
+    return errorResult('body fetch failed: $e',
+        kind: ErrorKind.internal,
+        extra: {
+          'id': id,
+          'which': which,
+          'nextSteps': const [
+            'network_get id:<id> — confirm the request still exists',
+            'network_status — check zombie-DTD state if reading live',
+          ],
+        });
   }
 }

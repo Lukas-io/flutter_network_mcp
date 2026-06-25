@@ -5,6 +5,7 @@ import 'package:dart_mcp/server.dart';
 import '../state/session.dart';
 import '../storage/captures_db.dart';
 import '../util/filters.dart';
+import 'error_kind.dart';
 import 'result.dart';
 
 const int _kMaxSessions = 8;
@@ -55,11 +56,11 @@ final networkCorrelateTool = Tool(
 FutureOr<CallToolResult> networkCorrelate(CallToolRequest request) async {
   final args = request.arguments ?? const <String, Object?>{};
 
-  // Parse + validate sessionIds.
   final sessionsRaw = args['sessionIds'];
   if (sessionsRaw is! List || sessionsRaw.isEmpty) {
     return errorResult(
       'Missing or invalid `sessionIds` — must be a non-empty list of ints.',
+      kind: ErrorKind.badArgument,
       extra: const {
         'nextSteps': [
           'network_status — list currently-attached session ids',
@@ -74,6 +75,7 @@ FutureOr<CallToolResult> networkCorrelate(CallToolRequest request) async {
     if (v is! int) {
       return errorResult(
         'sessionIds must contain only integers; got `${v.runtimeType}`.',
+        kind: ErrorKind.badArgument,
         extra: const {
           'nextSteps': [
             'Retry with sessionIds:[14,15] — integers, not strings',
@@ -88,6 +90,7 @@ FutureOr<CallToolResult> networkCorrelate(CallToolRequest request) async {
       'Too many sessionIds (${sessionIds.length}); hard cap is '
       '$_kMaxSessions per call. Pick the most relevant subset, or use '
       'network_query for unrestricted SQL.',
+      kind: ErrorKind.badArgument,
       extra: {
         'sessionIdsRequested': sessionIds,
         'cap': _kMaxSessions,
@@ -102,6 +105,7 @@ FutureOr<CallToolResult> networkCorrelate(CallToolRequest request) async {
   final pattern = args['pattern'] as String?;
   if (pattern == null || pattern.trim().isEmpty) {
     return errorResult('Missing or empty `pattern` — must be a non-empty string.',
+        kind: ErrorKind.badArgument,
         extra: const {
       'nextSteps': [
         'Retry with pattern:"<correlation id or substring>"',
@@ -113,6 +117,7 @@ FutureOr<CallToolResult> networkCorrelate(CallToolRequest request) async {
   if (!const {'url', 'request', 'response', 'any'}.contains(whichArg)) {
     return errorResult(
       '`which` must be one of: url | request | response | any.',
+      kind: ErrorKind.badArgument,
       extra: const {
         'nextSteps': ['Retry with which:"any" (the default)'],
       },
@@ -123,6 +128,7 @@ FutureOr<CallToolResult> networkCorrelate(CallToolRequest request) async {
   if (timeWindowMs != null && timeWindowMs < 0) {
     return errorResult(
       '`timeWindowMs` must be >= 0.',
+      kind: ErrorKind.badArgument,
       extra: const {
         'nextSteps': ['Omit timeWindowMs for no window, or pass a positive int'],
       },
@@ -136,7 +142,6 @@ FutureOr<CallToolResult> networkCorrelate(CallToolRequest request) async {
     hardMax: _kPerSessionHardMax,
   );
 
-  // Run the FTS5 query for each session.
   final List<Map<String, Object?>> allMatches;
   try {
     allMatches = CapturesDao().correlateAcrossSessions(
@@ -146,7 +151,7 @@ FutureOr<CallToolResult> networkCorrelate(CallToolRequest request) async {
       perSessionLimit: perSessionLimit,
     );
   } catch (e) {
-    return errorResult('network_correlate failed: $e', extra: {
+    return errorResult('network_correlate failed: $e', kind: ErrorKind.badQuery, extra: {
       'sessionIds': sessionIds,
       'pattern': pattern,
       'nextSteps': const [
@@ -156,8 +161,6 @@ FutureOr<CallToolResult> networkCorrelate(CallToolRequest request) async {
     });
   }
 
-  // Group matches by session + tag with appName from the registry when
-  // the session is currently attached.
   final registry = SessionRegistry.instance;
   final perSessionMatches = <int, List<Map<String, Object?>>>{
     for (final sid in sessionIds) sid: [],
@@ -182,10 +185,6 @@ FutureOr<CallToolResult> networkCorrelate(CallToolRequest request) async {
   }
   final totalMatches = allMatches.length;
 
-  // Build cross-session pairs. Tightest time delta first.
-  // For >2 sessions, every unordered pair of sessions contributes its own
-  // cross-product. This stays bounded by the per-session cap × pair-of-
-  // sessions count, and the hard `limit` ceiling.
   final pairs = <Map<String, Object?>>[];
   for (int i = 0; i < sessionIds.length; i++) {
     for (int j = i + 1; j < sessionIds.length; j++) {

@@ -5,6 +5,7 @@ import 'package:dart_mcp/server.dart';
 import '../storage/captures_db.dart';
 import '../util/path_template.dart';
 import '../util/scope.dart';
+import 'error_kind.dart';
 import 'result.dart';
 
 final networkSummarizeTool = Tool(
@@ -43,7 +44,7 @@ final networkSummarizeTool = Tool(
 const int _kRawRowsCap = 10000;
 const int _kLimitDefault = 50;
 const int _kLimitHardCap = 200;
-const int _kSinceMsDefault = 3600000; // 1 hour
+const int _kSinceMsDefault = 3600000;
 
 FutureOr<CallToolResult> networkSummarize(CallToolRequest request) async {
   final args = request.arguments ?? const <String, Object?>{};
@@ -71,13 +72,15 @@ FutureOr<CallToolResult> networkSummarize(CallToolRequest request) async {
       limit: _kRawRowsCap,
     );
   } catch (e) {
-    return errorResult('network_summarize query failed: $e', extra: {
-      'sessionId': scope.sessionId,
-      'nextSteps': const [
-        'network_status — confirm the session is reachable',
-        'network_list — try the raw list to isolate the issue',
-      ],
-    });
+    return errorResult('network_summarize query failed: $e',
+        kind: ErrorKind.internal,
+        extra: {
+          'sessionId': scope.sessionId,
+          'nextSteps': const [
+            'network_status — confirm the session is reachable',
+            'network_list — try the raw list to isolate the issue',
+          ],
+        });
   }
 
   final endpoints = summarizeRequests(rows, minCount: minCount);
@@ -196,9 +199,6 @@ class _Bucket {
       statusDist[status] = (statusDist[status] ?? 0) + 1;
       if (status >= 400) errorCount++;
     } else {
-      // Null status = request errored before response. Counts as an error
-      // and falls into the synthetic "error" bucket so the agent sees the
-      // shape.
       errorCount++;
       statusDist[0] = (statusDist[0] ?? 0) + 1;
     }
@@ -214,7 +214,6 @@ class _Bucket {
     final p95 = _percentile(sortedDur, 0.95);
     final errorRate = count == 0 ? 0.0 : errorCount / count;
     final endpoint = '$method ${host.isEmpty ? "" : host}$template'.trim();
-    // statusDist keys must be String for JSON.
     final statusOut = <String, int>{};
     for (final entry in statusDist.entries) {
       statusOut[entry.key == 0 ? 'error' : entry.key.toString()] = entry.value;

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:dart_mcp/server.dart';
 
 import '../config/auto_attach_config.dart';
+import 'error_kind.dart';
 import 'result.dart';
 
 final autoAttachConfigTool = Tool(
@@ -48,6 +49,7 @@ FutureOr<CallToolResult> autoAttachConfig(CallToolRequest request) async {
       return errorResult(
         'auto_attach_config: unknown action "$action". Expected '
         'list | add | remove | clear.',
+        kind: ErrorKind.badArgument,
       );
   }
 }
@@ -69,6 +71,7 @@ CallToolResult _add({required String? app, required String? deny}) {
   if (app == null || app.isEmpty) {
     return errorResult(
       'auto_attach_config add: `app` is required.',
+      kind: ErrorKind.badArgument,
       extra: const {
         'nextSteps': [
           'auto_attach_config action:"add" app:"sanga_mobile"',
@@ -114,6 +117,7 @@ CallToolResult _remove({required String? app}) {
   if (app == null || app.isEmpty) {
     return errorResult(
       'auto_attach_config remove: `app` is required.',
+      kind: ErrorKind.badArgument,
     );
   }
   final current = AutoAttachConfig.allowedPatterns.toList();

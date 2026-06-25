@@ -22,14 +22,12 @@
 String redactPath(String input) {
   if (input.isEmpty) return input;
   var s = input;
-  // Project-aware redaction FIRST — most specific match wins.
   s = s.replaceAllMapped(_posixStudioProjectsRegex, (m) {
     return '<project:${m.group(1)}>/';
   });
   s = s.replaceAllMapped(_windowsStudioProjectsRegex, (m) {
     return r'<project:' '${m.group(1)}' r'>\';
   });
-  // Generic homedir fallback.
   s = s.replaceAll(_posixHomeRegex, '<home>/');
   s = s.replaceAll(_windowsHomeRegex, r'<home>\');
   return s;

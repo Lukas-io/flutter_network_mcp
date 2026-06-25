@@ -84,9 +84,6 @@ class DtdProbe {
   static Future<List<DtdAppListing>> probeAll({
     Duration cacheTtl = const Duration(seconds: 30),
   }) async {
-    // Discover with cwd:null so we see every DTD, not just the one
-    // matching the server's cwd. The agent can filter on workspaceRoot
-    // itself if it wants.
     final candidates = DtdDiscovery.discover(cwd: null)
         .where((c) => c.isLive)
         .toList();
@@ -149,8 +146,6 @@ class DtdProbe {
         error: e.toString(),
       );
     } finally {
-      // Best-effort disconnect; if the connect itself failed there's
-      // nothing to close, and DtdClient.disconnect handles the null case.
       try {
         await client.disconnect();
       } catch (e) {

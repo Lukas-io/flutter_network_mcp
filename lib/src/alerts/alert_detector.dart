@@ -95,7 +95,6 @@ class AlertDetector {
   }) {
     if (message.isEmpty) return;
 
-    // Flutter-specific takes priority — it's the most actionable.
     if (_rules.flutterErrorEnabled &&
         AlertRules.flutterErrorPatterns.any((p) => p.hasMatch(message))) {
       final title = _firstLine(message);
@@ -110,7 +109,7 @@ class AlertDetector {
         sourceId: 'log:$logRowId',
         tsMs: timestampMs,
       );
-      return; // Don't also fire log_keyword for the same record.
+      return;
     }
 
     if (_rules.logKeywordEnabled &&
@@ -130,8 +129,6 @@ class AlertDetector {
       );
     }
 
-    // Custom user-defined patterns. Run last so they don't pre-empt the
-    // built-in flutter_error path, but they CAN fire alongside log_keyword.
     for (final pattern in _rules.customPatterns) {
       if (pattern.regex.hasMatch(message)) {
         final title = pattern.label ?? _firstLine(message);

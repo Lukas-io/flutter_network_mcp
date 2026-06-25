@@ -101,7 +101,6 @@ class LogBuffer {
     int limit = 100,
   }) {
     final lc = loggerContains?.toLowerCase();
-    // OR-match: an entry passes if its message contains ANY of the terms.
     final mcTerms = messageContains
             ?.where((t) => t.trim().isNotEmpty)
             .map((t) => t.toLowerCase())
@@ -110,7 +109,6 @@ class LogBuffer {
     final sc = sourceContains?.toLowerCase();
     final iso = isolateId;
     final result = <LogEntry>[];
-    // Reverse iterate so newest-first; stop once we hit `limit`.
     final descending = _entries.toList(growable: false).reversed;
     for (final e in descending) {
       if (sinceId != null && e.id <= sinceId) break;

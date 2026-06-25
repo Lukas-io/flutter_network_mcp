@@ -120,8 +120,6 @@ class VmClient {
   Future<void> connect(Uri vmServiceUri) async {
     if (_service != null) await disconnect();
     final svc = await vmServiceConnectUri(_toWsUri(vmServiceUri));
-    // Zombie-DTD probe: a stale DDS will accept the WS upgrade but never
-    // respond to RPCs. Fail fast with a clear error so users don't wait 30+s.
     try {
       await svc.getVersion().timeout(const Duration(seconds: 5));
     } on Object catch (_) {
@@ -180,8 +178,6 @@ class VmClient {
     return _isolates.keys.first;
   }
 
-  // ===== Per-isolate RPC variants (Phase 9 — explicit isolate id) =====
-
   Future<HttpTimelineLoggingState> enableHttpLoggingForIsolate(
     String isolateId,
   ) {
@@ -237,13 +233,6 @@ class VmClient {
   Future<Success> clearSocketProfileForIsolate(String isolateId) {
     return _bounded('clearSocketProfile', service.clearSocketProfile(isolateId));
   }
-
-  // ===== Back-compat single-isolate facades =====
-  //
-  // These delegate to the per-isolate variants using the first known
-  // HTTP-profiling isolate. Existing callers (capture writer Phase 2,
-  // single-isolate tests) keep working until Phase 10 wires the writer
-  // through the per-isolate path.
 
   Future<HttpTimelineLoggingState> enableHttpLogging() {
     return enableHttpLoggingForIsolate(_requireIsolate());

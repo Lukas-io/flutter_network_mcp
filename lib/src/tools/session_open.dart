@@ -5,6 +5,7 @@ import 'package:dart_mcp/server.dart';
 import '../config/capabilities.dart';
 import '../state/session.dart';
 import '../storage/captures_db.dart';
+import 'error_kind.dart';
 import 'result.dart';
 
 final sessionOpenTool = Tool(
@@ -26,7 +27,7 @@ FutureOr<CallToolResult> sessionOpen(CallToolRequest request) async {
   final caps = CapabilityConfig.instance;
   final id = args['id'] as int?;
   if (id == null) {
-    return errorResult('Missing required arg `id`.', extra: const {
+    return errorResult('Missing required arg `id`.', kind: ErrorKind.badArgument, extra: const {
       'nextSteps': [
         'session_list — find a session id',
       ],
@@ -37,7 +38,7 @@ FutureOr<CallToolResult> sessionOpen(CallToolRequest request) async {
     final dao = CapturesDao();
     final row = dao.getSession(id);
     if (row == null) {
-      return errorResult('Session $id not found.', extra: const {
+      return errorResult('Session $id not found.', kind: ErrorKind.notFound, extra: const {
         'nextSteps': [
           'session_list — see valid session ids',
         ],
@@ -83,7 +84,7 @@ FutureOr<CallToolResult> sessionOpen(CallToolRequest request) async {
       'nextSteps': nextSteps,
     });
   } catch (e) {
-    return errorResult('session_open failed: $e', extra: {
+    return errorResult('session_open failed: $e', kind: ErrorKind.internal, extra: {
       'sessionId': id,
       'nextSteps': const [
         'session_list — confirm the session id exists',

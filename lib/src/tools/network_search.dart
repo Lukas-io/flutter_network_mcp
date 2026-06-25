@@ -100,10 +100,6 @@ FutureOr<CallToolResult> networkSearch(CallToolRequest request) async {
         ? 'No matches for "$query" in session $sessionId (which=$whichArg).'
         : '${matches.length} match(es) for "$query" in session $sessionId (ranked by BM25).';
 
-    // Self-correct an empty result (telemetry: ~37% of searches return empty).
-    // Distinguish "nothing indexed yet" (writer still backfilling) from "your
-    // term did not match", and in the latter case hand back the hosts that ARE
-    // captured so the agent picks a real term instead of guessing blind.
     final warnings = <String>[];
     List<String>? availableHosts;
     if (matches.isEmpty) {
