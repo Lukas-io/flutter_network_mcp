@@ -141,16 +141,25 @@ FutureOr<CallToolResult> networkList(CallToolRequest request) async {
         .sort((a, b) => b.$1.startTime.compareTo(a.$1.startTime));
 
     final filtered = <Map<String, Object?>>[];
+    var skippedErrors = 0;
     for (final (req, isoId) in perIsolateRequests) {
-      if (!methodMatches(req.method, methods)) continue;
-      if (!hostMatches(req.uri.toString(), hostContains)) continue;
-      if (!statusInRange(req.response?.statusCode, statusMin, statusMax)) {
-        continue;
+      // Per-request isolation (#41): one in-flight request in an error state
+      // (e.g. a DNS failure) must never abort the whole read. _liveSummary is
+      // already error-safe and surfaces such a request with hasError; this
+      // try/catch is the belt-and-suspenders for anything it can't model.
+      try {
+        if (!methodMatches(req.method, methods)) continue;
+        if (!hostMatches(req.uri.toString(), hostContains)) continue;
+        if (!statusInRange(req.response?.statusCode, statusMin, statusMax)) {
+          continue;
+        }
+        final summary = liveSummary(req);
+        summary['isolateId'] = isoId;
+        filtered.add(summary);
+        if (filtered.length >= limit) break;
+      } catch (_) {
+        skippedErrors++;
       }
-      final summary = _liveSummary(req);
-      summary['isolateId'] = isoId;
-      filtered.add(summary);
-      if (filtered.length >= limit) break;
     }
 
     final liveSid = scope.sessionId;
@@ -181,6 +190,12 @@ FutureOr<CallToolResult> networkList(CallToolRequest request) async {
     if (scannedTotal > filtered.length * 5 && filtered.isNotEmpty) {
       warnings.add(
         'Filters dropped ${scannedTotal - filtered.length} of $scannedTotal scanned requests, consider widening.',
+      );
+    }
+    if (skippedErrors > 0) {
+      warnings.add(
+        'Skipped $skippedErrors request(s) that could not be read (likely '
+        'in-flight/errored); the rest are returned.',
       );
     }
 
@@ -218,6 +233,7 @@ FutureOr<CallToolResult> networkList(CallToolRequest request) async {
       'summary': summary,
       'count': filtered.length,
       'totalScanned': scannedTotal,
+      if (skippedErrors > 0) 'partial': true,
       if (latestCursor != null)
         'nextCursor': latestCursor.microsecondsSinceEpoch,
       if (warnings.isNotEmpty) 'warnings': warnings,
@@ -225,13 +241,106 @@ FutureOr<CallToolResult> networkList(CallToolRequest request) async {
       'requests': filtered,
     }, scopeSessionId: scope.sessionId);
   } catch (e) {
-    return errorResult('getHttpProfile failed: $e', extra: const {
-      'nextSteps': [
-        'network_status — check VM service connection and zombie state',
-        'network_detach then network_attach — full reset',
-      ],
-    });
+    // Total live-fetch failure (#41): instead of dead-ending the agent,
+    // degrade to the persisted DB snapshot for this session, clearly flagged.
+    // This keeps network_list useful in exactly the scenario the profiler is
+    // most needed: when the network is misbehaving.
+    return _liveDbFallback(
+      scope,
+      caps,
+      sinceArg,
+      methods,
+      hostContains,
+      statusMin,
+      statusMax,
+      isolateFilter,
+      limit,
+      e,
+    );
   }
+}
+
+/// Live read threw wholesale (the VM service rejected the profile fetch).
+/// Return the DB-persisted snapshot for this session, flagged
+/// `source: "live-db-fallback"`, so a blocked live path never reads as
+/// "nothing captured / tool broken" when the DB still has every completed
+/// request. (#41)
+CallToolResult _liveDbFallback(
+  Scope scope,
+  CapabilityConfig caps,
+  int? sinceArg,
+  List<String>? methods,
+  String? hostContains,
+  int? statusMin,
+  int? statusMax,
+  String? isolateFilter,
+  int limit,
+  Object liveError,
+) {
+  final sid = scope.sessionId;
+  List<Map<String, Object?>> rows;
+  try {
+    rows = CapturesDao().queryHttpRequests(
+      sessionId: sid,
+      sinceUs: (sinceArg != null && sinceArg > 0) ? sinceArg : null,
+      methods: methods,
+      hostContains: hostContains,
+      statusMin: statusMin,
+      statusMax: statusMax,
+      isolateId: isolateFilter,
+      limit: limit,
+    );
+  } catch (dbErr) {
+    return errorResult(
+      'Live read failed and the DB fallback also failed. '
+      'Live: $liveError. DB: $dbErr',
+      extra: {
+        'sessionId': sid,
+        'nextSteps': const [
+          'network_search query:"..." — DB-backed full-text search (works when the live path is down)',
+          'network_query sql:"SELECT * FROM http_requests WHERE session_id=? ORDER BY start_us DESC" — raw SELECT over captures.db',
+          'network_status — check VM service connection and zombie state',
+        ],
+      },
+    );
+  }
+
+  int? maxStart;
+  final out = <Map<String, Object?>>[];
+  for (final r in rows) {
+    final start = r['start_us'] as int?;
+    if (start != null && (maxStart == null || start > maxStart)) maxStart = start;
+    out.add(_historySummary(r));
+  }
+
+  final nextSteps = <String>[
+    if (out.isNotEmpty)
+      'network_get id:"${out.first['id']}" — full detail for the top match',
+    if (caps.isEnabled(Category.search))
+      'network_search query:"..." — DB-backed full-text search (works when the live path is down)',
+    'network_query sql:"SELECT * FROM http_requests WHERE session_id=$sid ORDER BY start_us DESC" — raw SELECT over captures.db',
+    'network_status — check the live VM service connection',
+  ];
+
+  return jsonResult({
+    'source': 'live-db-fallback',
+    'scope': scope.toBlock(),
+    'sessionId': sid,
+    'summary': out.isEmpty
+        ? 'Live read failed; no DB-persisted requests for session $sid yet.'
+        : 'Live read failed; returning ${out.length} request(s) from the DB '
+            'snapshot instead.',
+    'count': out.length,
+    if (maxStart != null) 'nextCursor': maxStart,
+    'warnings': [
+      'Live profile fetch failed: $liveError',
+      'These rows are the persisted DB snapshot, not a live read. A single '
+          'unresolvable/hung in-flight request can block the live path while '
+          'completed requests stay captured here.',
+    ],
+    'nextSteps': nextSteps,
+    'requests': out,
+  }, scopeSessionId: sid);
 }
 
 FutureOr<CallToolResult> _historyList(
@@ -316,7 +425,19 @@ FutureOr<CallToolResult> _historyList(
   }
 }
 
-Map<String, Object?> _liveSummary(HttpProfileRequest r) {
+/// Builds one live-read summary row. Visible for testing.
+///
+/// Error-safe by construction (#41): a request in an error state must yield a
+/// row, never throw.
+Map<String, Object?> liveSummary(HttpProfileRequest r) {
+  // Error-safe by construction (#41): request-side getters such as
+  // contentLength throw HttpProfileRequestError once the request hasError
+  // (e.g. a DNS failure on an in-flight request), so they are only read when
+  // the request is clean. Response-side fields are plain (non-throwing).
+  // An errored request is surfaced WITH its error rather than dropped, since
+  // the failing request is often the very bug the agent attached to find.
+  final reqErr = r.request?.hasError ?? false;
+  final respErr = r.response?.hasError ?? false;
   final ct = firstHeader(r.response?.headers, 'content-type');
   return {
     'id': r.id,
@@ -331,10 +452,12 @@ Map<String, Object?> _liveSummary(HttpProfileRequest r) {
     'isComplete': r.isRequestComplete,
     if (r.response?.statusCode != null) 'statusCode': r.response!.statusCode,
     if (r.response?.reasonPhrase != null) 'reasonPhrase': r.response!.reasonPhrase,
-    if (r.request?.contentLength != null) 'requestContentLength': r.request!.contentLength,
+    if (!reqErr && r.request?.contentLength != null)
+      'requestContentLength': r.request!.contentLength,
     if (r.response?.contentLength != null) 'responseContentLength': r.response!.contentLength,
     if (ct != null) 'responseContentType': ct,
-    if ((r.request?.hasError ?? false) || (r.response?.hasError ?? false)) 'hasError': true,
+    if (reqErr || respErr) 'hasError': true,
+    if (reqErr || respErr) 'error': r.request?.error ?? r.response?.error,
   };
 }
 
