@@ -16,6 +16,55 @@ void main() {
     });
   });
 
+  group('selectApplicableLabels (#42)', () {
+    test('keeps only labels the repo actually has', () {
+      // Real case: repo has `bug` but not `agent-filed`.
+      expect(
+        selectApplicableLabels(['bug', 'agent-filed'], {'bug', 'enhancement'}),
+        ['bug'],
+      );
+    });
+
+    test('drops all when none exist (filing proceeds label-less)', () {
+      expect(
+        selectApplicableLabels(['ux-friction', 'agent-filed'], {'bug'}),
+        isEmpty,
+      );
+    });
+
+    test('null existing (lookup failed) passes desired through unchanged', () {
+      expect(
+        selectApplicableLabels(['bug', 'agent-filed'], null),
+        ['bug', 'agent-filed'],
+      );
+    });
+
+    test('preserves desired order', () {
+      expect(
+        selectApplicableLabels(['a', 'b', 'c'], {'c', 'a', 'b'}),
+        ['a', 'b', 'c'],
+      );
+    });
+  });
+
+  group('isMissingLabelError (#42)', () {
+    test('detects the real gh "label not found" stderr', () {
+      expect(
+        isMissingLabelError("could not add label: 'agent-filed' not found"),
+        isTrue,
+      );
+    });
+
+    test('case-insensitive', () {
+      expect(isMissingLabelError("Label 'X' NOT FOUND"), isTrue);
+    });
+
+    test('unrelated errors do not trigger a label retry', () {
+      expect(isMissingLabelError('HTTP 401: Bad credentials'), isFalse);
+      expect(isMissingLabelError('could not connect to host'), isFalse);
+    });
+  });
+
   group('composeIssueDeepLink', () {
     test('basic title + body + labels url-encoded into query params', () {
       final url = composeIssueDeepLinkForTest(
