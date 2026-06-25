@@ -83,6 +83,30 @@ void main() {
         reason: 'must not bridge across the turn boundary');
   });
 
+  test('errorKinds breakdown + degraded count per tool (Tier-1 datapoints)', () {
+    final rows = [
+      {'correlation_id': 't', 'tool': 'network_get', 'outcome': 'error', 'error_kind': 'unresponsive_vm'},
+      {'correlation_id': 't', 'tool': 'network_get', 'outcome': 'error', 'error_kind': 'unresponsive_vm'},
+      {'correlation_id': 't', 'tool': 'network_get', 'outcome': 'error', 'error_kind': 'not_found'},
+      {'correlation_id': 't', 'tool': 'network_get', 'outcome': 'ok', 'degraded': 1},
+      {'correlation_id': 't', 'tool': 'network_get', 'outcome': 'ok'},
+    ];
+    final get = toolNamed(summarizeUsage(rows), 'network_get');
+    expect(get['errorKinds'], {'unresponsive_vm': 2, 'not_found': 1});
+    expect(get['degraded'], 1);
+    // errorKinds is sorted busiest-first.
+    expect((get['errorKinds'] as Map).keys.first, 'unresponsive_vm');
+  });
+
+  test('no error_kind / no degraded -> fields omitted (back-compat)', () {
+    final rows = [
+      {'correlation_id': 't', 'tool': 'x', 'outcome': 'ok'},
+    ];
+    final x = toolNamed(summarizeUsage(rows), 'x');
+    expect(x.containsKey('errorKinds'), isFalse);
+    expect(x.containsKey('degraded'), isFalse);
+  });
+
   test('p50/p95 latency from durations', () {
     final rows = [
       for (var i = 1; i <= 100; i++) ev('t', 'x', 'ok', dur: i * 10),
