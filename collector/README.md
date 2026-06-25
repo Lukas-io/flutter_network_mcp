@@ -115,6 +115,28 @@ wrangler d1 execute flutter-network-telemetry --remote --command \
      FROM tool_stats GROUP BY tool HAVING degraded > 0 ORDER BY degrade_rate DESC"
 ```
 
+## Tier-2 datapoints (recovery paths + self-correction effectiveness)
+
+Apply once, then re-deploy: `wrangler d1 execute flutter-network-telemetry --remote --file=migrations/002-tier2-recovery.sql && wrangler deploy`.
+
+**Do the intuitive features actually help?** After a tool errored/emptied (and returned recovery guidance), how often did the next call recover:
+
+```bash
+wrangler d1 execute flutter-network-telemetry --remote --command \
+  "SELECT tool, signal, SUM(occurrences) AS seen, SUM(recovered) AS recovered,
+          SUM(recovered)*1.0/SUM(occurrences) AS recovery_rate
+     FROM tool_self_correction GROUP BY tool, signal
+     HAVING seen >= 5 ORDER BY recovery_rate ASC"
+```
+
+**Recovery paths** — what agents actually do after a tool errors:
+
+```bash
+wrangler d1 execute flutter-network-telemetry --remote --command \
+  "SELECT from_tool, to_tool, SUM(count) AS n FROM tool_transitions
+     WHERE from_outcome='error' GROUP BY from_tool, to_tool ORDER BY n DESC LIMIT 20"
+```
+
 ## Cost
 
 Cloudflare free tier: 100K D1 writes/day + 100K Worker requests/day. A rollup ships at most once/day per install, so this stays free well past thousands of installs.

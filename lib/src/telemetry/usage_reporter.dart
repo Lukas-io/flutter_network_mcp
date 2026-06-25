@@ -285,6 +285,7 @@ Map<String, Object?> buildUsagePayload({
     'totalTurns': stats['totalTurns'],
     'tools': stats['tools'],
     'transitions': stats['transitions'],
+    if (stats['selfCorrection'] != null) 'selfCorrection': stats['selfCorrection'],
     'reportedAt': DateTime.now().toUtc().toIso8601String(),
   };
 }

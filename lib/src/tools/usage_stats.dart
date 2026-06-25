@@ -11,9 +11,11 @@ final usageStatsTool = Tool(
       'How agents use this MCP: per tool, call count, outcome (ok/error/'
       'empty), error/empty rates, error breakdown by kind (errorKinds), '
       'degraded/fallback count, p50/p95 latency, avg result size, estimated '
-      'token cost (avgEstimatedTokens / totalEstimatedTokens), plus the '
-      'tool->next-tool transition graph (within a turn). Read-only, '
-      'process-wide. Opt out with FLUTTER_NETWORK_MCP_NO_USAGE.',
+      'token cost (avgEstimatedTokens / totalEstimatedTokens), the '
+      'tool->next-tool transition graph tagged with the prior call outcome '
+      '(fromOutcome), and selfCorrection (after an error/empty, did the next '
+      'call recover). Read-only, process-wide. Opt out with '
+      'FLUTTER_NETWORK_MCP_NO_USAGE.',
   inputSchema: Schema.object(
     properties: {
       'sinceMs': Schema.int(
@@ -90,39 +92,73 @@ Map<String, Object?> summarizeUsage(
 }) {
   final perTool = <String, _ToolAgg>{};
   final transitions = <String, int>{};
+  final selfCorr = <String, List<int>>{};
   final turns = <String>{};
   String? prevCorr;
   String? prevTool;
+  String prevOutcome = 'ok';
+  String? prevErrorKind;
 
   for (final r in rows) {
     final corr = (r['correlation_id'] as String?) ?? '';
     final tool = (r['tool'] as String?) ?? '?';
     final outcome = (r['outcome'] as String?) ?? 'ok';
+    final errorKind = r['error_kind'] as String?;
     turns.add(corr);
     perTool.putIfAbsent(tool, () => _ToolAgg(tool)).add(
           outcome,
           r['duration_ms'] as int?,
           r['result_bytes'] as int?,
           r['estimated_tokens'] as int?,
-          r['error_kind'] as String?,
+          errorKind,
           (r['degraded'] as int? ?? 0) != 0,
         );
     if (prevCorr == corr && prevTool != null) {
-      final key = '$prevTool $tool';
-      transitions[key] = (transitions[key] ?? 0) + 1;
+      transitions['$prevTool|$prevOutcome|$tool'] =
+          (transitions['$prevTool|$prevOutcome|$tool'] ?? 0) + 1;
+      final signal = prevOutcome == 'error'
+          ? (prevErrorKind ?? 'error')
+          : (prevOutcome == 'empty' ? 'empty' : null);
+      if (signal != null) {
+        final agg = selfCorr.putIfAbsent('$prevTool|$signal', () => [0, 0]);
+        agg[0]++;
+        if (outcome == 'ok') agg[1]++;
+      }
     }
     prevCorr = corr;
     prevTool = tool;
+    prevOutcome = outcome;
+    prevErrorKind = errorKind;
   }
 
   final toolsOut = perTool.values.map((a) => a.toJson()).toList()
     ..sort((a, b) => (b['count'] as int).compareTo(a['count'] as int));
 
   final transOut = transitions.entries.map((e) {
-    final parts = e.key.split(' ');
-    return {'from': parts[0], 'to': parts[1], 'count': e.value};
+    final parts = e.key.split('|');
+    return {
+      'from': parts[0],
+      'fromOutcome': parts[1],
+      'to': parts[2],
+      'count': e.value,
+    };
   }).toList()
     ..sort((a, b) => (b['count'] as int).compareTo(a['count'] as int));
+
+  final selfCorrOut = selfCorr.entries.map((e) {
+    final parts = e.key.split('|');
+    final occ = e.value[0];
+    final rec = e.value[1];
+    return {
+      'tool': parts[0],
+      'signal': parts[1],
+      'occurrences': occ,
+      'recovered': rec,
+      'recoveryRate':
+          occ == 0 ? 0.0 : double.parse((rec / occ).toStringAsFixed(4)),
+    };
+  }).toList()
+    ..sort((a, b) => (b['occurrences'] as int).compareTo(a['occurrences'] as int));
 
   final grandTotalTokens = perTool.values.fold<int>(0, (s, a) => s + a.tokensSum);
   return {
@@ -131,6 +167,7 @@ Map<String, Object?> summarizeUsage(
     if (grandTotalTokens > 0) 'totalEstimatedTokens': grandTotalTokens,
     'tools': toolsOut,
     'transitions': transOut.take(topTransitions).toList(),
+    if (selfCorrOut.isNotEmpty) 'selfCorrection': selfCorrOut,
   };
 }
 
