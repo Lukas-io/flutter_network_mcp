@@ -10,6 +10,7 @@ import '../storage/captures_db.dart';
 import '../util/body_decoder.dart';
 import '../util/filters.dart';
 import '../util/scope.dart';
+import '../util/token_budget.dart';
 import 'error_kind.dart';
 import 'result.dart';
 
@@ -56,6 +57,12 @@ final networkListTool = Tool(
       'limit': Schema.int(
         description: 'Max requests (default 50, cap 200).',
       ),
+      'maxTokens': Schema.int(
+        description:
+            'Token budget for this response; trims the requests array '
+            'newest-first to fit and reports budget.dropped. Overrides the '
+            'session_configure maxResponseTokens default.',
+      ),
     },
   ),
 );
@@ -80,6 +87,7 @@ FutureOr<CallToolResult> networkList(CallToolRequest request) async {
       args.containsKey('statusMax') ? args['statusMax'] as int? : sf.statusMax;
   final isolateFilter = args['isolateId'] as String?;
   final limit = clampLimit(args['limit'] as int?, fallback: 50, hardMax: 200);
+  final maxTokens = args['maxTokens'] as int? ?? sf.maxResponseTokens;
 
   if (!scope.isLive) {
     return _historyList(
@@ -92,6 +100,7 @@ FutureOr<CallToolResult> networkList(CallToolRequest request) async {
       statusMax,
       isolateFilter,
       limit,
+      maxTokens,
     );
   }
 
@@ -153,6 +162,13 @@ FutureOr<CallToolResult> networkList(CallToolRequest request) async {
         _activeFilters(methods, hostContains, statusMin, statusMax);
     final cursorWasIncremental = sinceArg == null && cursor != null;
 
+    final budget = maxTokens;
+    final budgetTrim = trimToTokenBudget(filtered, budget);
+    final budgetDropped = budgetTrim.dropped;
+    if (budgetDropped > 0) {
+      filtered.removeRange(budgetTrim.kept.length, filtered.length);
+    }
+
     final scopeLabel =
         'session $liveSid (live${scope.appName != null ? ", ${scope.appName}" : ""})';
     final summary = liveListSummary(
@@ -182,6 +198,12 @@ FutureOr<CallToolResult> networkList(CallToolRequest request) async {
       warnings.add(
         'Skipped $skippedErrors request(s) that could not be read (likely '
         'in-flight/errored); the rest are returned.',
+      );
+    }
+    if (budgetDropped > 0) {
+      warnings.add(
+        'Trimmed $budgetDropped request(s) to fit the $budget-token budget; '
+        'page with since:<nextCursor> or raise maxTokens for the rest.',
       );
     }
 
@@ -217,6 +239,8 @@ FutureOr<CallToolResult> networkList(CallToolRequest request) async {
       'count': filtered.length,
       'totalScanned': scannedTotal,
       if (skippedErrors > 0) 'partial': true,
+      if (budget != null && budget > 0)
+        'budget': {'maxTokens': budget, 'dropped': budgetDropped},
       if (latestCursor != null)
         'nextCursor': latestCursor.microsecondsSinceEpoch,
       if (warnings.isNotEmpty) 'warnings': warnings,
@@ -333,6 +357,7 @@ FutureOr<CallToolResult> _historyList(
   int? statusMax,
   String? isolateFilter,
   int limit,
+  int? maxTokens,
 ) {
   final sid = scope.sessionId;
   try {
@@ -354,6 +379,10 @@ FutureOr<CallToolResult> _historyList(
       out.add(_historySummary(r));
     }
 
+    final budgetTrim = trimToTokenBudget(out, maxTokens);
+    final budgetDropped = budgetTrim.dropped;
+    if (budgetDropped > 0) out.removeRange(budgetTrim.kept.length, out.length);
+
     final activeFilters =
         _activeFilters(methods, hostContains, statusMin, statusMax);
     final summary = out.isEmpty
@@ -364,6 +393,12 @@ FutureOr<CallToolResult> _historyList(
     if (out.isEmpty && activeFilters.isNotEmpty) {
       warnings.add(
         'Filters may be too narrow — relax them or use network_search for content matching.',
+      );
+    }
+    if (budgetDropped > 0) {
+      warnings.add(
+        'Trimmed $budgetDropped request(s) to fit the $maxTokens-token budget; '
+        'raise maxTokens or filter for the rest.',
       );
     }
 
@@ -390,6 +425,8 @@ FutureOr<CallToolResult> _historyList(
       'summary': summary,
       'count': out.length,
       'nextCursor': maxStart,
+      if (maxTokens != null && maxTokens > 0)
+        'budget': {'maxTokens': maxTokens, 'dropped': budgetDropped},
       if (warnings.isNotEmpty) 'warnings': warnings,
       'nextSteps': nextSteps,
       'requests': out,
