@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:dart_mcp/server.dart';
 
 import '../storage/captures_db.dart';
+import 'error_kind.dart';
 import 'result.dart';
 
 const int _kRowCap = 500;
@@ -29,12 +30,14 @@ FutureOr<CallToolResult> networkQuery(CallToolRequest request) async {
   final args = request.arguments ?? const <String, Object?>{};
   final sql = args['sql'] as String?;
   if (sql == null || sql.trim().isEmpty) {
-    return errorResult('Missing required arg `sql`.', extra: const {
-      'nextSteps': [
-        'Retry with sql:"SELECT COUNT(*) FROM sessions"',
-        'session_list / network_list — try the structured tools first',
-      ],
-    });
+    return errorResult('Missing required arg `sql`.',
+        kind: ErrorKind.badArgument,
+        extra: const {
+          'nextSteps': [
+            'Retry with sql:"SELECT COUNT(*) FROM sessions"',
+            'session_list / network_list — try the structured tools first',
+          ],
+        });
   }
 
   try {
@@ -72,18 +75,30 @@ FutureOr<CallToolResult> networkQuery(CallToolRequest request) async {
       'rows': rows,
     });
   } on ArgumentError catch (e) {
-    return errorResult(e.message?.toString() ?? 'invalid SQL', extra: const {
-      'nextSteps': [
-        'Only single SELECT / WITH...SELECT statements are allowed',
-        'Remove trailing semicolons; chain via subqueries instead',
-      ],
-    });
+    return errorResult(e.message?.toString() ?? 'invalid SQL',
+        kind: ErrorKind.badQuery,
+        extra: const {
+          'nextSteps': [
+            'Only single SELECT / WITH...SELECT statements are allowed',
+            'Remove trailing semicolons; chain via subqueries instead',
+          ],
+        });
   } catch (e) {
-    return errorResult('sql failed: $e', extra: const {
-      'nextSteps': [
-        'Verify table/column names against the schema (see network_query tool description)',
-        'Try SELECT name FROM sqlite_schema WHERE type=\'table\' to list tables',
-      ],
-    });
+    // Self-correct: return the schema inline so the agent fixes the query on
+    // its next call rather than guessing column names or looping (telemetry:
+    // network_query has a real error rate and a query->query self-loop).
+    Map<String, List<String>>? schema;
+    try {
+      schema = CapturesDao().schemaDigest();
+    } catch (_) {/* schema lookup is best-effort */}
+    return errorResult('sql failed: $e',
+        kind: ErrorKind.badQuery,
+        extra: {
+          if (schema != null) 'schema': schema,
+          'nextSteps': const [
+            'Fix table/column names using the `schema` map above, then retry',
+            'Wrap aggregates in a subquery; no semicolons or multiple statements',
+          ],
+        });
   }
 }
