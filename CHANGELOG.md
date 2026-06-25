@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.9.3] — 2026-06-25
+
+### Added — network_drift (response shape-drift detection)
+
+New tool: detects when an endpoint's response JSON contract changes mid-session. Decodes the captured JSON responses for a filtered endpoint (hostContains / pathContains), flattens each to a keyPath->type shape, and reports fields `added`, `removed`, or `changed` type vs the first sample, plus `firstDriftAt` (the request id + time where it changed). Answers "did the API contract drift" without eyeballing bodies. int/double both map to `number` and a lone null sample is ignored, so no false drift. Pure shape helpers (`jsonShape`, `diffShapes`) are tested. 258 tests green.
+
 ## [0.9.2] — 2026-06-25
 
 ### Added — network_diff_session ("what changed between two runs")

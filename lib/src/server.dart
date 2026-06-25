@@ -34,6 +34,7 @@ import 'tools/network_replay.dart';
 import 'tools/network_search.dart';
 import 'tools/network_status.dart';
 import 'tools/network_diff_session.dart';
+import 'tools/network_drift.dart';
 import 'tools/network_summarize.dart';
 import 'tools/report_issue.dart';
 import 'tools/redacted_headers.dart';
@@ -94,6 +95,7 @@ base class FlutterNetworkMcpServer extends MCPServer with ToolsSupport {
       _register(networkReplayTool, networkReplay);
       _register(networkSummarizeTool, networkSummarize);
       _register(networkDiffSessionTool, networkDiffSession);
+      _register(networkDriftTool, networkDrift);
     }
 
     if (caps.isEnabled(Category.sockets)) {
