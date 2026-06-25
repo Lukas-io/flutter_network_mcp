@@ -28,12 +28,19 @@ final networkDriftTool = Tool(
       'appNameContains': Schema.string(
         description: 'Pick the session by app-name substring.',
       ),
+      'sinceMs': Schema.int(
+        description: 'Time window in ms. Omit or 0 for the whole session.',
+      ),
       'limit': Schema.int(
-        description: 'Max responses to scan (default 100, cap 500).',
+        description:
+            'Max responses to decode (default 100, cap 1000). Sampled from '
+            'BOTH ends of the window so the oldest shape is always compared.',
       ),
     },
   ),
 );
+
+const int _kScanCap = 10000;
 
 FutureOr<CallToolResult> networkDrift(CallToolRequest request) async {
   final args = request.arguments ?? const <String, Object?>{};
@@ -43,8 +50,11 @@ FutureOr<CallToolResult> networkDrift(CallToolRequest request) async {
   final sid = scope.sessionId;
   final hostContains = args['hostContains'] as String?;
   final pathContains = (args['pathContains'] as String?)?.toLowerCase();
-  final limitRaw = (args['limit'] as int?) ?? 100;
-  final limit = limitRaw <= 0 ? 100 : (limitRaw > 500 ? 500 : limitRaw);
+  final sinceMs = (args['sinceMs'] as int?) ?? 0;
+  final maxRaw = (args['limit'] as int?) ?? 100;
+  final maxSamples = maxRaw <= 0 ? 100 : (maxRaw > 1000 ? 1000 : maxRaw);
+  final nowUs = DateTime.now().microsecondsSinceEpoch;
+  final sinceUs = sinceMs <= 0 ? null : nowUs - (sinceMs * 1000);
 
   final dao = CapturesDao();
   List<Map<String, Object?>> rows;
@@ -52,7 +62,8 @@ FutureOr<CallToolResult> networkDrift(CallToolRequest request) async {
     rows = dao.queryHttpRequests(
       sessionId: sid,
       hostContains: hostContains,
-      limit: limit,
+      sinceUs: sinceUs,
+      limit: _kScanCap,
     );
   } catch (e) {
     return errorResult('network_drift query failed: $e',
@@ -65,15 +76,35 @@ FutureOr<CallToolResult> networkDrift(CallToolRequest request) async {
         });
   }
 
-  final samples = <Map<String, Object?>>[];
+  // Pre-filter to matching JSON rows (no body decode yet), oldest-first.
+  final matched = <Map<String, Object?>>[];
   for (final r in rows) {
     final ct = (r['content_type'] as String?)?.toLowerCase() ?? '';
     if (!ct.contains('json')) continue;
     final path = (r['path'] as String?)?.toLowerCase() ?? '';
     if (pathContains != null && !path.contains(pathContains)) continue;
-    final vmId = r['vm_id'] as String?;
-    if (vmId == null) continue;
-    final bytes = dao.getBody(sid, vmId, 'response');
+    if (r['vm_id'] == null) continue;
+    matched.add(r);
+  }
+  matched.sort((a, b) =>
+      ((a['start_us'] as int?) ?? 0).compareTo((b['start_us'] as int?) ?? 0));
+
+  // Sample BOTH ends of the timeline so the oldest (pre-drift) shape is always
+  // compared against the newest, even on high-volume sessions past maxSamples.
+  final List<Map<String, Object?>> candidates;
+  if (matched.length <= maxSamples) {
+    candidates = matched;
+  } else {
+    final head = maxSamples ~/ 2;
+    candidates = [
+      ...matched.take(head),
+      ...matched.skip(matched.length - (maxSamples - head)),
+    ];
+  }
+
+  final samples = <Map<String, Object?>>[];
+  for (final r in candidates) {
+    final bytes = dao.getBody(sid, r['vm_id'] as String, 'response');
     if (bytes == null || bytes.isEmpty) continue;
     Object? decoded;
     try {
@@ -82,14 +113,12 @@ FutureOr<CallToolResult> networkDrift(CallToolRequest request) async {
       continue;
     }
     samples.add({
-      'id': vmId,
+      'id': r['vm_id'],
       'path': r['path'],
       'startUs': r['start_us'],
       'shape': jsonShape(decoded),
     });
   }
-  samples.sort((a, b) =>
-      ((a['startUs'] as int?) ?? 0).compareTo((b['startUs'] as int?) ?? 0));
 
   if (samples.length < 2) {
     return jsonResult({
@@ -136,6 +165,7 @@ FutureOr<CallToolResult> networkDrift(CallToolRequest request) async {
     'summary': summary,
     'sessionId': sid,
     'scanned': samples.length,
+    'matchedTotal': matched.length,
     'drifted': drifted,
     if (drifted) ...diff,
     if (driftAt != null) 'firstDriftAt': driftAt,
