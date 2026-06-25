@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.8.15] — 2026-06-25
+
+### Added — Tier-1 telemetry datapoints (error composition, context cost, degradation)
+
+Three richer signals now flow through the usage pipeline, so analysis answers "why", not just "how often". Schema v8 to v9.
+
+- **`errorKinds`** per tool: error calls are broken down by their typed `ErrorKind` (`bad_argument` / `unresponsive_vm` / `not_found` / ...). Turns a flat error rate into an actionable composition, `bad_argument`-heavy means the schema/docs confuse agents; `unresponsive_vm` means infra; `not_found` means stale ids.
+- **`degraded`** per tool: counts calls that fell back from the primary path (live VM read to DB snapshot), a direct measure of live-path reliability.
+- **`estimated_tokens`** is now shipped to the collector (captured locally since 0.8.14 but not stored server-side), so context-cost ranking is first-class.
+
+`tool_events` gains `error_kind` + `degraded` columns (v8 to v9 migration). `usage_stats` surfaces all three. Collector: `tool_stats` gains `estimated_tokens` + `degraded`, plus a new `tool_error_kinds` table; `collector/migrations/001-tier1-datapoints.sql` migrates an existing deployment. All privacy-safe (kinds, counts, sizes; never values/URLs/bodies). 243 tests green.
+
 ## [0.8.14] — 2026-06-14
 
 ### Changed — token usage tracking in usage_stats

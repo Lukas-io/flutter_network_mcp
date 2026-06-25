@@ -75,6 +75,7 @@ class UsageRecorder {
     try {
       if (!CapturesDatabase.isOpen) return;
       final nowMs = DateTime.now().millisecondsSinceEpoch;
+      final sc = result?.structuredContent;
       CapturesDao().insertToolEvent(
         tsMs: nowMs,
         correlationId: correlationIdFor(nowMs),
@@ -82,12 +83,14 @@ class UsageRecorder {
         outcome: outcomeFrom(
           threw: result == null,
           isError: result?.isError == true,
-          structured: result?.structuredContent,
+          structured: sc,
         ),
         argKeys: argKeysFrom(request.arguments),
         durationMs: durationMs,
         resultBytes: resultBytesOf(result),
         estimatedTokens: _estimateTokens(result),
+        errorKind: sc?['errorKind'] as String?,
+        degraded: sc?['degraded'] == true,
       );
     } catch (e) {
       io.stderr.writeln('UsageRecorder: record failed (ignored): $e');
