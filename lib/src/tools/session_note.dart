@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:dart_mcp/server.dart';
 
 import '../storage/captures_db.dart';
+import 'error_kind.dart';
 import 'result.dart';
 
 final sessionNoteTool = Tool(
@@ -26,12 +27,12 @@ FutureOr<CallToolResult> sessionNote(CallToolRequest request) async {
   final id = args['id'] as int?;
   final note = args['note'] as String?;
   if (id == null) {
-    return errorResult('Missing required arg `id`.', extra: const {
+    return errorResult('Missing required arg `id`.', kind: ErrorKind.badArgument, extra: const {
       'nextSteps': ['session_list — find a session id'],
     });
   }
   if (note == null) {
-    return errorResult('Missing required arg `note`.', extra: const {
+    return errorResult('Missing required arg `note`.', kind: ErrorKind.badArgument, extra: const {
       'nextSteps': ['Retry with note:"" to clear, or note:"<your text>" to set'],
     });
   }
@@ -39,7 +40,7 @@ FutureOr<CallToolResult> sessionNote(CallToolRequest request) async {
   final dao = CapturesDao();
   final row = dao.getSession(id);
   if (row == null) {
-    return errorResult('Session $id not found.', extra: const {
+    return errorResult('Session $id not found.', kind: ErrorKind.notFound, extra: const {
       'nextSteps': ['session_list — see valid session ids'],
     });
   }

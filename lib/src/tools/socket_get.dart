@@ -6,6 +6,7 @@ import '../config/capabilities.dart';
 import '../state/session.dart';
 import '../storage/captures_db.dart';
 import '../util/scope.dart';
+import 'error_kind.dart';
 import 'result.dart';
 
 final socketGetTool = Tool(
@@ -39,11 +40,13 @@ FutureOr<CallToolResult> socketGet(CallToolRequest request) async {
   final args = request.arguments ?? const <String, Object?>{};
   final id = args['id'] as String?;
   if (id == null || id.isEmpty) {
-    return errorResult('Missing required arg `id`.', extra: const {
-      'nextSteps': [
-        'socket_list — list current sockets and pick one',
-      ],
-    });
+    return errorResult('Missing required arg `id`.',
+        kind: ErrorKind.badArgument,
+        extra: const {
+          'nextSteps': [
+            'socket_list — list current sockets and pick one',
+          ],
+        });
   }
   final (scope, scopeErr) = resolveScope(args);
   if (scopeErr != null) return scopeErr;
@@ -53,13 +56,15 @@ FutureOr<CallToolResult> socketGet(CallToolRequest request) async {
     final sid = scope.sessionId;
     final row = CapturesDao().getSocket(sid, id);
     if (row == null) {
-      return errorResult('Socket `$id` not found in session $sid.', extra: {
-        'sessionId': sid,
-        'nextSteps': const [
-          'socket_list — list valid socket ids in this session',
-          'session_list — confirm the session id is correct',
-        ],
-      });
+      return errorResult('Socket `$id` not found in session $sid.',
+          kind: ErrorKind.notFound,
+          extra: {
+            'sessionId': sid,
+            'nextSteps': const [
+              'socket_list — list valid socket ids in this session',
+              'session_list — confirm the session id is correct',
+            ],
+          });
     }
     return _historySuccess(scope, row, caps);
   }
@@ -68,6 +73,7 @@ FutureOr<CallToolResult> socketGet(CallToolRequest request) async {
   if (!attached.socketProfilingEnabled) {
     return errorResult(
       'Socket profiling not enabled for any of this session\'s isolates.',
+      kind: ErrorKind.capabilityDisabled,
       extra: const {
         'nextSteps': [
           'network_status — confirm socketProfilingEnabled',
@@ -76,8 +82,7 @@ FutureOr<CallToolResult> socketGet(CallToolRequest request) async {
       },
     );
   }
-  // Resolve which isolate to query — explicit arg, DB-recorded id, or
-  // iterate. Each isolate has its own socket profile.
+
   final isolateFilter = args['isolateId'] as String?;
   String? resolvedIsolateId = isolateFilter;
   if (resolvedIsolateId == null) {
@@ -87,73 +92,95 @@ FutureOr<CallToolResult> socketGet(CallToolRequest request) async {
   final candidateIsolates = resolvedIsolateId != null
       ? [resolvedIsolateId]
       : [for (final iso in attached.vm.httpProfilingIsolates) iso.id];
-  try {
-    dynamic foundSocket;
-    String? foundIsolateId;
-    for (final isoId in candidateIsolates) {
-      try {
-        final profile = await attached.vm.getSocketProfileForIsolate(isoId);
-        for (final s in profile.sockets) {
-          if (s.id == id) {
-            foundSocket = s;
-            foundIsolateId = isoId;
-            break;
-          }
+
+  dynamic foundSocket;
+  String? foundIsolateId;
+  var isoFailures = 0;
+  Object? lastError;
+  for (final isoId in candidateIsolates) {
+    try {
+      final profile = await attached.vm.getSocketProfileForIsolate(isoId);
+      for (final s in profile.sockets) {
+        if (s.id == id) {
+          foundSocket = s;
+          foundIsolateId = isoId;
+          break;
         }
-        if (foundSocket != null) break;
-      } catch (_) {/* per-isolate skip */}
+      }
+      if (foundSocket != null) break;
+    } catch (e) {
+      isoFailures++;
+      lastError = e;
     }
-    if (foundSocket == null) {
-      return errorResult(
-        'Socket id `$id` not found in current live profile.',
-        extra: {
-          'triedIsolates': candidateIsolates,
-          'nextSteps': const [
-            'socket_list — list currently-captured ids',
-            'session_open id:<n> — try a past session if this id is from history',
-          ],
-        },
+  }
+
+  if (foundSocket == null) {
+    final dbRow = CapturesDao().getSocket(scope.sessionId, id);
+    final allFailed =
+        candidateIsolates.isNotEmpty && isoFailures == candidateIsolates.length;
+    if (dbRow != null) {
+      return _historySuccess(
+        scope,
+        dbRow,
+        caps,
+        degradedReason: allFailed
+            ? 'Live socket read failed ($lastError); returned the persisted '
+                'DB copy instead.'
+            : 'Socket is no longer in the live profile (closed/collected); '
+                'returned the persisted DB copy.',
       );
     }
-    final s = foundSocket;
-    final summary = _summary(
-      socketType: s.socketType as String?,
-      address: s.address as String?,
-      port: s.port as int?,
-      readBytes: s.readBytes as int?,
-      writeBytes: s.writeBytes as int?,
-      isOpen: s.endTime == null,
+    return errorResult(
+      allFailed
+          ? 'Live socket read failed for every isolate: $lastError'
+          : 'Socket id `$id` not found in current live profile.',
+      kind: allFailed ? ErrorKind.unresponsiveVm : ErrorKind.notFound,
+      extra: {
+        'triedIsolates': candidateIsolates,
+        'nextSteps': const [
+          'socket_list — list currently-captured ids',
+          'session_open id:<n> — try a past session if this id is from history',
+        ],
+      },
     );
-    return jsonResult({
-      'source': 'live',
-      'scope': scope.toBlock(),
-      'sessionId': scope.sessionId,
-      if (foundIsolateId != null) 'isolateId': foundIsolateId,
-      'summary': summary,
-      'id': s.id,
-      'socketType': s.socketType,
-      'address': s.address,
-      'port': s.port,
-      'startTimeUs': s.startTime,
-      if (s.endTime != null) 'endTimeUs': s.endTime,
-      if (s.lastReadTime != null) 'lastReadTimeUs': s.lastReadTime,
-      if (s.lastWriteTime != null) 'lastWriteTimeUs': s.lastWriteTime,
-      'readBytes': s.readBytes,
-      'writeBytes': s.writeBytes,
-      'open': s.endTime == null,
-      'nextSteps': _nextSteps(caps, isOpen: s.endTime == null, address: s.address as String?),
-    }, scopeSessionId: scope.sessionId);
-  } catch (e) {
-    return errorResult('getSocketProfile failed: $e', extra: const {
-      'nextSteps': [
-        'network_status — check zombie-DTD state',
-        'network_detach then network_attach — full reset',
-      ],
-    });
   }
+
+  final s = foundSocket;
+  final summary = _summary(
+    socketType: s.socketType as String?,
+    address: s.address as String?,
+    port: s.port as int?,
+    readBytes: s.readBytes as int?,
+    writeBytes: s.writeBytes as int?,
+    isOpen: s.endTime == null,
+  );
+  return jsonResult({
+    'source': 'live',
+    'scope': scope.toBlock(),
+    'sessionId': scope.sessionId,
+    if (foundIsolateId != null) 'isolateId': foundIsolateId,
+    'summary': summary,
+    'id': s.id,
+    'socketType': s.socketType,
+    'address': s.address,
+    'port': s.port,
+    'startTimeUs': s.startTime,
+    if (s.endTime != null) 'endTimeUs': s.endTime,
+    if (s.lastReadTime != null) 'lastReadTimeUs': s.lastReadTime,
+    if (s.lastWriteTime != null) 'lastWriteTimeUs': s.lastWriteTime,
+    'readBytes': s.readBytes,
+    'writeBytes': s.writeBytes,
+    'open': s.endTime == null,
+    'nextSteps': _nextSteps(caps, isOpen: s.endTime == null, address: s.address as String?),
+  }, scopeSessionId: scope.sessionId);
 }
 
-CallToolResult _historySuccess(Scope scope, Map<String, Object?> row, CapabilityConfig caps) {
+CallToolResult _historySuccess(
+  Scope scope,
+  Map<String, Object?> row,
+  CapabilityConfig caps, {
+  String? degradedReason,
+}) {
   final sid = scope.sessionId;
   final isOpen = row['end_us'] == null;
   final summary = _summary(
@@ -165,7 +192,8 @@ CallToolResult _historySuccess(Scope scope, Map<String, Object?> row, Capability
     isOpen: isOpen,
   );
   return jsonResult({
-    'source': 'history',
+    'source': degradedReason != null ? 'live-db-fallback' : 'history',
+    if (degradedReason != null) 'degraded': true,
     'scope': scope.toBlock(),
     'sessionId': sid,
     if (row['isolate_id'] != null) 'isolateId': row['isolate_id'],
@@ -181,6 +209,7 @@ CallToolResult _historySuccess(Scope scope, Map<String, Object?> row, Capability
     'readBytes': row['read_bytes'],
     'writeBytes': row['write_bytes'],
     'open': isOpen,
+    if (degradedReason != null) 'warnings': [degradedReason],
     'nextSteps': _nextSteps(caps, isOpen: isOpen, address: row['address'] as String?),
   }, scopeSessionId: scope.sessionId);
 }

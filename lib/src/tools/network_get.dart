@@ -2,13 +2,14 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:dart_mcp/server.dart';
-import 'package:vm_service/vm_service.dart';
+import 'package:vm_service/vm_service.dart' hide ErrorKind;
 
 import '../config/capabilities.dart';
 import '../state/session.dart';
 import '../storage/captures_db.dart';
 import '../util/body_decoder.dart';
 import '../util/scope.dart';
+import 'error_kind.dart';
 import 'result.dart';
 
 final networkGetTool = Tool(
@@ -67,12 +68,14 @@ FutureOr<CallToolResult> networkGet(CallToolRequest request) async {
   final args = request.arguments ?? const <String, Object?>{};
   final id = args['id'] as String?;
   if (id == null || id.isEmpty) {
-    return errorResult('Missing required arg `id`.', extra: const {
-      'nextSteps': [
-        'network_list — list captured requests and copy an id',
-        'network_search query:"..." — find a request by body/url content',
-      ],
-    });
+    return errorResult('Missing required arg `id`.',
+        kind: ErrorKind.badArgument,
+        extra: const {
+          'nextSteps': [
+            'network_list — list captured requests and copy an id',
+            'network_search query:"..." — find a request by body/url content',
+          ],
+        });
   }
   final (scope, scopeErr) = resolveScope(args);
   if (scopeErr != null) return scopeErr;
@@ -89,7 +92,6 @@ FutureOr<CallToolResult> networkGet(CallToolRequest request) async {
       ? 256
       : (headerTruncateRaw > _kHeaderHardCap ? _kHeaderHardCap : headerTruncateRaw);
 
-  // Non-live scope = historical session; read from DB.
   if (!scope.isLive) {
     return _historyGet(
       scope: scope,
@@ -104,10 +106,6 @@ FutureOr<CallToolResult> networkGet(CallToolRequest request) async {
 
   final attached = SessionRegistry.instance.attachedById(scope.sessionId)!;
   final isolateFilter = args['isolateId'] as String?;
-  // Resolve which isolate to query in priority order:
-  //   1. explicit isolateId arg
-  //   2. DB row's captured isolate_id (writer tags within ~2s)
-  //   3. try every known isolate, take the first that returns the id
   String? resolvedIsolateId = isolateFilter;
   if (resolvedIsolateId == null) {
     final row = CapturesDao().getHttpRequest(scope.sessionId, id);
@@ -119,6 +117,7 @@ FutureOr<CallToolResult> networkGet(CallToolRequest request) async {
   if (candidateIsolates.isEmpty) {
     return errorResult(
       'No HTTP-profiling isolates known for this session.',
+      kind: ErrorKind.unresponsiveVm,
       extra: const {
         'nextSteps': [
           'network_status — verify the session\'s isolates list',
@@ -140,9 +139,6 @@ FutureOr<CallToolResult> networkGet(CallToolRequest request) async {
     }
   }
   if (found == null) {
-    // Consistent degradation (matches network_list / network_body): if the
-    // request is persisted, serve the DB copy flagged source:live-db-fallback
-    // rather than dead-ending. Only error when it isn't anywhere to be found.
     if (CapturesDao().getHttpRequest(scope.sessionId, id) != null) {
       return _historyGet(
         scope: scope,
@@ -159,6 +155,7 @@ FutureOr<CallToolResult> networkGet(CallToolRequest request) async {
     }
     return errorResult(
       'getHttpProfileRequest failed: ${lastError ?? "no isolate had id $id"}',
+      kind: ErrorKind.unresponsiveVm,
       extra: {
         'id': id,
         'triedIsolates': candidateIsolates,
@@ -193,9 +190,6 @@ CallToolResult _buildLiveResponse({
   required int headerTruncateBytes,
   required CapabilityConfig caps,
 }) {
-  // Guard the request-side header read (#41): r.request.headers throws
-  // HttpProfileRequestError once the request hasError. Response fields are
-  // plain (non-throwing).
   final reqCt = (r.request?.hasError ?? false)
       ? null
       : firstHeader(r.request?.headers, 'content-type');
@@ -296,13 +290,15 @@ FutureOr<CallToolResult> _historyGet({
     final dao = CapturesDao();
     final row = dao.getHttpRequest(sid, id);
     if (row == null) {
-      return errorResult('Request `$id` not found in session $sid.', extra: {
-        'sessionId': sid,
-        'nextSteps': const [
-          'network_list — list valid request ids in this session',
-          'session_list — confirm the session id is correct',
-        ],
-      });
+      return errorResult('Request `$id` not found in session $sid.',
+          kind: ErrorKind.notFound,
+          extra: {
+            'sessionId': sid,
+            'nextSteps': const [
+              'network_list — list valid request ids in this session',
+              'session_list — confirm the session id is correct',
+            ],
+          });
     }
     final reqHeaders = _parseHeaders(row['request_headers_json']);
     final respHeaders = _parseHeaders(row['response_headers_json']);
@@ -388,14 +384,16 @@ FutureOr<CallToolResult> _historyGet({
       ),
     }, scopeSessionId: scope.sessionId);
   } catch (e) {
-    return errorResult('history query failed: $e', extra: {
-      'sessionId': sid,
-      'id': id,
-      'nextSteps': const [
-        'Verify the session still exists via session_list',
-        'session_close to return to live mode',
-      ],
-    });
+    return errorResult('history query failed: $e',
+        kind: ErrorKind.internal,
+        extra: {
+          'sessionId': sid,
+          'id': id,
+          'nextSteps': const [
+            'Verify the session still exists via session_list',
+            'session_close to return to live mode',
+          ],
+        });
   }
 }
 

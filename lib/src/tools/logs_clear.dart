@@ -4,6 +4,7 @@ import 'package:dart_mcp/server.dart';
 
 import '../state/session.dart';
 import '../util/scope.dart';
+import 'error_kind.dart';
 import 'result.dart';
 
 final logsClearTool = Tool(
@@ -32,6 +33,7 @@ FutureOr<CallToolResult> logsClear(CallToolRequest request) async {
   if (!scope.isLive) {
     return errorResult(
       'Cannot clear a historical session\'s buffer — there is no live ring buffer to clear.',
+      kind: ErrorKind.noSession,
       extra: {
         'scope': scope.toBlock(),
         'nextSteps': const [

@@ -19,13 +19,11 @@ class SessionFilters {
   /// Test seam.
   static void resetForTest() => _instance = SessionFilters._();
 
-  // ----- logs_tail defaults -----
   int? levelMin;
   String? loggerContains;
   List<String>? messageContains;
   String? source;
 
-  // ----- network_list defaults -----
   List<String>? method;
   String? hostContains;
   int? statusMin;

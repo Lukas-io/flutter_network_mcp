@@ -15,7 +15,7 @@ class HarExporter {
   Future<String> export({
     required int sessionId,
     required String outPath,
-    required String format, // 'har' | 'ndjson'
+    required String format,
   }) async {
     if (format != 'har' && format != 'ndjson') {
       throw ArgumentError('format must be "har" or "ndjson", got "$format".');
@@ -119,9 +119,6 @@ class HarExporter {
   }
 
   Map<String, Object?> _postData(Uint8List body, String? mimeType) {
-    // HAR export must reproduce the captured payload byte-for-byte so
-    // tools (Chrome DevTools, Insomnia) can replay it. Semantic truncation
-    // would alter formatting.
     final decoded = decodeBody(body, mimeType, maxBytes: -1, semantic: false);
     if (decoded == null) {
       return {
@@ -137,7 +134,7 @@ class HarExporter {
     }
     return {
       'mimeType': mimeType ?? 'application/octet-stream',
-      'text': decoded.value, // base64
+      'text': decoded.value,
       'encoding': 'base64',
     };
   }
@@ -223,9 +220,7 @@ Future<String> exportSession({
   required String outPath,
   required String format,
 }) {
-  // Database must already be open in this process — exports run against the
-  // attached process's DB.
-  CapturesDatabase.instance; // Will throw if not open.
+  CapturesDatabase.instance;
   return HarExporter(CapturesDao()).export(
     sessionId: sessionId,
     outPath: outPath,

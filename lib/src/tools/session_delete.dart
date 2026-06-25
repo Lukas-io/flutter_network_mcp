@@ -5,6 +5,7 @@ import 'package:dart_mcp/server.dart';
 import '../config/capabilities.dart';
 import '../state/session.dart';
 import '../storage/captures_db.dart';
+import 'error_kind.dart';
 import 'result.dart';
 
 final sessionDeleteTool = Tool(
@@ -30,14 +31,14 @@ FutureOr<CallToolResult> sessionDelete(CallToolRequest request) async {
   final id = args['id'] as int?;
   final confirm = (args['confirm'] as bool?) ?? false;
   if (id == null) {
-    return errorResult('Missing required arg `id`.', extra: const {
+    return errorResult('Missing required arg `id`.', kind: ErrorKind.badArgument, extra: const {
       'nextSteps': ['session_list — find a session id'],
     });
   }
 
   final session = Session.instance;
   if (session.liveSessionId == id) {
-    return errorResult('Cannot delete the live session — call network_detach first.', extra: {
+    return errorResult('Cannot delete the live session — call network_detach first.', kind: ErrorKind.badArgument, extra: {
       'liveSessionId': id,
       'nextSteps': const [
         'network_detach — gracefully end the live session',
@@ -49,7 +50,7 @@ FutureOr<CallToolResult> sessionDelete(CallToolRequest request) async {
   final dao = CapturesDao();
   final row = dao.getSessionWithCounts(id);
   if (row == null) {
-    return errorResult('Session $id not found.', extra: const {
+    return errorResult('Session $id not found.', kind: ErrorKind.notFound, extra: const {
       'nextSteps': ['session_list — see valid session ids'],
     });
   }

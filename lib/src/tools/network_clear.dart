@@ -4,6 +4,7 @@ import 'package:dart_mcp/server.dart';
 
 import '../state/session.dart';
 import '../util/scope.dart';
+import 'error_kind.dart';
 import 'result.dart';
 
 final networkClearTool = Tool(
@@ -36,6 +37,7 @@ FutureOr<CallToolResult> networkClear(CallToolRequest request) async {
   if (!scope.isLive) {
     return errorResult(
       'Cannot clear a historical session — there is no live VM to clear.',
+      kind: ErrorKind.noSession,
       extra: {
         'scope': scope.toBlock(),
         'nextSteps': const [
@@ -48,15 +50,13 @@ FutureOr<CallToolResult> networkClear(CallToolRequest request) async {
   }
   final attached = SessionRegistry.instance.attachedById(scope.sessionId)!;
   final isolateFilter = args['isolateId'] as String?;
-  // Multi-isolate: clear every isolate's profile by default; with the
-  // filter, clear just the one. Per-isolate try/catch so one VM hiccup
-  // doesn't stop the rest.
   final isolates = isolateFilter == null
       ? [for (final iso in attached.vm.httpProfilingIsolates) iso.id]
       : [isolateFilter];
   if (isolates.isEmpty) {
     return errorResult(
       'No HTTP-profiling isolates known for this session.',
+      kind: ErrorKind.noSession,
       extra: const {
         'nextSteps': [
           'network_status — verify the session\'s isolates list',

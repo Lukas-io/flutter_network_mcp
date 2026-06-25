@@ -6,6 +6,7 @@ import '../alerts/anomaly_detector.dart';
 import '../state/continuation.dart';
 import '../state/session.dart';
 import '../storage/captures_db.dart';
+import 'error_kind.dart';
 import 'result.dart';
 
 final networkDetachTool = Tool(
@@ -39,7 +40,6 @@ FutureOr<CallToolResult> networkDetach(CallToolRequest request) async {
   final sessionIdArg = args['sessionId'] as int?;
   final appNameContains = args['appNameContains'] as String?;
 
-  // No-op when there's nothing attached.
   if (registry.attachedCount == 0) {
     return jsonResult({
       'detached': true,
@@ -54,7 +54,6 @@ FutureOr<CallToolResult> networkDetach(CallToolRequest request) async {
     });
   }
 
-  // Decide which session(s) to detach.
   final List<AttachedSession> targets;
   if (all) {
     targets = List<AttachedSession>.from(registry.attached.values);
@@ -63,6 +62,7 @@ FutureOr<CallToolResult> networkDetach(CallToolRequest request) async {
     if (s == null) {
       return errorResult(
         'No attached session with id $sessionIdArg.',
+        kind: ErrorKind.notFound,
         extra: {
           'attached': [
             for (final a in registry.attached.values)
@@ -81,6 +81,7 @@ FutureOr<CallToolResult> networkDetach(CallToolRequest request) async {
     if (matches.isEmpty) {
       return errorResult(
         'No attached session whose app name contains "$appNameContains".',
+        kind: ErrorKind.notFound,
         extra: {
           'attached': [
             for (final a in registry.attached.values)
@@ -97,6 +98,7 @@ FutureOr<CallToolResult> networkDetach(CallToolRequest request) async {
       return errorResult(
         'Multiple attached sessions match "$appNameContains" '
         '(${matches.length}).',
+        kind: ErrorKind.badArgument,
         extra: {
           'matches': [
             for (final m in matches)
@@ -111,11 +113,11 @@ FutureOr<CallToolResult> networkDetach(CallToolRequest request) async {
     }
     targets = [matches.single];
   } else {
-    // Zero-arg: only OK when exactly one is attached.
     if (registry.attachedCount > 1) {
       return errorResult(
         'Ambiguous detach: ${registry.attachedCount} sessions attached. '
         'Pass sessionId:<N>, appNameContains:<substring>, or all:true.',
+        kind: ErrorKind.badArgument,
         extra: {
           'attached': [
             for (final a in registry.attached.values)
@@ -132,7 +134,6 @@ FutureOr<CallToolResult> networkDetach(CallToolRequest request) async {
     targets = [registry.attached.values.single];
   }
 
-  // Gather counts BEFORE teardown so the summary can report them.
   final detached = <Map<String, Object?>>[];
   int totalHttp = 0, totalLogs = 0, totalAlerts = 0;
   final dao = CapturesDao();
@@ -167,7 +168,6 @@ FutureOr<CallToolResult> networkDetach(CallToolRequest request) async {
     await registry.detachOne(s);
   }
 
-  // Clear history-view pointer if it was pointing at one of these.
   for (final s in targets) {
     if (session.viewedSessionId == s.id) {
       session.viewedSessionId = null;
@@ -175,22 +175,16 @@ FutureOr<CallToolResult> networkDetach(CallToolRequest request) async {
     }
   }
 
-  // Disconnect DTD when no sessions remain attached.
   if (registry.attachedCount == 0 && session.dtd.isConnected) {
     await session.dtd.disconnect();
   }
 
-  // 0.7.3: update the continuation record so a future MCP-host restart
-  // sees only the still-attached sessions (or no continuation at all
-  // when the user has explicitly detached everything).
   if (registry.attachedCount == 0) {
     SessionContinuation.clear();
   } else {
     SessionContinuation.record(registry.attached.values);
   }
 
-  // 0.7.3: shut down the anomaly detector when no sessions remain — no
-  // work to do until the next attach.
   AnomalyDetector.instance.stopIfNoSessions();
 
   final remaining = registry.attachedCount;

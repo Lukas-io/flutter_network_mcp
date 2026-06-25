@@ -90,7 +90,6 @@ Map<String, Object?> _maybeAnnotatePendingAlerts(
   Map<String, Object?> data,
   int? scopeSessionId,
 ) {
-  // Don't shadow tools that already report alert counts in richer shapes.
   if (data.containsKey('alerts') || data.containsKey('pendingAlerts')) {
     return data;
   }

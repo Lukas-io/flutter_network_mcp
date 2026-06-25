@@ -24,8 +24,6 @@ class Session {
   Session._();
   static final Session instance = Session._();
 
-  // === Shared singletons (Phase 2: unchanged) ===
-
   final DtdClient dtd = DtdClient();
 
   /// When non-null, query tools (network_list/get/body, socket_list/get,
@@ -33,14 +31,6 @@ class Session {
   /// live VM service. History view is single-pointer by design — opening
   /// 2 history sessions at once is not useful (you're reading the past).
   int? viewedSessionId;
-
-  // === Per-attach resources — delegated to the registry's soleAttached ===
-  //
-  // When nothing is attached, the getters fall back to never-connected
-  // stubs so tools that bare-read (without a prior `isAttached` check)
-  // see a graceful "not connected" rather than NPE. After Phase 3 tools
-  // route via the registry directly and these getters become unreachable
-  // for the live path.
 
   VmClient get vm =>
       SessionRegistry.instance.soleAttached?.vm ?? _stubVm;
@@ -55,8 +45,6 @@ class Session {
   final CaptureWriter _stubCaptureWriter = CaptureWriter();
   final LogBuffer _stubLogBuffer = LogBuffer();
   final LogStreamSubscriber _stubLogStream = LogStreamSubscriber();
-
-  // === Per-attach state — delegated to the registry's soleAttached ===
 
   /// Human-readable app name from DTD (e.g. `Flutter - iPhone 17`).
   String? get attachedAppName =>
@@ -80,8 +68,6 @@ class Session {
     final s = SessionRegistry.instance.soleAttached;
     if (s != null) s.lastHttpCursor = v;
   }
-
-  // === Derived state ===
 
   /// True when exactly one session is attached AND its VM is connected
   /// with a resolved isolate. Equivalent to today's semantics for the
@@ -263,7 +249,6 @@ class SessionRegistry {
   /// Detaches every attached session. Does NOT disconnect DTD — caller
   /// (typically [Session.detach]) handles that.
   Future<void> detachAll() async {
-    // Snapshot the values first since detachOne mutates _attached.
     for (final s in List<AttachedSession>.from(_attached.values)) {
       await detachOne(s);
     }

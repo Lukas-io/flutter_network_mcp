@@ -21,7 +21,7 @@ class DecodedBody {
     this.mimeType,
   });
 
-  final String encoding; // 'utf8' or 'base64'
+  final String encoding;
   final String value;
   final int size;
   final int totalSize;
@@ -55,7 +55,7 @@ DecodedBody? decodeBody(
   Uint8List? bytes,
   String? contentType, {
   int? maxBytes,
-  String decode = 'auto', // 'auto' | 'utf8' | 'base64'
+  String decode = 'auto',
   bool semantic = true,
 }) {
   if (bytes == null || bytes.isEmpty) return null;
@@ -65,12 +65,6 @@ DecodedBody? decodeBody(
   final wantUtf8 = decode == 'utf8' ||
       (decode == 'auto' && _isTextContentType(contentType));
 
-  // Semantic path: decode all bytes, run JSON/HTML truncator, fall back
-  // to byte-cap if the truncator says it didn't apply. Bounded by
-  // kSemanticInputCap so a giant body doesn't blow the JSON parser. Also
-  // bypassed when cap >= total (caller passed -1 or a roomy budget) —
-  // semantic truncation would needlessly reformat a payload that already
-  // fits.
   if (wantUtf8 && semantic && total <= kSemanticInputCap && cap < total) {
     final full = utf8.decode(bytes, allowMalformed: true);
     SemanticTruncation? attempt;
@@ -90,10 +84,8 @@ DecodedBody? decodeBody(
         mimeType: contentType,
       );
     }
-    // Else: fall through to byte-cap.
   }
 
-  // Byte-cap path (legacy). Slice then decode.
   final sliceLen = cap < total ? cap : total;
   final slice = sliceLen == total ? bytes : Uint8List.sublistView(bytes, 0, sliceLen);
   final truncated = sliceLen < total;
@@ -109,9 +101,7 @@ DecodedBody? decodeBody(
         truncationMode: truncated ? 'byte' : null,
         mimeType: contentType,
       );
-    } catch (_) {
-      // Fall through to base64.
-    }
+    } catch (_) {}
   }
 
   return DecodedBody(

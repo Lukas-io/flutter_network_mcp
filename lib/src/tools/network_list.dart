@@ -1,7 +1,7 @@
 import 'dart:async';
 
 import 'package:dart_mcp/server.dart';
-import 'package:vm_service/vm_service.dart';
+import 'package:vm_service/vm_service.dart' hide ErrorKind;
 
 import '../config/capabilities.dart';
 import '../config/session_filters.dart';
@@ -10,6 +10,7 @@ import '../storage/captures_db.dart';
 import '../util/body_decoder.dart';
 import '../util/filters.dart';
 import '../util/scope.dart';
+import 'error_kind.dart';
 import 'result.dart';
 
 final networkListTool = Tool(
@@ -66,8 +67,6 @@ FutureOr<CallToolResult> networkList(CallToolRequest request) async {
   if (scopeErr != null) return scopeErr;
   scope!;
 
-  // Sticky defaults (#18): inherit from session_configure when an arg is
-  // omitted; an explicitly-passed arg (even null) wins for this call.
   final sf = SessionFilters.instance;
   final sinceArg = args['since'] as int?;
   final methods =
@@ -82,9 +81,6 @@ FutureOr<CallToolResult> networkList(CallToolRequest request) async {
   final isolateFilter = args['isolateId'] as String?;
   final limit = clampLimit(args['limit'] as int?, fallback: 50, hardMax: 200);
 
-  // History mode: scope is non-live (explicit sessionId arg pointing at a
-  // historical session, or session_open's viewedSessionId resolves to one
-  // that isn't currently attached).
   if (!scope.isLive) {
     return _historyList(
       scope,
@@ -99,16 +95,11 @@ FutureOr<CallToolResult> networkList(CallToolRequest request) async {
     );
   }
 
-  // Live mode — scope points at an attached session; look up its resources.
   final attached = SessionRegistry.instance.attachedById(scope.sessionId)!;
   final cursor = sinceArg == null
       ? attached.lastHttpCursor
       : (sinceArg <= 0 ? null : DateTime.fromMicrosecondsSinceEpoch(sinceArg));
 
-  // Multi-isolate live read: iterate every HTTP-profiling isolate (or the
-  // one named by [isolateFilter]) and merge. Each isolate has its own VM-
-  // side profile; the per-isolate try/catch keeps a flaky isolate from
-  // breaking the others.
   final isolateIds = isolateFilter == null
       ? [for (final iso in attached.vm.httpProfilingIsolates) iso.id]
       : [isolateFilter];
@@ -136,17 +127,12 @@ FutureOr<CallToolResult> networkList(CallToolRequest request) async {
       attached.lastHttpCursor = latestCursor;
     }
 
-    // Sort by start time across all isolates (newest first).
     perIsolateRequests
         .sort((a, b) => b.$1.startTime.compareTo(a.$1.startTime));
 
     final filtered = <Map<String, Object?>>[];
     var skippedErrors = 0;
     for (final (req, isoId) in perIsolateRequests) {
-      // Per-request isolation (#41): one in-flight request in an error state
-      // (e.g. a DNS failure) must never abort the whole read. _liveSummary is
-      // already error-safe and surfaces such a request with hasError; this
-      // try/catch is the belt-and-suspenders for anything it can't model.
       try {
         if (!methodMatches(req.method, methods)) continue;
         if (!hostMatches(req.uri.toString(), hostContains)) continue;
@@ -212,9 +198,6 @@ FutureOr<CallToolResult> networkList(CallToolRequest request) async {
       }
     } else {
       if (cursor != null) {
-        // The read was incremental and came back empty, but the session may
-        // already hold requests. Lead with since:0 so the agent sees them
-        // instead of concluding there is no traffic.
         nextSteps.add(
           'network_list since:0 to re-scan everything captured this session '
           '(this read was incremental and only shows new requests)',
@@ -241,10 +224,6 @@ FutureOr<CallToolResult> networkList(CallToolRequest request) async {
       'requests': filtered,
     }, scopeSessionId: scope.sessionId);
   } catch (e) {
-    // Total live-fetch failure (#41): instead of dead-ending the agent,
-    // degrade to the persisted DB snapshot for this session, clearly flagged.
-    // This keeps network_list useful in exactly the scenario the profiler is
-    // most needed: when the network is misbehaving.
     return _liveDbFallback(
       scope,
       caps,
@@ -294,6 +273,7 @@ CallToolResult _liveDbFallback(
     return errorResult(
       'Live read failed and the DB fallback also failed. '
       'Live: $liveError. DB: $dbErr',
+      kind: ErrorKind.unresponsiveVm,
       extra: {
         'sessionId': sid,
         'nextSteps': const [
@@ -415,13 +395,15 @@ FutureOr<CallToolResult> _historyList(
       'requests': out,
     }, scopeSessionId: scope.sessionId);
   } catch (e) {
-    return errorResult('history query failed: $e', extra: {
-      'sessionId': sid,
-      'nextSteps': const [
-        'Verify the session still exists via session_list',
-        'session_close if the viewed session was deleted',
-      ],
-    });
+    return errorResult('history query failed: $e',
+        kind: ErrorKind.internal,
+        extra: {
+          'sessionId': sid,
+          'nextSteps': const [
+            'Verify the session still exists via session_list',
+            'session_close if the viewed session was deleted',
+          ],
+        });
   }
 }
 
@@ -430,12 +412,6 @@ FutureOr<CallToolResult> _historyList(
 /// Error-safe by construction (#41): a request in an error state must yield a
 /// row, never throw.
 Map<String, Object?> liveSummary(HttpProfileRequest r) {
-  // Error-safe by construction (#41): request-side getters such as
-  // contentLength throw HttpProfileRequestError once the request hasError
-  // (e.g. a DNS failure on an in-flight request), so they are only read when
-  // the request is clean. Response-side fields are plain (non-throwing).
-  // An errored request is surfaced WITH its error rather than dropped, since
-  // the failing request is often the very bug the agent attached to find.
   final reqErr = r.request?.hasError ?? false;
   final respErr = r.response?.hasError ?? false;
   final ct = firstHeader(r.response?.headers, 'content-type');
