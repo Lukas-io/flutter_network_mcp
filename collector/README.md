@@ -9,7 +9,8 @@ Both are keyed by `machine_hash` (a one-way HMAC per install). No PII, URLs, bod
 
 ## Files
 
-- `schema.sql`: D1 tables `crashes`, `usage_rollups`, `tool_stats`, `tool_transitions`.
+- `schema.sql`: D1 tables `crashes`, `usage_rollups`, `tool_stats`, `tool_transitions`, `tool_error_kinds`.
+- `migrations/`: incremental D1 migrations for already-deployed collectors.
 - `src/worker.js`: `POST /v1/telemetry` (routes by `kind`), `GET /v1/stats` (quick per-tool JSON), `GET /` (health).
 - `wrangler.toml`: config; paste your `database_id`.
 
@@ -78,6 +79,40 @@ Most common crashes by signature:
 wrangler d1 execute flutter-network-telemetry --remote --command \
   "SELECT signature, error_class, COUNT(*) AS n FROM crashes
      GROUP BY signature ORDER BY n DESC LIMIT 20"
+```
+
+## Tier-1 datapoints (error composition, context cost, degradation)
+
+Apply the migration to an existing deployment once, then re-deploy the worker:
+
+```bash
+wrangler d1 execute flutter-network-telemetry --remote --file=migrations/001-tier1-datapoints.sql
+wrangler deploy
+```
+
+**WHY a tool errors, not just how often** — the signal that turns "tool X errors a lot" into an action. `bad_argument`-heavy = your schema/docs confuse agents (you fix it); `unresponsive_vm` = infra; `not_found` = agents reuse stale ids:
+
+```bash
+wrangler d1 execute flutter-network-telemetry --remote --command \
+  "SELECT tool, error_kind, SUM(count) AS n FROM tool_error_kinds
+     GROUP BY tool, error_kind ORDER BY n DESC LIMIT 30"
+```
+
+**Context cost ranking** — which tools eat the most of the agent's window:
+
+```bash
+wrangler d1 execute flutter-network-telemetry --remote --command \
+  "SELECT tool, SUM(estimated_tokens) AS tokens, SUM(count) AS calls
+     FROM tool_stats GROUP BY tool ORDER BY tokens DESC"
+```
+
+**Live-path reliability** — how often a tool falls back from live to the DB snapshot (high = the live read is flaky there):
+
+```bash
+wrangler d1 execute flutter-network-telemetry --remote --command \
+  "SELECT tool, SUM(degraded) AS degraded, SUM(count) AS calls,
+          SUM(degraded)*1.0/SUM(count) AS degrade_rate
+     FROM tool_stats GROUP BY tool HAVING degraded > 0 ORDER BY degrade_rate DESC"
 ```
 
 ## Cost

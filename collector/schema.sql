@@ -66,10 +66,27 @@ CREATE TABLE IF NOT EXISTS tool_stats (
   p50_ms            INTEGER,
   p95_ms            INTEGER,
   avg_result_bytes  INTEGER,
+  estimated_tokens  INTEGER,   -- total estimated tokens this tool returned (context cost)
+  degraded          INTEGER,   -- count of calls that fell back from the primary path
   FOREIGN KEY (rollup_id) REFERENCES usage_rollups(id)
 );
 CREATE INDEX IF NOT EXISTS idx_tool_stats_tool ON tool_stats(tool);
 CREATE INDEX IF NOT EXISTS idx_tool_stats_rollup ON tool_stats(rollup_id);
+
+-- Error composition per tool, fanned out from each rollup tool's errorKinds
+-- map. Answers "WHY does this tool error" (bad_argument vs unresponsive_vm vs
+-- not_found ...) instead of just how often.
+CREATE TABLE IF NOT EXISTS tool_error_kinds (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  rollup_id    INTEGER NOT NULL,
+  machine_hash TEXT,
+  tool         TEXT NOT NULL,
+  error_kind   TEXT NOT NULL,
+  count        INTEGER,
+  FOREIGN KEY (rollup_id) REFERENCES usage_rollups(id)
+);
+CREATE INDEX IF NOT EXISTS idx_tool_error_kinds_tool ON tool_error_kinds(tool, error_kind);
+CREATE INDEX IF NOT EXISTS idx_tool_error_kinds_rollup ON tool_error_kinds(rollup_id);
 
 -- tool -> next-tool transitions, fanned out from each rollup's transitions[].
 -- This is the "what playbook do agents actually follow" table.

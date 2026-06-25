@@ -1,6 +1,6 @@
 /// Captures-DB schema version. Bump this AND add a migration block in the
 /// `_migrationFor` switch in `database.dart` whenever a table here changes.
-const int currentVersion = 8;
+const int currentVersion = 9;
 
 const List<String> initialSchema = [
   '''
@@ -169,7 +169,9 @@ const List<String> initialSchema = [
     arg_keys         TEXT,
     duration_ms      INTEGER,
     result_bytes     INTEGER,
-    estimated_tokens INTEGER
+    estimated_tokens INTEGER,
+    error_kind       TEXT,
+    degraded         INTEGER NOT NULL DEFAULT 0
   )
   ''',
   'CREATE INDEX idx_tool_events_corr ON tool_events(correlation_id, ts_ms)',
@@ -317,4 +319,13 @@ const List<String> migrationV6toV7 = [
 /// avgEstimatedTokens and totalEstimatedTokens per tool.
 const List<String> migrationV7toV8 = [
   'ALTER TABLE tool_events ADD COLUMN estimated_tokens INTEGER',
+];
+
+/// v8 -> v9: richer outcome datapoints on [tool_events]. `error_kind` carries
+/// the typed ErrorKind wire string for error calls (so the rollup can break
+/// errors down by reason, not just count them); `degraded` flags calls that
+/// fell back from their primary path (e.g. live VM read -> DB snapshot).
+const List<String> migrationV8toV9 = [
+  'ALTER TABLE tool_events ADD COLUMN error_kind TEXT',
+  'ALTER TABLE tool_events ADD COLUMN degraded INTEGER NOT NULL DEFAULT 0',
 ];

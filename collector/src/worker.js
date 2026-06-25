@@ -112,8 +112,9 @@ async function insertUsageRollup(db, p, now) {
         .prepare(
           `INSERT INTO tool_stats
             (rollup_id, machine_hash, tool, count, ok, error, empty,
-             error_rate, empty_rate, p50_ms, p95_ms, avg_result_bytes)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+             error_rate, empty_rate, p50_ms, p95_ms, avg_result_bytes,
+             estimated_tokens, degraded)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         )
         .bind(
           rollupId,
@@ -128,8 +129,22 @@ async function insertUsageRollup(db, p, now) {
           t.p50Ms ?? null,
           t.p95Ms ?? null,
           t.avgResultBytes ?? null,
+          t.totalEstimatedTokens ?? null,
+          t.degraded ?? 0,
         ),
     );
+
+    for (const [kind, n] of Object.entries(t.errorKinds ?? {})) {
+      stmts.push(
+        db
+          .prepare(
+            `INSERT INTO tool_error_kinds
+              (rollup_id, machine_hash, tool, error_kind, count)
+             VALUES (?,?,?,?,?)`,
+          )
+          .bind(rollupId, machine, t.tool, kind, n ?? 0),
+      );
+    }
   }
 
   for (const tr of p.transitions ?? []) {
