@@ -95,9 +95,28 @@ CREATE TABLE IF NOT EXISTS tool_transitions (
   rollup_id    INTEGER NOT NULL,
   machine_hash TEXT,
   from_tool    TEXT,
+  from_outcome TEXT,   -- prior call's outcome (ok/error/empty): recovery paths
   to_tool      TEXT,
   count        INTEGER,
   FOREIGN KEY (rollup_id) REFERENCES usage_rollups(id)
 );
 CREATE INDEX IF NOT EXISTS idx_transitions_pair ON tool_transitions(from_tool, to_tool);
 CREATE INDEX IF NOT EXISTS idx_transitions_rollup ON tool_transitions(rollup_id);
+
+-- Self-correction effectiveness: after a tool returned an error/empty (and so
+-- a recovery payload, errorKind nextSteps / availableHosts / inline schema),
+-- did the NEXT call in the same turn succeed? signal = the errorKind, or
+-- 'empty'. recovery_rate = recovered/occurrences answers "do the intuitive
+-- features actually help".
+CREATE TABLE IF NOT EXISTS tool_self_correction (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  rollup_id    INTEGER NOT NULL,
+  machine_hash TEXT,
+  tool         TEXT NOT NULL,
+  signal       TEXT NOT NULL,
+  occurrences  INTEGER,
+  recovered    INTEGER,
+  FOREIGN KEY (rollup_id) REFERENCES usage_rollups(id)
+);
+CREATE INDEX IF NOT EXISTS idx_self_correction_tool ON tool_self_correction(tool, signal);
+CREATE INDEX IF NOT EXISTS idx_self_correction_rollup ON tool_self_correction(rollup_id);
