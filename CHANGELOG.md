@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.9.4] — 2026-06-25
+
+### Added — network_replay_as_test (captured request -> runnable Dart test)
+
+New tool: emits a runnable Dart test (package:http + package:test) that replays a captured request and asserts its status code (optionally `assertBodyContains`). Uses a uniform `http.Request` so every method + body works. Auth headers are redacted (commented out) by default so the test is shareable; the agent fills in real credentials. Lets the agent iterate a regression test instead of re-driving the app (FUTURE_FEATURES backlog #1). 261 tests green.
+
 ## [0.9.3] — 2026-06-25
 
 ### Added — network_drift (response shape-drift detection)
