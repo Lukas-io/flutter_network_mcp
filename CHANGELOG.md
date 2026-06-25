@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.9.1] — 2026-06-25
+
+### Added — token-budget-aware responses
+
+`network_list` accepts a `maxTokens` budget (per-call, or a sticky `session_configure maxResponseTokens` default that applies session-wide). When set, the requests array is trimmed newest-first to fit, and the response reports `budget: {maxTokens, dropped}` plus a warning to page or raise the budget. Telemetry showed `network_list` is by far the heaviest tool (~11k tokens/call, ~46k max), so this directly reins in the agent's biggest context cost. Applies to both live and history reads; a tiny budget always keeps at least one row. Shared `trimToTokenBudget` helper. 249 tests green; logs_tail extension to follow.
+
 ## [0.9.0] — 2026-06-25
 
 ### Added — Tier-2 telemetry: recovery paths + self-correction effectiveness
