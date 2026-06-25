@@ -171,8 +171,6 @@ class DtdDiscovery {
         cwdForMatch: cwd,
       );
     } catch (_) {
-      // Malformed file — older format, partial write, foreign content.
-      // Skip silently; one bad file shouldn't disturb the others.
       return null;
     }
   }
@@ -186,7 +184,7 @@ class DtdDiscovery {
     final aNullRoot = a.workspaceRoot == null;
     final bNullRoot = b.workspaceRoot == null;
     if (aNullRoot != bNullRoot) return aNullRoot ? 1 : -1;
-    return b.epoch.compareTo(a.epoch); // newer epoch wins
+    return b.epoch.compareTo(a.epoch);
   }
 
   /// Probes [pid] to see whether the OS still has a process with that id.
@@ -214,13 +212,9 @@ class DtdDiscovery {
         );
         if (result.exitCode != 0) return false;
         final out = (result.stdout as String?) ?? '';
-        // tasklist prints "INFO: No tasks..." when no match, otherwise a
-        // single-row CSV-ish line. Cheap heuristic: look for the pid string.
         return out.contains(pid.toString());
       }
     } catch (_) {
-      // If we can't probe (e.g. kill missing in a sandboxed install),
-      // assume alive — false negatives would silently drop real DTDs.
       return true;
     }
     return true;

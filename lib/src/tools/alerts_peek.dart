@@ -6,6 +6,7 @@ import '../config/capabilities.dart';
 import '../storage/captures_db.dart';
 import '../util/scope.dart';
 import 'alerts_drain.dart' show buildAlertsResponse;
+import 'error_kind.dart';
 import 'result.dart';
 
 final alertsPeekTool = Tool(
@@ -58,7 +59,7 @@ FutureOr<CallToolResult> alertsPeek(CallToolRequest request) async {
       caps: caps,
     ));
   } catch (e) {
-    return errorResult('alerts_peek failed: $e', extra: {
+    return errorResult('alerts_peek failed: $e', kind: ErrorKind.internal, extra: {
       'sessionId': sessionId,
       'nextSteps': const [
         'network_status — confirm DB is open',

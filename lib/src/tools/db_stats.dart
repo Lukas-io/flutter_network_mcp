@@ -5,6 +5,7 @@ import 'package:dart_mcp/server.dart';
 import '../config/capabilities.dart';
 import '../storage/captures_db.dart';
 import '../storage/database.dart';
+import 'error_kind.dart';
 import 'result.dart';
 
 const int _kWarnSizeMb = 100;
@@ -73,7 +74,7 @@ FutureOr<CallToolResult> dbStats(CallToolRequest request) async {
       'nextSteps': nextSteps,
     });
   } catch (e) {
-    return errorResult('db_stats failed: $e', extra: const {
+    return errorResult('db_stats failed: $e', kind: ErrorKind.internal, extra: const {
       'nextSteps': [
         'Confirm the DB is open (server started with --data-dir or default)',
       ],

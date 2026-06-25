@@ -1,8 +1,5 @@
-// Schema for the captures database.
-//
-// Bump [currentVersion] when changing this file and add a migration block in
-// the migration switch in database.dart.
-
+/// Captures-DB schema version. Bump this AND add a migration block in the
+/// `_migrationFor` switch in `database.dart` whenever a table here changes.
 const int currentVersion = 8;
 
 const List<String> initialSchema = [

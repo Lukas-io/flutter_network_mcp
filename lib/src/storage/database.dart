@@ -37,9 +37,6 @@ class CapturesDatabase {
         db.execute('PRAGMA journal_mode = WAL');
         _migrate(db);
 
-        // Visibility when a non-primary fallback was chosen for a default
-        // (auto-resolved) data dir. Skipped when the user passed an explicit
-        // override — that's a single-element list, so dir == first.
         if (dataDir == null && dir != candidates.first) {
           stderr.writeln(
             'flutter_network_mcp: primary data dir ${candidates.first} '

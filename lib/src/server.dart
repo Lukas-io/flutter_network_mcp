@@ -75,16 +75,13 @@ base class FlutterNetworkMcpServer extends MCPServer with ToolsSupport {
         ) {
     final caps = CapabilityConfig.instance;
 
-    // Lifecycle — always available.
     _register(networkStatusTool, (req) => networkStatus(req, defaultDtdUri));
     _register(networkAttachTool, (req) => networkAttach(req, defaultDtdUri));
     _register(networkDetachTool, networkDetach);
     _register(networkDiscoverDtdTool, networkDiscoverDtd);
     _register(reportIssueTool, reportIssue);
     _register(autoAttachConfigTool, autoAttachConfig);
-    // Sticky default filters tune whatever read tools are enabled (#18).
     _register(sessionConfigureTool, sessionConfigure);
-    // Usage analytics is process-wide + always available (#79 Phase 2).
     _register(usageStatsTool, usageStats);
 
     if (caps.isEnabled(Category.http)) {
@@ -108,9 +105,6 @@ base class FlutterNetworkMcpServer extends MCPServer with ToolsSupport {
       _register(logsClearTool, logsClear);
     }
 
-    // #18: log<->network correlation bridges the http + logs surfaces, so it
-    // is available whenever either side is on (it returns only the enabled
-    // sides).
     if (caps.isEnabled(Category.http) || caps.isEnabled(Category.logs)) {
       _register(correlateAtTool, correlateAt);
     }

@@ -4,6 +4,7 @@ import 'package:dart_mcp/server.dart';
 
 import '../storage/captures_db.dart';
 import '../util/scope.dart';
+import 'error_kind.dart';
 import 'result.dart';
 
 final alertsClearTool = Tool(
@@ -48,6 +49,7 @@ FutureOr<CallToolResult> alertsClear(CallToolRequest request) async {
   if (!drainedOnly && !confirm) {
     return errorResult(
       'Deleting undrained alerts requires `confirm:true`. They have not been read yet.',
+      kind: ErrorKind.badArgument,
       extra: {
         'sessionId': sessionId,
         'drainedOnly': false,
@@ -104,7 +106,7 @@ FutureOr<CallToolResult> alertsClear(CallToolRequest request) async {
       ],
     }, scopeSessionId: scope.sessionId);
   } catch (e) {
-    return errorResult('alerts_clear failed: $e', extra: {
+    return errorResult('alerts_clear failed: $e', kind: ErrorKind.internal, extra: {
       'sessionId': sessionId,
       'nextSteps': const [
         'session_list — confirm sessionId is valid',

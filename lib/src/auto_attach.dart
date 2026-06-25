@@ -150,14 +150,8 @@ class AutoAttacher {
   }
 
   Future<void> _tick() async {
-    if (_ticking) return; // Re-entrancy guard.
+    if (_ticking) return;
     _ticking = true;
-    // Defense-in-depth: top-level try/catch so an unexpected throw
-    // (ConcurrentModificationError on _seenUris, a stack underflow from
-    // some upstream API, anything) never escapes the Timer callback.
-    // Timer.periodic swallows callback exceptions into the zone, but
-    // explicit handling keeps the watcher running even when one tick
-    // blows up.
     try {
       await _runTick();
     } catch (e, st) {
@@ -171,37 +165,22 @@ class AutoAttacher {
   }
 
   Future<void> _runTick() async {
-    // Multi-DTD aware in 0.6.2. Each `flutter run` spawns its own DTD;
-    // DtdProbe.probeAll opens TRANSIENT clients across every live DTD on
-    // the machine and aggregates the app list. The primary
-    // `Session.instance.dtd` is left untouched — cross-DTD attaches go
-    // via `performAttach(vmServiceUri: ...)` which bypasses DTD entirely.
     final List<DtdAppListing> listings;
     try {
       listings = await DtdProbe.probeAll();
     } catch (_) {
-      // Discovery filesystem read failed — silently skip this tick. The
-      // primary DTD (if connected) keeps capturing on its existing
-      // attachments; we just don't pick up new ones this tick.
       return;
     }
 
-    // Map uri → name across ALL DTDs. De-duped by uri (same vmService
-    // shouldn't surface from two DTDs but defend anyway).
     final currentByUri = <String, String>{};
     for (final listing in listings) {
       for (final a in listing.apps) {
         if (a.uri.isEmpty) continue;
-        // First listing wins on duplicate — order is discovery rank.
         currentByUri.putIfAbsent(a.uri, () => a.name ?? '');
       }
     }
     final currentUris = currentByUri.keys.toSet();
 
-    // First tick: log intent then fall through. 0.6.2 dropped the old
-    // "seed without attaching" behaviour — the allowlist is the explicit
-    // opt-in, so allowlisted apps already running should attach now, not
-    // wait for the user to flutter-restart.
     final isFirstTick = !_seedComplete;
     _seedComplete = true;
     if (isFirstTick && currentUris.isNotEmpty) {
@@ -220,9 +199,6 @@ class AutoAttacher {
       final appName = currentByUri[uri] ?? '';
       final displayName = appName.isEmpty ? '(unnamed)' : appName;
 
-      // Allowlist gate — the security-critical check. Non-matching apps
-      // log + are skipped; they stay in _seenUris so we don't retry
-      // every tick (acts as both rate-limit and audit trail).
       if (!_matchesAllowlist(appName)) {
         io.stderr.writeln(
           'flutter_network_mcp: auto-attach skipped $uri '
@@ -232,9 +208,6 @@ class AutoAttacher {
         continue;
       }
 
-      // Denylist gate — wins over allowlist. Logged with the specific
-      // matched pattern (best-effort) so the user sees why a normally-
-      // allowed app got blocked.
       if (_matchesDenylist(appName)) {
         io.stderr.writeln(
           'flutter_network_mcp: auto-attach skipped $uri '
@@ -244,14 +217,8 @@ class AutoAttacher {
         continue;
       }
 
-      // Defensive: skip if already attached (race between this tick and
-      // a manual network_attach the agent just fired).
       if (SessionRegistry.instance.attachedByUri(uri) != null) continue;
 
-      // #16: if this URI is a hot restart of an app we already track (same
-      // package+device identity at a different URI), don't fresh-attach it
-      // as a brand-new session. The migration watcher reattaches it under
-      // the existing session id instead.
       final newIdentity = appSessionIdentity(appName);
       if (newIdentity != null &&
           SessionRegistry.instance.attached.values.any((s) =>

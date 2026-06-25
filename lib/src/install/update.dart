@@ -46,8 +46,6 @@ Future<void> runUpdate(List<String> args) async {
     return;
   }
 
-  // If the user previously AOT-compiled, re-compile so the upgrade
-  // doesn't silently downgrade them back to the slow JIT wrapper.
   if (wantsAotAfterUpdate()) {
     io.stderr.writeln(
       'flutter_network_mcp update: re-compiling (you previously ran '

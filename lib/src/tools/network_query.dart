@@ -84,9 +84,6 @@ FutureOr<CallToolResult> networkQuery(CallToolRequest request) async {
           ],
         });
   } catch (e) {
-    // Self-correct: return the schema inline so the agent fixes the query on
-    // its next call rather than guessing column names or looping (telemetry:
-    // network_query has a real error rate and a query->query self-loop).
     Map<String, List<String>>? schema;
     try {
       schema = CapturesDao().schemaDigest();

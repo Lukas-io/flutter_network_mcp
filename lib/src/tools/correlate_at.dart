@@ -5,6 +5,7 @@ import 'package:dart_mcp/server.dart';
 import '../config/capabilities.dart';
 import '../storage/captures_db.dart';
 import '../util/scope.dart';
+import 'error_kind.dart';
 import 'result.dart';
 
 final correlateAtTool = Tool(
@@ -55,6 +56,7 @@ FutureOr<CallToolResult> correlateAt(CallToolRequest request) async {
   final tsMs = args['tsMs'] as int?;
   if (tsMs == null) {
     return errorResult('Missing required arg `tsMs` (anchor ms since epoch).',
+        kind: ErrorKind.badArgument,
         extra: const {
           'nextSteps': [
             'logs_tail — copy a log entry\'s timestampMs to anchor on',
@@ -108,7 +110,7 @@ FutureOr<CallToolResult> correlateAt(CallToolRequest request) async {
             .toList()
         : const [];
   } catch (e) {
-    return errorResult('correlate_at query failed: $e', extra: {
+    return errorResult('correlate_at query failed: $e', kind: ErrorKind.internal, extra: {
       'sessionId': scope.sessionId,
       'nextSteps': const [
         'network_status — confirm the session is reachable',
@@ -117,7 +119,6 @@ FutureOr<CallToolResult> correlateAt(CallToolRequest request) async {
     });
   }
 
-  // Nearest item overall (across both sides), for the headline.
   Map<String, Object?>? nearest;
   String? nearestKind;
   for (final e in logs) {

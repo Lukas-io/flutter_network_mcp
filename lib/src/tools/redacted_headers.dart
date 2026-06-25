@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:dart_mcp/server.dart';
 
 import '../storage/captures_db.dart';
+import 'error_kind.dart';
 import 'result.dart';
 
 const _builtins = <String>[
@@ -63,7 +64,7 @@ FutureOr<CallToolResult> redactedHeaders(CallToolRequest request) async {
         });
       case 'add':
         if (name == null || name.isEmpty) {
-          return errorResult('`name` is required for action=add.', extra: const {
+          return errorResult('`name` is required for action=add.', kind: ErrorKind.badArgument, extra: const {
             'nextSteps': ['Retry with name:"<your header>" (case-insensitive)'],
           });
         }
@@ -92,7 +93,7 @@ FutureOr<CallToolResult> redactedHeaders(CallToolRequest request) async {
         });
       case 'remove':
         if (name == null || name.isEmpty) {
-          return errorResult('`name` is required for action=remove.', extra: const {
+          return errorResult('`name` is required for action=remove.', kind: ErrorKind.badArgument, extra: const {
             'nextSteps': ['redacted_headers action:"list" — see what is removable'],
           });
         }
@@ -100,6 +101,7 @@ FutureOr<CallToolResult> redactedHeaders(CallToolRequest request) async {
         if (_builtins.contains(lower)) {
           return errorResult(
             '"$lower" is a built-in default and cannot be removed.',
+            kind: ErrorKind.badArgument,
             extra: const {
               'nextSteps': [
                 'Built-ins (authorization, cookie, proxy-authorization, x-api-key, x-auth-token) are always redacted by design',
@@ -121,12 +123,12 @@ FutureOr<CallToolResult> redactedHeaders(CallToolRequest request) async {
           ],
         });
       default:
-        return errorResult('`action` must be list, add, or remove.', extra: const {
+        return errorResult('`action` must be list, add, or remove.', kind: ErrorKind.badArgument, extra: const {
           'nextSteps': ['Retry with action:"list" to inspect current entries'],
         });
     }
   } catch (e) {
-    return errorResult('redacted_headers failed: $e', extra: const {
+    return errorResult('redacted_headers failed: $e', kind: ErrorKind.internal, extra: const {
       'nextSteps': ['redacted_headers action:"list" — see current state'],
     });
   }

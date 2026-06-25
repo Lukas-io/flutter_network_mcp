@@ -120,9 +120,6 @@ class CaptureWriter {
     final isolates = vm.httpProfilingIsolates;
     if (isolates.isEmpty) return;
 
-    // Poll each known isolate; tag every captured request with the
-    // isolate it came from so per-isolate filtering downstream works.
-    // Per-isolate try/catch so one bad isolate doesn't stop the others.
     for (final iso in isolates) {
       try {
         final profile = await vm.getHttpProfileForIsolate(
@@ -144,8 +141,6 @@ class CaptureWriter {
   }
 
   Future<void> _pollSockets(VmClient vm, int sid) async {
-    // Don't re-scan here — _pollHttp handles re-scan, and sockets share
-    // the same isolate set. Avoids double discovery RPCs per tick.
     for (final iso in vm.httpProfilingIsolates) {
       try {
         final profile = await vm.getSocketProfileForIsolate(iso.id);
@@ -153,7 +148,6 @@ class CaptureWriter {
           _dao.upsertSocket(sid, s, isolateId: iso.id);
         }
       } catch (_) {
-        // Socket profiling may be unavailable on some embedders; ignore.
       }
     }
   }
@@ -163,7 +157,7 @@ class CaptureWriter {
   /// up. See [CapturesDao.pendingBodyFetches] and schema v6; this is what
   /// rescues chunked / gzip responses the dart:io profiler never marks
   /// complete (issue #13) without re-polling body-less requests forever.
-  static const int _bodyBackfillGraceUs = 3 * 1000 * 1000; // 3s
+  static const int _bodyBackfillGraceUs = 3 * 1000 * 1000;
   static const int _maxBodyFetchAttempts = 3;
 
   Future<void> _backfillBodies(VmClient vm, int sid) async {
@@ -177,9 +171,6 @@ class CaptureWriter {
     );
     final searchOn = CapabilityConfig.instance.isEnabled(Category.search);
     for (final entry in pending) {
-      // Use the recorded isolate id when known; fall back to the first
-      // tracked isolate for pre-v4 rows (NULL isolate_id) or rows
-      // inserted before isolate tagging took effect mid-session.
       final isolateId = entry.isolateId ?? vm.isolateId;
       if (isolateId == null) continue;
       try {
@@ -193,16 +184,11 @@ class CaptureWriter {
           _dao.storeBodies(sid, detail);
           if (searchOn) _indexForSearch(sid, detail, isolateId: isolateId);
         } else if (entry.isComplete) {
-          // Complete and genuinely body-less (204 / HEAD / empty); terminal.
           _dao.markBodiesFetched(sid, entry.vmId);
         } else {
-          // Response-incomplete, no body yet; count the attempt so the gate
-          // eventually drops it instead of re-polling forever.
           _dao.bumpBodyFetchAttempt(sid, entry.vmId);
         }
       } catch (_) {
-        // Request id might have been cleared from the VM ring buffer. For
-        // incomplete rows, count it so they age out; complete rows retry.
         if (!entry.isComplete) _dao.bumpBodyFetchAttempt(sid, entry.vmId);
       }
     }
@@ -224,8 +210,6 @@ class CaptureWriter {
     try {
       final before = {for (final i in vm.httpProfilingIsolates) i.id};
       final fresh = await vm.discoverHttpProfilingIsolates();
-      // Enable HTTP (+ optionally socket) profiling on every newly-
-      // discovered isolate so its requests start flowing into our polls.
       final socketsOn =
           CapabilityConfig.instance.isEnabled(Category.sockets);
       for (final iso in fresh) {
@@ -239,8 +223,6 @@ class CaptureWriter {
           } catch (_) {/* harmless */}
         }
       }
-      // Drop cursors for isolates that vanished (e.g. compute isolate
-      // finished). Their captured rows stay in the DB.
       final freshIds = {for (final i in fresh) i.id};
       _lastCursorPerIsolate.removeWhere((id, _) => !freshIds.contains(id));
     } catch (e) {

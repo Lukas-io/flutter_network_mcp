@@ -32,7 +32,7 @@ const int _kStringLeafBytes = 200;
 
 /// Hard memory cap on the input we'll attempt to parse. Bodies larger than
 /// this skip semantic truncation entirely (caller should byte-cap).
-const int kSemanticInputCap = 262144; // 256 KB
+const int kSemanticInputCap = 262144;
 
 /// Lossy structural truncation of a JSON string.
 ///
@@ -74,9 +74,6 @@ SemanticTruncation truncateJson(
     stringLeafBytes: stringLeafBytes,
   );
   final out = _walk(parsed, state);
-  // Pretty-print so the agent sees readable JSON, not a single line. The
-  // 2-space indent costs a few bytes but reads dramatically better in the
-  // agent's response.
   final encoded = const JsonEncoder.withIndent('  ').convert(out);
   if (encoded.length <= maxBytes) {
     return SemanticTruncation(
@@ -85,7 +82,6 @@ SemanticTruncation truncateJson(
       didApply: true,
     );
   }
-  // Last resort — byte cap. Still marks truncated:true.
   return SemanticTruncation(
     value: encoded.substring(0, maxBytes),
     truncated: true,
