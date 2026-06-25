@@ -34,6 +34,12 @@ final sessionConfigureTool = Tool(
           Schema.string(description: 'Default network_list hostContains.'),
       'statusMin': Schema.int(description: 'Default network_list statusMin.'),
       'statusMax': Schema.int(description: 'Default network_list statusMax.'),
+      'maxResponseTokens': Schema.int(
+        description:
+            'Per-response token budget. network_list / logs_tail trim their '
+            'arrays to fit (newest-first) and report budget.dropped. Keeps '
+            'big reads from flooding the agent context.',
+      ),
       'clear': Schema.bool(description: 'Reset ALL sticky defaults to none.'),
     },
   ),
@@ -63,6 +69,9 @@ FutureOr<CallToolResult> sessionConfigure(CallToolRequest request) async {
   }
   if (args.containsKey('statusMin')) sf.statusMin = args['statusMin'] as int?;
   if (args.containsKey('statusMax')) sf.statusMax = args['statusMax'] as int?;
+  if (args.containsKey('maxResponseTokens')) {
+    sf.maxResponseTokens = args['maxResponseTokens'] as int?;
+  }
 
   final block = sf.toBlock();
   final summary = sf.isEmpty
