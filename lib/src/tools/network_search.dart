@@ -6,6 +6,7 @@ import '../config/capabilities.dart';
 import '../storage/captures_db.dart';
 import '../util/filters.dart';
 import '../util/scope.dart';
+import 'error_kind.dart';
 import 'result.dart';
 
 final networkSearchTool = Tool(
@@ -49,18 +50,22 @@ FutureOr<CallToolResult> networkSearch(CallToolRequest request) async {
   final caps = CapabilityConfig.instance;
   final query = args['query'] as String?;
   if (query == null || query.trim().isEmpty) {
-    return errorResult('Missing required arg `query`.', extra: const {
-      'nextSteps': [
-        'Retry with a non-empty query string',
-        'network_list — fallback if you only need metadata filtering',
-      ],
-    });
+    return errorResult('Missing required arg `query`.',
+        kind: ErrorKind.badArgument,
+        extra: const {
+          'nextSteps': [
+            'Retry with a non-empty query string',
+            'network_list — fallback if you only need metadata filtering',
+          ],
+        });
   }
   final whichArg = (args['which'] as String?) ?? 'any';
   if (!['url', 'request', 'response', 'any'].contains(whichArg)) {
-    return errorResult('`which` must be url, request, response, or any.', extra: const {
-      'nextSteps': ['Retry with which:"any" (default)'],
-    });
+    return errorResult('`which` must be url, request, response, or any.',
+        kind: ErrorKind.badArgument,
+        extra: const {
+          'nextSteps': ['Retry with which:"any" (default)'],
+        });
   }
   final (scope, scopeErr) = resolveScope(args);
   if (scopeErr != null) return scopeErr;
@@ -95,11 +100,30 @@ FutureOr<CallToolResult> networkSearch(CallToolRequest request) async {
         ? 'No matches for "$query" in session $sessionId (which=$whichArg).'
         : '${matches.length} match(es) for "$query" in session $sessionId (ranked by BM25).';
 
+    // Self-correct an empty result (telemetry: ~37% of searches return empty).
+    // Distinguish "nothing indexed yet" (writer still backfilling) from "your
+    // term did not match", and in the latter case hand back the hosts that ARE
+    // captured so the agent picks a real term instead of guessing blind.
     final warnings = <String>[];
+    List<String>? availableHosts;
     if (matches.isEmpty) {
-      warnings.add(
-        'No matches. Bodies may not be indexed yet (writer backfills every ~2s) or the query is too specific.',
-      );
+      var indexed = -1;
+      try {
+        indexed = CapturesDao().searchIndexSize(sessionId);
+        if (indexed > 0) availableHosts = CapturesDao().distinctHosts(sessionId);
+      } catch (_) {/* best-effort */}
+      if (indexed == 0) {
+        warnings.add(
+          'Nothing is indexed for search yet in session $sessionId — the '
+          'writer backfills bodies every ~2s. Retry shortly, or search '
+          'which:"url" which needs no backfill.',
+        );
+      } else {
+        warnings.add(
+          'No match for "$query". The capture is indexed, so the term is too '
+          'specific or absent. See availableHosts for what was captured.',
+        );
+      }
     }
 
     final nextSteps = <String>[];
@@ -109,6 +133,9 @@ FutureOr<CallToolResult> networkSearch(CallToolRequest request) async {
         nextSteps.add('network_diff idA:"${matches.first['id']}" idB:"${matches[1]['id']}" — compare the top two');
       }
     } else {
+      if (availableHosts != null && availableHosts.isNotEmpty) {
+        nextSteps.add('Search a term from availableHosts, e.g. query:"${availableHosts.first}"');
+      }
       nextSteps.add('Retry with a shorter substring or which:"any"');
       nextSteps.add('network_list — browse by metadata instead');
     }
@@ -121,17 +148,21 @@ FutureOr<CallToolResult> networkSearch(CallToolRequest request) async {
       'which': whichArg,
       'count': matches.length,
       'matches': matches,
+      if (availableHosts != null && availableHosts.isNotEmpty)
+        'availableHosts': availableHosts,
       if (warnings.isNotEmpty) 'warnings': warnings,
       'nextSteps': nextSteps,
     }, scopeSessionId: scope.sessionId);
   } catch (e) {
-    return errorResult('network_search failed: $e', extra: {
-      'sessionId': sessionId,
-      'query': query,
-      'nextSteps': const [
-        'Simplify the query (avoid raw FTS5 operators)',
-        'network_list — fall back to metadata filtering',
-      ],
-    });
+    return errorResult('network_search failed: $e',
+        kind: ErrorKind.badQuery,
+        extra: {
+          'sessionId': sessionId,
+          'query': query,
+          'nextSteps': const [
+            'Simplify the query (avoid raw FTS5 operators like AND/OR/NEAR)',
+            'network_list — fall back to metadata filtering',
+          ],
+        });
   }
 }

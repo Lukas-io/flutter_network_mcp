@@ -1323,6 +1323,56 @@ class CapturesDao {
     return out;
   }
 
+  // ----- self-correction helpers (agent-intuitive contract) -----
+
+  /// Table name -> column names for the user-facing capture tables. Returned
+  /// inline on a network_query SQL error so the agent can fix its query on the
+  /// next call instead of guessing or looping. Excludes sqlite internals and
+  /// FTS shadow tables.
+  Map<String, List<String>> schemaDigest() {
+    const hidden = {
+      'http_search', // FTS5 virtual table (shadow tables are noise)
+      '_meta',
+    };
+    final out = <String, List<String>>{};
+    final tables = _db.select(
+      "SELECT name FROM sqlite_schema WHERE type='table' "
+      "AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '%_fts%' "
+      "AND name NOT LIKE 'http_search_%' ORDER BY name",
+    );
+    for (final t in tables) {
+      final name = t['name'] as String?;
+      if (name == null || hidden.contains(name)) continue;
+      final cols = _db.select('PRAGMA table_info($name)');
+      out[name] = [for (final c in cols) c['name'] as String];
+    }
+    return out;
+  }
+
+  /// Distinct request hosts captured in [sessionId], busiest first. Returned
+  /// inline when network_search finds nothing, so the agent can pick a real
+  /// term instead of retrying blind.
+  List<String> distinctHosts(int sessionId, {int limit = 15}) {
+    final rows = _db.select(
+      'SELECT host, COUNT(*) AS n FROM http_requests '
+      'WHERE session_id=? AND host IS NOT NULL AND host != \'\' '
+      'GROUP BY host ORDER BY n DESC LIMIT ?',
+      [sessionId, limit],
+    );
+    return [for (final r in rows) r['host'] as String];
+  }
+
+  /// Number of requests in [sessionId] whose bodies are indexed for full-text
+  /// search. Lets network_search tell "nothing indexed yet" (writer still
+  /// backfilling) apart from "your term did not match".
+  int searchIndexSize(int sessionId) {
+    final rows = _db.select(
+      'SELECT COUNT(*) AS n FROM http_search_map WHERE session_id=?',
+      [sessionId],
+    );
+    return (rows.first['n'] as int?) ?? 0;
+  }
+
   // ----- helpers -----
 
   Map<String, Object?> _rowToMap(sql.Row r) {
