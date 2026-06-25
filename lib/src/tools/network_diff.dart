@@ -7,6 +7,7 @@ import '../config/capabilities.dart';
 import '../storage/captures_db.dart';
 import '../util/body_decoder.dart';
 import '../util/scope.dart';
+import 'error_kind.dart';
 import 'result.dart';
 
 final networkDiffTool = Tool(
@@ -45,23 +46,27 @@ FutureOr<CallToolResult> networkDiff(CallToolRequest request) async {
   final idA = args['idA'] as String?;
   final idB = args['idB'] as String?;
   if (idA == null || idA.isEmpty || idB == null || idB.isEmpty) {
-    return errorResult('Both `idA` and `idB` are required.', extra: const {
-      'nextSteps': [
-        'network_list — find two ids worth comparing',
-        'network_search query:"..." — find ids by content',
-      ],
-    });
+    return errorResult('Both `idA` and `idB` are required.',
+        kind: ErrorKind.badArgument,
+        extra: const {
+          'nextSteps': [
+            'network_list — find two ids worth comparing',
+            'network_search query:"..." — find ids by content',
+          ],
+        });
   }
   final (scope, scopeErr) = resolveScope(args);
   if (scopeErr != null) return scopeErr;
   scope!;
   final sessionId = scope.sessionId;
   if (idA == idB) {
-    return errorResult('idA and idB are the same — diffing a request with itself.', extra: {
-      'nextSteps': const [
-        'network_list — pick a different idB',
-      ],
-    });
+    return errorResult('idA and idB are the same — diffing a request with itself.',
+        kind: ErrorKind.badArgument,
+        extra: {
+          'nextSteps': const [
+            'network_list — pick a different idB',
+          ],
+        });
   }
   final maxLinesRaw = (args['maxBodyLines'] as int?) ?? 200;
   final maxLines = maxLinesRaw <= 0 ? 200 : (maxLinesRaw > 1000 ? 1000 : maxLinesRaw);
@@ -74,21 +79,25 @@ FutureOr<CallToolResult> networkDiff(CallToolRequest request) async {
     final a = dao.getHttpRequest(sessionId, idA);
     final b = dao.getHttpRequest(sessionId, idB);
     if (a == null) {
-      return errorResult('Request `$idA` not found in session $sessionId.', extra: {
-        'sessionId': sessionId,
-        'nextSteps': const [
-          'network_list — list valid ids in this session',
-          'session_list — confirm the session exists',
-        ],
-      });
+      return errorResult('Request `$idA` not found in session $sessionId.',
+          kind: ErrorKind.notFound,
+          extra: {
+            'sessionId': sessionId,
+            'nextSteps': const [
+              'network_list — list valid ids in this session',
+              'session_list — confirm the session exists',
+            ],
+          });
     }
     if (b == null) {
-      return errorResult('Request `$idB` not found in session $sessionId.', extra: {
-        'sessionId': sessionId,
-        'nextSteps': const [
-          'network_list — list valid ids in this session',
-        ],
-      });
+      return errorResult('Request `$idB` not found in session $sessionId.',
+          kind: ErrorKind.notFound,
+          extra: {
+            'sessionId': sessionId,
+            'nextSteps': const [
+              'network_list — list valid ids in this session',
+            ],
+          });
     }
 
     final headersA = _parseHeaders(a['response_headers_json']);
@@ -99,8 +108,6 @@ FutureOr<CallToolResult> networkDiff(CallToolRequest request) async {
     final ctB = b['content_type'] as String?;
     final bodyA = dao.getBody(sessionId, idA, 'response');
     final bodyB = dao.getBody(sessionId, idB, 'response');
-    // network_diff compares bodies line-by-line — semantic truncation would
-    // reformat the JSON and produce noisy spurious diffs. Force byte-exact.
     final textA = bodyA == null ? null : decodeBody(bodyA, ctA, maxBytes: -1, semantic: false);
     final textB = bodyB == null ? null : decodeBody(bodyB, ctB, maxBytes: -1, semantic: false);
 
@@ -177,12 +184,14 @@ FutureOr<CallToolResult> networkDiff(CallToolRequest request) async {
       'nextSteps': nextSteps,
     }, scopeSessionId: scope.sessionId);
   } catch (e) {
-    return errorResult('network_diff failed: $e', extra: {
-      'sessionId': sessionId,
-      'nextSteps': const [
-        'Verify both ids via network_list',
-      ],
-    });
+    return errorResult('network_diff failed: $e',
+        kind: ErrorKind.internal,
+        extra: {
+          'sessionId': sessionId,
+          'nextSteps': const [
+            'Verify both ids via network_list',
+          ],
+        });
   }
 }
 

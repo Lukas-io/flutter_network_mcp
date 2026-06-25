@@ -32,19 +32,15 @@ Future<void> runSetup(List<String> args) async {
   io.stdout.writeln('You can re-run setup any time to adjust.');
   io.stdout.writeln('');
 
-  // Step 1: scaffold MCP host config
   await _stepScaffoldHostConfig();
   io.stdout.writeln('');
 
-  // Step 2: auto-attach for running apps
   await _stepAutoAttach();
   io.stdout.writeln('');
 
-  // Step 3: AOT install
   await _stepInstall();
   io.stdout.writeln('');
 
-  // Step 4: summary
   io.stdout.writeln('---');
   io.stdout.writeln('Setup complete.');
   io.stdout.writeln('');
@@ -184,8 +180,6 @@ Future<void> _stepInstall() async {
     io.stdout.writeln('Skipping. You can run it later with that command.');
     return;
   }
-  // Delegate to existing install logic. runInstall writes to stderr;
-  // setup's stdout is for the wizard chrome.
   await install_cmd.runInstall(const []);
 }
 

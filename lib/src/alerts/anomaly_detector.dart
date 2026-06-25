@@ -115,7 +115,6 @@ class AnomalyDetector {
       final baseline = baselineByKey[key];
       if (baseline == null) continue;
 
-      // Latency anomaly.
       final currentP95 = c['p95LatencyMs'] as int?;
       final baselineP95 = baseline['p95LatencyMs'] as int?;
       if (currentP95 != null &&
@@ -137,7 +136,6 @@ class AnomalyDetector {
         ));
       }
 
-      // Error-rate anomaly.
       final currentErr = (c['errorRate'] as num).toDouble();
       final baselineErr = (baseline['errorRate'] as num).toDouble();
       if (currentErr > errorRateAbsFloor &&

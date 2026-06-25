@@ -46,10 +46,6 @@ class LogStreamSubscriber {
       final message = record.message?.valueAsString ?? '';
       final err = record.error?.valueAsString;
       final stack = record.stackTrace?.valueAsString;
-      // Phase 10: each VM service event carries the originating isolate.
-      // Tag the buffer entry AND the DB row so multi-isolate filtering
-      // downstream works in both live and history mode. Null when the
-      // event is VM-level (no isolate context — rare on these streams).
       final isoId = event.isolate?.id;
       buffer.push(
         source: source,

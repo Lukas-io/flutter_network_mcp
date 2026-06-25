@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:dart_mcp/server.dart';
 
 import '../alerts/alert_rules.dart';
+import 'error_kind.dart';
 import 'result.dart';
 
 const _ruleKeys = [
@@ -57,7 +58,7 @@ FutureOr<CallToolResult> alertsConfig(CallToolRequest request) async {
         rules: setArg['rules'] as Map<String, dynamic>?,
       );
     } catch (e) {
-      return errorResult('alerts_config: $e', extra: const {
+      return errorResult('alerts_config: $e', kind: ErrorKind.badArgument, extra: const {
         'nextSteps': [
           'alerts_config get:true — see current config',
           'Re-call with corrected values',

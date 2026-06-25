@@ -4,6 +4,7 @@ import 'package:dart_mcp/server.dart';
 
 import '../state/session.dart';
 import '../util/scope.dart';
+import 'error_kind.dart';
 import 'result.dart';
 
 final socketClearTool = Tool(
@@ -35,6 +36,7 @@ FutureOr<CallToolResult> socketClear(CallToolRequest request) async {
   if (!scope.isLive) {
     return errorResult(
       'Cannot clear a historical session — there is no live VM to clear.',
+      kind: ErrorKind.noSession,
       extra: {
         'scope': scope.toBlock(),
         'nextSteps': const [
@@ -48,6 +50,7 @@ FutureOr<CallToolResult> socketClear(CallToolRequest request) async {
   if (!attached.socketProfilingEnabled) {
     return errorResult(
       'Socket profiling is not enabled for any of this session\'s isolates.',
+      kind: ErrorKind.capabilityDisabled,
       extra: const {
         'nextSteps': [
           'network_status — confirm socketProfilingEnabled',
@@ -67,8 +70,6 @@ FutureOr<CallToolResult> socketClear(CallToolRequest request) async {
       await attached.vm.clearSocketProfileForIsolate(isoId);
       cleared.add(isoId);
     } catch (e) {
-      // Socket profiling might be enabled on only some isolates — ignore
-      // misses on isolates that don't support it.
       failed.add({'isolateId': isoId, 'error': e.toString()});
     }
   }

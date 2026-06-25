@@ -67,7 +67,6 @@ Future<int> postTelemetry(String jsonStr) async {
     request.headers.contentType = io.ContentType.json;
     request.write(jsonStr);
     final response = await request.close().timeout(kTelemetryTimeout);
-    // Drain the response to free the socket.
     await response.drain<void>();
     return response.statusCode;
   } finally {

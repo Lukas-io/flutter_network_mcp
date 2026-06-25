@@ -44,7 +44,7 @@ List<MigrationPlan> planMigrations({
   final plans = <MigrationPlan>[];
 
   for (final s in attached) {
-    if (liveUris.contains(s.uri)) continue; // still alive, nothing to do
+    if (liveUris.contains(s.uri)) continue;
     final identity = appSessionIdentity(s.appName);
     if (identity == null) continue;
 
@@ -56,7 +56,7 @@ List<MigrationPlan> planMigrations({
             appSessionIdentity(e.value) == identity)
           e.key,
     ];
-    if (candidates.length != 1) continue; // 0 = not back yet, >1 = ambiguous
+    if (candidates.length != 1) continue;
 
     claimed.add(candidates.first);
     plans.add(MigrationPlan(
@@ -119,7 +119,7 @@ class SessionMigrator {
   }
 
   Future<void> _tick() async {
-    if (_ticking) return; // reentrancy guard
+    if (_ticking) return;
     _ticking = true;
     try {
       await _runTick();
@@ -135,13 +135,13 @@ class SessionMigrator {
 
   Future<void> _runTick() async {
     final registry = SessionRegistry.instance;
-    if (registry.attachedCount == 0) return; // nothing to migrate
+    if (registry.attachedCount == 0) return;
 
     final List<DtdAppListing> listings;
     try {
       listings = await DtdProbe.probeAll();
     } catch (_) {
-      return; // discovery read failed; existing attachments keep capturing
+      return;
     }
 
     final liveByUri = <String, String>{};
@@ -158,8 +158,6 @@ class SessionMigrator {
     ];
 
     for (final plan in planMigrations(attached: attached, liveByUri: liveByUri)) {
-      // Re-check against live registry state (a tick is async; the world may
-      // have shifted since planMigrations ran on the snapshot).
       if (registry.attachedByUri(plan.priorUri) == null) continue;
       if (registry.attachedByUri(plan.newUri) != null) continue;
       try {
@@ -180,9 +178,6 @@ class SessionMigrator {
             'hot restart: ${plan.priorUri} -> ${plan.newUri}.',
           );
         } else {
-          // Defensive: a fresh session was created instead of reusing the id
-          // (e.g. the new URI's app name could not be resolved for identity
-          // matching). Surface it rather than claim a migration.
           io.stderr.writeln(
             'flutter_network_mcp: WARNING reattach to ${plan.newUri} did not '
             'reuse session ${plan.priorSessionId} (got session '

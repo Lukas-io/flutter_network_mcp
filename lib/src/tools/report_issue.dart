@@ -5,6 +5,7 @@ import 'dart:io' as io;
 import 'package:dart_mcp/server.dart';
 
 import '../telemetry/path_redactor.dart';
+import 'error_kind.dart';
 import 'result.dart';
 
 const String _kRepo = 'Lukas-io/flutter_network_mcp';
@@ -51,36 +52,29 @@ FutureOr<CallToolResult> reportIssue(CallToolRequest request) async {
   if (type == null || (type != 'bug' && type != 'ux')) {
     return errorResult(
       'report_issue: `type` must be "bug" or "ux", got "$type".',
+      kind: ErrorKind.badArgument,
       extra: const {
         'nextSteps': ['Retry with type:"bug" or type:"ux"'],
       },
     );
   }
   if (titleRaw == null || titleRaw.isEmpty) {
-    return errorResult('report_issue: `title` is required.');
+    return errorResult('report_issue: `title` is required.', kind: ErrorKind.badArgument);
   }
   if (bodyRaw == null || bodyRaw.isEmpty) {
-    return errorResult('report_issue: `body` is required.');
+    return errorResult('report_issue: `body` is required.', kind: ErrorKind.badArgument);
   }
 
   final title = redactPath(titleRaw);
   final body = redactPath(bodyRaw);
   final labels = _labelsForType(type);
 
-  // gh CLI path. Only attempt when auto=true (default).
   if (auto && _isGhInstalled()) {
     try {
-      // Best-effort labels (#42): gh issue create fails the WHOLE command if
-      // any --label doesn't exist in the repo. A tool-injected label (e.g.
-      // `agent-filed`) must never block an otherwise-valid filing, so keep
-      // only labels the repo actually has. If the lookup fails, the desired
-      // labels pass through and the retry-without-labels safety net below
-      // covers a label rejection.
       final existing = await _existingLabels();
       var applied = selectApplicableLabels(labels, existing);
 
       var result = await _ghIssueCreate(title, body, applied);
-      // Safety net: a label still blocked the create — retry once with none.
       if (result.exitCode != 0 &&
           applied.isNotEmpty &&
           isMissingLabelError(result.stderr as String)) {
@@ -108,7 +102,6 @@ FutureOr<CallToolResult> reportIssue(CallToolRequest request) async {
           ],
         });
       }
-      // gh ran but errored for a non-label reason — paste-ready with stderr.
       return jsonResult({
         'filed': false,
         'method': 'paste-ready',
@@ -129,7 +122,6 @@ FutureOr<CallToolResult> reportIssue(CallToolRequest request) async {
         ],
       });
     } on io.ProcessException catch (e) {
-      // gh disappeared between the install check and now — fall through.
       io.stderr.writeln(
         'report_issue: gh CLI invocation failed (${e.message}); falling '
         'back to paste-ready URL.',
@@ -137,7 +129,6 @@ FutureOr<CallToolResult> reportIssue(CallToolRequest request) async {
     }
   }
 
-  // Paste-ready fallback. Always available — works on any machine.
   return jsonResult({
     'filed': false,
     'method': 'paste-ready',

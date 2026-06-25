@@ -5,6 +5,7 @@ import 'package:dart_mcp/server.dart';
 import '../config/capabilities.dart';
 import '../storage/captures_db.dart';
 import '../util/scope.dart';
+import 'error_kind.dart';
 import 'result.dart';
 
 final alertsDrainTool = Tool(
@@ -58,7 +59,7 @@ FutureOr<CallToolResult> alertsDrain(CallToolRequest request) async {
       caps: caps,
     ));
   } catch (e) {
-    return errorResult('alerts_drain failed: $e', extra: {
+    return errorResult('alerts_drain failed: $e', kind: ErrorKind.internal, extra: {
       'sessionId': sessionId,
       'nextSteps': const [
         'network_status — confirm DB is open',
@@ -70,14 +71,13 @@ FutureOr<CallToolResult> alertsDrain(CallToolRequest request) async {
 
 /// Shared builder for drain + peek responses so the shape stays consistent.
 Map<String, Object?> buildAlertsResponse({
-  required String action, // 'drain' | 'peek'
+  required String action,
   required Scope scope,
   required String? severityMin,
   required List<Map<String, Object?>> rows,
   required CapabilityConfig caps,
 }) {
   final sessionId = scope.sessionId;
-  // Per-severity counts.
   int crit = 0, err = 0, warn = 0, info = 0;
   for (final r in rows) {
     switch ((r['severity'] as String?) ?? '') {
@@ -142,17 +142,6 @@ Map<String, Object?> buildAlertsResponse({
     nextSteps.add('alerts_config — tune thresholds if these are noisy');
   }
 
-  // Per-row null omission. 0.6.3 added the dedup fields (occurrenceCount,
-  // firstSeenMs, lastSeenMs, lastSourceId, signature). firstSeenMs is an
-  // alias of tsMs exposed for clarity — agents working with the count
-  // shouldn't have to know tsMs HAPPENS to be first-seen. Legacy rows
-  // (pre-v5 migration) have NULL signature / last_seen_ms / last_source_id;
-  // we synthesize sensible defaults so the response shape is consistent.
-  //
-  // 0.7.2: when a row has a signature, look up prior occurrences in OTHER
-  // sessions — institutional memory across debugging conversations. If the
-  // user wrote a session_note on the past occurrence, the agent now has
-  // "you saw this before, here's what you noted" context for free.
   final dao = CapturesDao();
   final alerts = [
     for (final r in rows)

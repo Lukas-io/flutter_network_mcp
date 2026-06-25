@@ -56,7 +56,6 @@ class Scope {
 (Scope?, CallToolResult?) resolveScope(Map<String, Object?> args) {
   final reg = SessionRegistry.instance;
 
-  // Priority 1: explicit sessionId.
   final sessionIdArg = args['sessionId'] as int?;
   if (sessionIdArg != null) {
     final attached = reg.attachedById(sessionIdArg);
@@ -70,15 +69,12 @@ class Scope {
         null,
       );
     }
-    // Historical session id — trust the caller; tools' DB queries will
-    // return their own not-found errors if the row doesn't exist.
     return (
       Scope(sessionId: sessionIdArg, appName: null, isLive: false),
       null,
     );
   }
 
-  // Priority 2: explicit appNameContains.
   final appNameContains = args['appNameContains'] as String?;
   if (appNameContains != null && appNameContains.isNotEmpty) {
     final matches = reg.findByAppName(appNameContains);
@@ -124,7 +120,6 @@ class Scope {
     );
   }
 
-  // Priority 3: history view set via session_open.
   final viewedId = Session.instance.viewedSessionId;
   if (viewedId != null) {
     final attached = reg.attachedById(viewedId);
@@ -138,8 +133,6 @@ class Scope {
     );
   }
 
-  // Priority 4: sole attached (the auto-resolve default for single-attach
-  // workflows — the common case).
   final sole = reg.soleAttached;
   if (sole != null) {
     return (
@@ -148,7 +141,6 @@ class Scope {
     );
   }
 
-  // Nothing to route to.
   if (reg.attachedCount == 0) {
     return (
       null,
@@ -167,7 +159,6 @@ class Scope {
     );
   }
 
-  // 2+ attached and no scope hint — the multi-attach ambiguity case.
   return (
     null,
     errorResult(

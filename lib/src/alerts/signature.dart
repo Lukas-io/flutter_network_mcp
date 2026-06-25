@@ -46,16 +46,13 @@ String computeAlertSignature({
 String normalizeAlertTitle(String input) {
   var s = input.toLowerCase();
 
-  // Path redaction first so we don't accidentally hash unique homedirs.
   s = s.replaceAll(_posixHomeRegex, '<home>/');
   s = s.replaceAll(_windowsHomeRegex, r'<home>\');
   s = s.replaceAll(_studioProjectsRegex, '<project>/');
 
-  // Digits before hex so something like "abc123" gets `abcN` not `H`.
   s = s.replaceAll(_digitsRegex, 'N');
   s = s.replaceAll(_hexRegex, 'H');
 
-  // Collapse whitespace.
   s = s.replaceAll(_wsRegex, ' ').trim();
 
   return s;

@@ -6,6 +6,7 @@ import '../config/capabilities.dart';
 import '../state/session.dart';
 import '../storage/captures_db.dart';
 import '../util/filters.dart';
+import 'error_kind.dart';
 import 'result.dart';
 
 final sessionListTool = Tool(
@@ -84,9 +85,6 @@ FutureOr<CallToolResult> sessionList(CallToolRequest request) async {
       warnings.add('Large session count — consider db_stats / bodies_purge / session_delete to manage DB growth.');
     }
 
-    // Guard against the projectPath-is-not-identity trap (#27): when several
-    // distinct apps share fewer directories, projectPath looks authoritative
-    // but is not. Name the apps and point at the reliable filter.
     final distinctApps = {
       for (final s in sessions)
         if (s['appName'] != null) s['appName'] as String,
@@ -137,7 +135,7 @@ FutureOr<CallToolResult> sessionList(CallToolRequest request) async {
       'sessions': sessions,
     });
   } catch (e) {
-    return errorResult('session_list failed: $e', extra: const {
+    return errorResult('session_list failed: $e', kind: ErrorKind.internal, extra: const {
       'nextSteps': [
         'network_status — confirm DB is open',
         'db_stats — check DB health',

@@ -4,6 +4,7 @@ import 'package:dart_mcp/server.dart';
 
 import '../state/session.dart';
 import '../storage/captures_db.dart';
+import 'error_kind.dart';
 import 'result.dart';
 
 final ignoredHostsTool = Tool(
@@ -56,14 +57,13 @@ FutureOr<CallToolResult> ignoredHosts(CallToolRequest request) async {
         });
       case 'add':
         if (host == null || host.isEmpty) {
-          return errorResult('`host` is required for action=add.', extra: const {
+          return errorResult('`host` is required for action=add.', kind: ErrorKind.badArgument, extra: const {
             'nextSteps': ['Retry with host:"<exact hostname, no scheme/port>"'],
           });
         }
         final isNew = dao.addIgnoredHost(host, reason: reason);
         Session.instance.captureWriter.refreshIgnoredHosts();
 
-        // Quick check: how many already-captured rows reference this host?
         int existingCount = 0;
         try {
           final rows = dao.rawSelect(
@@ -93,7 +93,7 @@ FutureOr<CallToolResult> ignoredHosts(CallToolRequest request) async {
         });
       case 'remove':
         if (host == null || host.isEmpty) {
-          return errorResult('`host` is required for action=remove.', extra: const {
+          return errorResult('`host` is required for action=remove.', kind: ErrorKind.badArgument, extra: const {
             'nextSteps': ['ignored_hosts action:"list" — find the host to remove'],
           });
         }
@@ -111,12 +111,12 @@ FutureOr<CallToolResult> ignoredHosts(CallToolRequest request) async {
           ],
         });
       default:
-        return errorResult('`action` must be list, add, or remove.', extra: const {
+        return errorResult('`action` must be list, add, or remove.', kind: ErrorKind.badArgument, extra: const {
           'nextSteps': ['Retry with action:"list" to inspect current entries'],
         });
     }
   } catch (e) {
-    return errorResult('ignored_hosts failed: $e', extra: const {
+    return errorResult('ignored_hosts failed: $e', kind: ErrorKind.internal, extra: const {
       'nextSteps': ['ignored_hosts action:"list" — confirm current state'],
     });
   }

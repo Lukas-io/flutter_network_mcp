@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:dart_mcp/server.dart';
 
 import '../storage/captures_db.dart';
+import 'error_kind.dart';
 import 'result.dart';
 
 final bodiesPurgeTool = Tool(
@@ -33,6 +34,7 @@ FutureOr<CallToolResult> bodiesPurge(CallToolRequest request) async {
   if (sessionId == null && olderThanMs == null) {
     return errorResult(
       'Pass at least one of `sessionId` or `olderThanMs` — refusing to purge every body in the DB.',
+      kind: ErrorKind.badArgument,
       extra: const {
         'nextSteps': [
           'session_list — find sessionId(s) worth purging',
@@ -87,7 +89,7 @@ FutureOr<CallToolResult> bodiesPurge(CallToolRequest request) async {
       ],
     });
   } catch (e) {
-    return errorResult('bodies_purge failed: $e', extra: {
+    return errorResult('bodies_purge failed: $e', kind: ErrorKind.internal, extra: {
       'sessionId': sessionId,
       'olderThanMs': olderThanMs,
       'nextSteps': const [

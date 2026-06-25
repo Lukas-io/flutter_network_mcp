@@ -32,28 +32,21 @@ class UpdateCheck {
     required String dataDir,
   }) async {
     try {
-      // Opt-out: env var skips the whole probe.
       final env = io.Platform.environment;
       if (env['FLUTTER_NETWORK_MCP_NO_UPDATE_CHECK']?.toLowerCase() == 'true') {
         return;
       }
 
-      // Daily cache: skip if we already checked today.
       final cacheFile = io.File(p.join(dataDir, '.update-check'));
       if (_alreadyCheckedToday(cacheFile)) return;
 
       final upstream = await _fetchUpstreamVersion();
       if (upstream == null) return;
 
-      // Touch the cache even when versions match — we DID check today,
-      // no point retrying until tomorrow.
       _touchCache(cacheFile);
 
       final isNewer = _isNewer(upstream, currentVersion);
 
-      // Write the agent-readable status file alongside the cache.
-      // network_status reads this and surfaces `mcp.updateAvailable` so
-      // the agent doesn't have to scrape stderr for the nudge.
       _writeStatusFile(
         dataDir: dataDir,
         currentVersion: currentVersion,
@@ -69,8 +62,6 @@ class UpdateCheck {
         );
       }
     } catch (_) {
-      // Best-effort: network errors, parse errors, filesystem failures
-      // all stay silent. Version check should never disturb the MCP.
     }
   }
 
@@ -163,7 +154,6 @@ class UpdateCheck {
       final trimmed = line.trim();
       if (!trimmed.startsWith('version:')) continue;
       final value = trimmed.substring('version:'.length).trim();
-      // Strip any quotes the user might add.
       final cleaned = value.replaceAll(RegExp('["\']'), '');
       if (_parseTriple(cleaned) != null) return cleaned;
       return null;
