@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.9.2] — 2026-06-25
+
+### Added — network_diff_session ("what changed between two runs")
+
+New tool: diffs the current session against a baseline session by endpoint (method + host + pathTemplate, ids collapsed). Returns `newEndpoints` (appeared today), `goneEndpoints` (disappeared), and `changed` (a material error-rate shift >= 0.1 or a p95 latency regression of 2x either way, with now/baseline/delta). Answers "what is different about today's run" in one call instead of eyeballing two network_summarize outputs. Reuses the network_summarize per-endpoint aggregator; diff logic is a pure, tested function. 253 tests green.
+
 ## [0.9.1] — 2026-06-25
 
 ### Added — token-budget-aware responses
