@@ -29,6 +29,11 @@ class SessionFilters {
   int? statusMin;
   int? statusMax;
 
+  /// Sticky per-response token budget. When set, high-volume reads
+  /// (network_list, logs_tail) trim their result arrays to fit, newest-first,
+  /// and report `budget.dropped`. A per-call `maxTokens` arg overrides it.
+  int? maxResponseTokens;
+
   bool get isEmpty =>
       levelMin == null &&
       loggerContains == null &&
@@ -37,7 +42,8 @@ class SessionFilters {
       (method == null || method!.isEmpty) &&
       hostContains == null &&
       statusMin == null &&
-      statusMax == null;
+      statusMax == null &&
+      maxResponseTokens == null;
 
   void clear() {
     levelMin = null;
@@ -48,6 +54,7 @@ class SessionFilters {
     hostContains = null;
     statusMin = null;
     statusMax = null;
+    maxResponseTokens = null;
   }
 
   /// The active defaults, omitting unset fields. Used by `session_configure`
@@ -62,5 +69,6 @@ class SessionFilters {
         if (hostContains != null) 'hostContains': hostContains,
         if (statusMin != null) 'statusMin': statusMin,
         if (statusMax != null) 'statusMax': statusMax,
+        if (maxResponseTokens != null) 'maxResponseTokens': maxResponseTokens,
       };
 }
