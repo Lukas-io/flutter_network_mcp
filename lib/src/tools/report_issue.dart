@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io' as io;
 
 import 'package:dart_mcp/server.dart';
@@ -69,34 +70,45 @@ FutureOr<CallToolResult> reportIssue(CallToolRequest request) async {
   // gh CLI path. Only attempt when auto=true (default).
   if (auto && _isGhInstalled()) {
     try {
-      final result = await io.Process.run('gh', [
-        'issue',
-        'create',
-        '--repo',
-        _kRepo,
-        '--title',
-        title,
-        '--body',
-        body,
-        '--label',
-        labels.join(','),
-      ]);
+      // Best-effort labels (#42): gh issue create fails the WHOLE command if
+      // any --label doesn't exist in the repo. A tool-injected label (e.g.
+      // `agent-filed`) must never block an otherwise-valid filing, so keep
+      // only labels the repo actually has. If the lookup fails, the desired
+      // labels pass through and the retry-without-labels safety net below
+      // covers a label rejection.
+      final existing = await _existingLabels();
+      var applied = selectApplicableLabels(labels, existing);
+
+      var result = await _ghIssueCreate(title, body, applied);
+      // Safety net: a label still blocked the create — retry once with none.
+      if (result.exitCode != 0 &&
+          applied.isNotEmpty &&
+          isMissingLabelError(result.stderr as String)) {
+        applied = const [];
+        result = await _ghIssueCreate(title, body, applied);
+      }
+
       if (result.exitCode == 0) {
         final url = (result.stdout as String).trim();
+        final dropped = labels.where((l) => !applied.contains(l)).toList();
         return jsonResult({
           'filed': true,
           'method': 'gh-cli',
           'type': type,
-          'labels': labels,
+          'labels': applied,
+          if (dropped.isNotEmpty) 'droppedLabels': dropped,
           'title': title,
           'url': url,
           'nextSteps': [
             'Mention the URL to the user: $url',
+            if (dropped.isNotEmpty)
+              'Skipped label(s) not present in the repo so they could not '
+                  'block filing: ${dropped.join(", ")}',
             'Optionally save a session_note linking to the issue for future continuity',
           ],
         });
       }
-      // gh ran but errored — fall through to paste-ready with stderr included.
+      // gh ran but errored for a non-label reason — paste-ready with stderr.
       return jsonResult({
         'filed': false,
         'method': 'paste-ready',
@@ -167,6 +179,77 @@ bool _isGhInstalled() {
   } catch (_) {
     return false;
   }
+}
+
+/// Runs `gh issue create` against [_kRepo]. The `--label` flag is omitted
+/// entirely when [labels] is empty (passing an empty `--label` is itself an
+/// error), so callers can request "no labels" cleanly.
+Future<io.ProcessResult> _ghIssueCreate(
+  String title,
+  String body,
+  List<String> labels,
+) {
+  return io.Process.run('gh', [
+    'issue',
+    'create',
+    '--repo',
+    _kRepo,
+    '--title',
+    title,
+    '--body',
+    body,
+    if (labels.isNotEmpty) ...['--label', labels.join(',')],
+  ]);
+}
+
+/// Best-effort fetch of the repo's existing label names via
+/// `gh label list --json name`. Returns null when the lookup fails (gh
+/// error, offline, bad JSON) so the caller falls back to its
+/// retry-without-labels safety net instead of guessing the label set.
+Future<Set<String>?> _existingLabels() async {
+  try {
+    final r = await io.Process.run('gh', [
+      'label',
+      'list',
+      '--repo',
+      _kRepo,
+      '--json',
+      'name',
+      '-L',
+      '200',
+    ]);
+    if (r.exitCode != 0) return null;
+    final decoded = jsonDecode(r.stdout as String);
+    if (decoded is! List) return null;
+    return decoded
+        .whereType<Map<String, dynamic>>()
+        .map((m) => m['name']?.toString())
+        .whereType<String>()
+        .toSet();
+  } catch (_) {
+    return null;
+  }
+}
+
+/// Keeps only [desired] labels that exist in the repo. When [existing] is
+/// null (the label lookup failed) the desired labels pass through unchanged,
+/// leaving the create's retry-without-labels path as the safety net. A label
+/// the tool injects must never block a valid filing. Public for testing.
+List<String> selectApplicableLabels(
+  List<String> desired,
+  Set<String>? existing,
+) {
+  if (existing == null) return desired;
+  return desired.where(existing.contains).toList();
+}
+
+/// True when a `gh issue create` stderr indicates a label could not be
+/// attached because it does not exist (so a retry without labels is worth
+/// trying). Public for testing.
+bool isMissingLabelError(String stderr) {
+  final s = stderr.toLowerCase();
+  return s.contains('not found') &&
+      (s.contains('label') || s.contains('could not add'));
 }
 
 /// Builds the GitHub "new issue" deep link with `title=`, `body=`, and
