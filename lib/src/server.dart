@@ -36,6 +36,7 @@ import 'tools/network_search.dart';
 import 'tools/network_status.dart';
 import 'tools/network_diff_session.dart';
 import 'tools/network_drift.dart';
+import 'tools/network_report.dart';
 import 'tools/network_summarize.dart';
 import 'tools/report_issue.dart';
 import 'tools/redacted_headers.dart';
@@ -98,6 +99,7 @@ base class FlutterNetworkMcpServer extends MCPServer with ToolsSupport {
       _register(networkSummarizeTool, networkSummarize);
       _register(networkDiffSessionTool, networkDiffSession);
       _register(networkDriftTool, networkDrift);
+      _register(networkReportTool, networkReport);
     }
 
     if (caps.isEnabled(Category.sockets)) {

@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.9.5] — 2026-06-25
+
+### Added — network_report (one-call session health triage)
+
+Capstone of the 0.9.x line. New tool: in one call, returns the worst error endpoints (ranked by error-rate x volume), the slowest endpoints (p95), pending alert count, and a **recommended next action** tailored to what is actually wrong, e.g. "Top problem: POST /login is failing 100% of 5 calls" -> network_search + network_drift it. Insight, not raw rows: the orientation call to run after network_status. Synthesizes the per-endpoint aggregator, the alert pipeline, and points at the 0.9.x tools (network_drift, alerts_drain). 264 tests green.
+
 ## [0.9.4] — 2026-06-25
 
 ### Added — network_replay_as_test (captured request -> runnable Dart test)
