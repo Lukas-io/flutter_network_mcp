@@ -462,6 +462,7 @@ List<String> _nextStepsFor({
   if (caps.isEnabled(Category.http)) {
     if (respTrunc) {
       final total = responseBody!['totalSize'];
+      steps.add('network_body_outline id:"$id" — structure of the full body (keys/types/sizes, no values) so you drill the right branch');
       steps.add('network_body id:"$id" which:response offset:4096 length:16384 — page beyond the cap (totalSize $total)');
     } else if (reqTrunc) {
       final total = requestBody!['totalSize'];
