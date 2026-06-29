@@ -7,6 +7,7 @@ import '../config/capabilities.dart';
 import '../state/session.dart';
 import '../storage/captures_db.dart';
 import '../util/body_decoder.dart';
+import '../util/body_status.dart';
 import '../util/scope.dart';
 import 'error_kind.dart';
 import 'result.dart';
@@ -191,21 +192,36 @@ FutureOr<CallToolResult> networkBody(CallToolRequest request) async {
     }
 
     if (bytes == null || bytes.isEmpty) {
+      final statusRow = CapturesDao().getHttpRequest(scope.sessionId, id);
+      final status = statusRow == null
+          ? <String, Object?>{
+              'bodyStatus': 'unavailable',
+              'reason': 'request-not-in-db',
+            }
+          : bodyStatusFor(row: statusRow, which: which, hasBytes: false);
+      final bodyStatus = status['bodyStatus'];
       final warnings = <String>[];
-      if (source == 'history') {
+      if (bodyStatus == 'pending') {
         warnings.add(
-          '$which body not persisted yet — the writer may still be backfilling. Retry in 2s, or fetch in live mode.',
+          '$which body not captured yet — the writer backfills async. Retry '
+          'in ~2s, or fetch in live mode.',
+        );
+      } else if (bodyStatus == 'unavailable') {
+        warnings.add(
+          'The $which body was lost before capture (the VM evicted it before '
+          'the async backfill); this is NOT "the server sent nothing".',
         );
       }
       return jsonResult({
         'source': source,
         'scope': scope.toBlock(),
         'sessionId': sessionIdForResp,
-        'summary': 'No $which body for $id.',
+        'summary': 'No $which body bytes for $id (bodyStatus: $bodyStatus).',
         'id': id,
         'which': which,
         if (mimeType != null) 'mimeType': mimeType,
         'totalSize': 0,
+        ...status,
         if (warnings.isNotEmpty) 'warnings': warnings,
         'nextSteps': const [
           'network_get id:<id> — confirm the request exists and check headers',
@@ -254,6 +270,7 @@ FutureOr<CallToolResult> networkBody(CallToolRequest request) async {
       'summary': summary,
       'id': id,
       'which': which,
+      'bodyStatus': 'stored',
       if (mimeType != null) 'mimeType': mimeType,
       'totalSize': total,
       'offset': start,

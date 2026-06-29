@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.9.7] — 2026-06-29
+
+### Fixed — network_get / network_body distinguish a lost body from an empty one (#59)
+
+A response with no body bytes was indistinguishable from one whose body the VM profiler evicted before the async backfill could store it: both just showed no `body`. An agent reading "no body" could not tell "the server genuinely sent nothing" from "we failed to capture it", and would draw the wrong conclusion. Every body now carries an explicit `bodyStatus`: `stored` (bytes present), `empty` (server sent nothing, `request_size`/`response_size` == 0 or the backfill ran and stored nothing), `pending` (backfill has not run yet — retry in ~2s), or `unavailable` (lost upstream after N `fetchAttempts`, with a `reason`). The no-body `network_body` return adds a matching warning so the agent stops retrying a body that is gone for good. Wired into both the live VM path and the history/DB path. 271 tests green; verified live (a 200 JSON body reads `stored`, a 204 reads `empty`).
+
 ## [0.9.6] — 2026-06-25
 
 ### Fixed — network_drift covers the whole timeline (not just recent N)
