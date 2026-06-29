@@ -4,11 +4,9 @@ import 'dart:typed_data';
 import 'package:dart_mcp/server.dart';
 
 import '../config/capabilities.dart';
-import '../state/session.dart';
-import '../storage/captures_db.dart';
 import '../util/body_decoder.dart';
-import '../util/body_status.dart';
 import '../util/scope.dart';
+import 'body_fetch.dart';
 import 'error_kind.dart';
 import 'result.dart';
 
@@ -100,133 +98,18 @@ FutureOr<CallToolResult> networkBody(CallToolRequest request) async {
         });
   }
 
-  Uint8List? bytes;
-  String? mimeType;
-  String source;
   final int sessionIdForResp = scope.sessionId;
 
   try {
-    if (!scope.isLive) {
-      final sid = scope.sessionId;
-      source = 'history';
-      final dao = CapturesDao();
-      bytes = dao.getBody(sid, id, which);
-      final row = dao.getHttpRequest(sid, id);
-      if (row != null) mimeType = row['content_type'] as String?;
-      if (row == null) {
-        return errorResult('Request `$id` not found in session $sid.',
-            kind: ErrorKind.notFound,
-            extra: {
-              'sessionId': sid,
-              'nextSteps': const [
-                'network_list — list valid request ids in this session',
-                'session_list — confirm the session id is correct',
-              ],
-            });
-      }
-    } else {
-      source = 'live';
-      final attached = SessionRegistry.instance.attachedById(scope.sessionId)!;
-      final isolateFilter = args['isolateId'] as String?;
-      String? resolvedIsolateId = isolateFilter;
-      if (resolvedIsolateId == null) {
-        final dbRow = CapturesDao().getHttpRequest(scope.sessionId, id);
-        resolvedIsolateId = dbRow?['isolate_id'] as String?;
-      }
-      final candidateIsolates = resolvedIsolateId != null
-          ? [resolvedIsolateId]
-          : [for (final iso in attached.vm.httpProfilingIsolates) iso.id];
-      if (candidateIsolates.isEmpty) {
-        return errorResult(
-          'No HTTP-profiling isolates known for this session.',
-          kind: ErrorKind.unresponsiveVm,
-          extra: const {
-            'nextSteps': [
-              'network_status — verify the session\'s isolates list',
-              'network_attach — re-attach to refresh isolate discovery',
-            ],
-          },
-        );
-      }
-      Object? lastError;
-      bool fetched = false;
-      for (final isoId in candidateIsolates) {
-        try {
-          final r = await attached.vm.getHttpProfileRequestForIsolate(isoId, id);
-          if (which == 'request') {
-            bytes = r.requestBody;
-            mimeType = firstHeader(r.request?.headers, 'content-type');
-          } else {
-            bytes = r.responseBody;
-            mimeType = firstHeader(r.response?.headers, 'content-type');
-          }
-          fetched = true;
-          break;
-        } catch (e) {
-          lastError = e;
-        }
-      }
-      if (!fetched) {
-        final dbBytes = CapturesDao().getBody(scope.sessionId, id, which);
-        if (dbBytes != null && dbBytes.isNotEmpty) {
-          bytes = dbBytes;
-          final dbRow = CapturesDao().getHttpRequest(scope.sessionId, id);
-          mimeType = dbRow?['content_type'] as String?;
-          source = 'live-db-fallback';
-        } else {
-          return errorResult(
-            'body fetch failed: ${lastError ?? "no isolate had id $id"}',
-            kind: ErrorKind.unresponsiveVm,
-            extra: {
-              'id': id,
-              'triedIsolates': candidateIsolates,
-              'nextSteps': const [
-                'network_query sql:"SELECT which,size FROM http_bodies WHERE vm_id=\'<id>\'" — check whether the body is persisted',
-                'network_get id:<id> — confirm the request still exists',
-                'network_status — check whether the VM service is responsive (the app may be paused at a breakpoint)',
-              ],
-            },
-          );
-        }
-      }
-    }
+    final fetch = await fetchBodyBytes(scope, id, which,
+        isolateId: args['isolateId'] as String?);
+    if (fetch.error != null) return fetch.error!;
+    final bytes = fetch.bytes;
+    final mimeType = fetch.mimeType;
+    final source = fetch.source;
 
     if (bytes == null || bytes.isEmpty) {
-      final statusRow = CapturesDao().getHttpRequest(scope.sessionId, id);
-      final status = statusRow == null
-          ? <String, Object?>{
-              'bodyStatus': 'unavailable',
-              'reason': 'request-not-in-db',
-            }
-          : bodyStatusFor(row: statusRow, which: which, hasBytes: false);
-      final bodyStatus = status['bodyStatus'];
-      final warnings = <String>[];
-      if (bodyStatus == 'pending') {
-        warnings.add(
-          '$which body not captured yet — the writer backfills async. Retry '
-          'in ~2s, or fetch in live mode.',
-        );
-      } else if (bodyStatus == 'unavailable') {
-        warnings.add(
-          'The $which body was lost before capture (the VM evicted it before '
-          'the async backfill); this is NOT "the server sent nothing".',
-        );
-      }
-      return jsonResult({
-        'source': source,
-        'scope': scope.toBlock(),
-        'sessionId': sessionIdForResp,
-        'summary': 'No $which body bytes for $id (bodyStatus: $bodyStatus).',
-        'id': id,
-        'which': which,
-        if (mimeType != null) 'mimeType': mimeType,
-        'totalSize': 0,
-        ...status,
-        if (warnings.isNotEmpty) 'warnings': warnings,
-        'nextSteps': const [
-          'network_get id:<id> — confirm the request exists and check headers',
-        ],
-      }, scopeSessionId: scope.sessionId);
+      return noBodyResult(scope, id, which, source, mimeType);
     }
 
     final total = bytes.length;
