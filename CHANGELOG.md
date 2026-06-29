@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.9.10] — 2026-06-29
+
+### Added — network_body_query: search/extract WITHIN one body (#61)
+
+New tool, the drill half of the recon -> drill ladder. `network_search` finds the request (cross-request BM25); once you're on a 1-2 MB body, `network_body_query` reaches inside it and returns only the matching slice(s) — no 64-call byte-paging, no pulling the whole thing into context. Two modes:
+
+- `grep:"<regex>"` — Dart RegExp over the decoded text, returning up to `maxMatches` matches with char `offset` + a `context` window (works on any body; refused over 16 MB).
+- `jsonPath:"$.data[*].symbol"` — a deliberately small path extractor: dotted keys, array index, bracket key, and the `[*]` wildcard (a field across every array element / map value, with wildcards resolved to concrete paths). No filter predicates — use `grep` for value matching. A matched node over ~2 KB comes back as `{path, valueBytes, outline}` (reusing `jsonSkeleton`) so the result stays bounded.
+
+Reuses the shared `fetchBodyBytes` (live VM + history) from #60. `network_body_outline` now points at it from its `nextSteps`. New `json_path.dart` extractor. 292 tests green; verified live (`$.data[*].id` over a 1000-element array -> 1000 matches capped to 20 with `truncated:true`; index/key/scalar paths resolve; grep returns offsets on both JSON and text; malformed path + missing mode -> `bad_argument`).
+
 ## [0.9.9] — 2026-06-29
 
 ### Added — network_body_outline: structural skeleton of a large body (#60)

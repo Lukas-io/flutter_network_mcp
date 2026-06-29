@@ -156,6 +156,8 @@ FutureOr<CallToolResult> networkBodyOutline(CallToolRequest request) async {
       'outlineAvailable': true,
       'outline': outline,
       'nextSteps': [
+        'network_body_query id:"$id" which:$which jsonPath:"\$.<branch>" — extract just the node you need',
+        'network_body_query id:"$id" which:$which grep:"<regex>" — text-search the body',
         'network_body id:"$id" which:$which offset:0 length:16384 — fetch the actual bytes of a branch',
       ],
     }, scopeSessionId: scope.sessionId);
