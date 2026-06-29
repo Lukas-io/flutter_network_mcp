@@ -223,7 +223,7 @@ CallToolResult _buildLiveResponse({
           if (r.request!.hasError) 'error': r.request!.error,
           if (!r.request!.hasError) ...{
             'headers': truncateHeaders(r.request!.headers, maxValueBytes: headerTruncateBytes),
-            if (r.request!.contentLength != null) 'contentLength': r.request!.contentLength,
+            ...sizeFields(r.request!.contentLength),
             if ((r.request!.cookies ?? []).isNotEmpty) 'cookies': r.request!.cookies,
             ...liveBodyStatus('request', r.requestBody, r.request!.contentLength),
           },
@@ -237,7 +237,7 @@ CallToolResult _buildLiveResponse({
             if (r.response!.statusCode != null) 'statusCode': r.response!.statusCode,
             if (r.response!.reasonPhrase != null) 'reasonPhrase': r.response!.reasonPhrase,
             'headers': truncateHeaders(r.response!.headers, maxValueBytes: headerTruncateBytes),
-            if (r.response!.contentLength != null) 'contentLength': r.response!.contentLength,
+            ...sizeFields(r.response!.contentLength),
             if (r.response!.compressionState != null) 'compressionState': r.response!.compressionState,
             ...liveBodyStatus('response', r.responseBody, r.response!.contentLength),
           },
@@ -335,7 +335,7 @@ FutureOr<CallToolResult> _historyGet({
     final requestData = {
       if (reqHeaders != null)
         'headers': truncateHeaders(reqHeaders, maxValueBytes: headerTruncateBytes),
-      if (row['request_size'] != null) 'contentLength': row['request_size'],
+      ...sizeFields(row['request_size'] as int?),
       ...bodyStatusFor(
           row: row, which: 'request', hasBytes: reqBlob != null && reqBlob.isNotEmpty),
       if (reqBody != null) 'body': reqBody,
@@ -345,7 +345,7 @@ FutureOr<CallToolResult> _historyGet({
       if (row['reason_phrase'] != null) 'reasonPhrase': row['reason_phrase'],
       if (respHeaders != null)
         'headers': truncateHeaders(respHeaders, maxValueBytes: headerTruncateBytes),
-      if (row['response_size'] != null) 'contentLength': row['response_size'],
+      ...sizeFields(row['response_size'] as int?),
       ...bodyStatusFor(
           row: row, which: 'response', hasBytes: respBlob != null && respBlob.isNotEmpty),
       if (respBody != null) 'body': respBody,

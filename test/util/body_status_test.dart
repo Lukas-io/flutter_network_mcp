@@ -40,4 +40,35 @@ void main() {
     expect(s['fetchAttempts'], 3);
     expect(s['reason'], contains('evicted'));
   });
+
+  group('sizeFields (#62: -1 chunked vs 0 empty)', () {
+    test('null size -> no fields', () {
+      expect(sizeFields(null), isEmpty);
+    });
+
+    test('size 0 -> contentLength 0 (genuinely empty, not hidden)', () {
+      expect(sizeFields(0), {'contentLength': 0});
+    });
+
+    test('positive size -> contentLength', () {
+      expect(sizeFields(4521), {'contentLength': 4521});
+    });
+
+    test('-1 -> sizeKnown:false, never a negative contentLength', () {
+      final f = sizeFields(-1);
+      expect(f, {'sizeKnown': false});
+      expect(f.containsKey('contentLength'), isFalse);
+    });
+
+    test('custom keys keep request/response distinct in a flat map', () {
+      expect(
+        sizeFields(-1, key: 'responseContentLength', unknownKey: 'responseSizeKnown'),
+        {'responseSizeKnown': false},
+      );
+      expect(
+        sizeFields(7, key: 'requestContentLength', unknownKey: 'requestSizeKnown'),
+        {'requestContentLength': 7},
+      );
+    });
+  });
 }

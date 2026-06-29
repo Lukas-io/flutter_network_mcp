@@ -8,6 +8,7 @@ import '../config/session_filters.dart';
 import '../state/session.dart';
 import '../storage/captures_db.dart';
 import '../util/body_decoder.dart';
+import '../util/body_status.dart';
 import '../util/filters.dart';
 import '../util/scope.dart';
 import '../util/token_budget.dart';
@@ -465,9 +466,11 @@ Map<String, Object?> liveSummary(HttpProfileRequest r) {
     'isComplete': r.isRequestComplete,
     if (r.response?.statusCode != null) 'statusCode': r.response!.statusCode,
     if (r.response?.reasonPhrase != null) 'reasonPhrase': r.response!.reasonPhrase,
-    if (!reqErr && r.request?.contentLength != null)
-      'requestContentLength': r.request!.contentLength,
-    if (r.response?.contentLength != null) 'responseContentLength': r.response!.contentLength,
+    if (!reqErr)
+      ...sizeFields(r.request?.contentLength,
+          key: 'requestContentLength', unknownKey: 'requestSizeKnown'),
+    ...sizeFields(r.response?.contentLength,
+        key: 'responseContentLength', unknownKey: 'responseSizeKnown'),
     if (ct != null) 'responseContentType': ct,
     if (reqErr || respErr) 'hasError': true,
     if (reqErr || respErr) 'error': r.request?.error ?? r.response?.error,
@@ -489,8 +492,10 @@ Map<String, Object?> _historySummary(Map<String, Object?> r) {
     if (dur != null) 'durationMs': dur ~/ 1000,
     if (r['status_code'] != null) 'statusCode': r['status_code'],
     if (r['reason_phrase'] != null) 'reasonPhrase': r['reason_phrase'],
-    if (r['request_size'] != null) 'requestContentLength': r['request_size'],
-    if (r['response_size'] != null) 'responseContentLength': r['response_size'],
+    ...sizeFields(r['request_size'] as int?,
+        key: 'requestContentLength', unknownKey: 'requestSizeKnown'),
+    ...sizeFields(r['response_size'] as int?,
+        key: 'responseContentLength', unknownKey: 'responseSizeKnown'),
     if (r['content_type'] != null) 'responseContentType': r['content_type'],
     if (r['isolate_id'] != null) 'isolateId': r['isolate_id'],
     if ((r['has_error'] as int? ?? 0) != 0) 'hasError': true,

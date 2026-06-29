@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.9.8] — 2026-06-29
+
+### Fixed — size sentinels are legible: `sizeKnown:false`, never a raw `-1` (#62)
+
+`request_size` / `response_size` come straight from the VM profiler's `contentLength`, where `-1` means "size unknown ahead of the body" (chunked transfer-encoding, or no `Content-Length` header). Surfaced raw, a `contentLength: -1` reads as a bug or "no body" — e.g. an image endpoint that clearly returns bytes showed `-1`. `network_get` and `network_list` now render `-1` as `sizeKnown: false` (and `responseSizeKnown` / `requestSizeKnown` in the flat list rows) instead of a misleading negative number; a real byte count (including `0` for genuinely empty) is unchanged. Pairs with `bodyStatus` (#59) so a chunked-but-present body (`sizeKnown:false` + `bodyStatus:"stored"`) is never confused with an empty one (`contentLength:0` + `bodyStatus:"empty"`). Documented the sentinels in the `network_query` schema notes + the `network_get` / `network_list` tool docs. 276 tests green; verified live (chunked response -> `sizeKnown:false`, fixed-length -> real `contentLength`).
+
 ## [0.9.7] — 2026-06-29
 
 ### Fixed — network_get / network_body distinguish a lost body from an empty one (#59)
