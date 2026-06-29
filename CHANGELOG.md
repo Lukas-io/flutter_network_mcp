@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.9.12] — 2026-06-29
+
+### Added — rolling DB size cap: auto-evict oldest-first, never the live session (#58)
+
+`captures.db` grew unbounded — the only mitigations were manual (`bodies_purge`, `session_delete`, `db_vacuum`). It now self-manages: a default-on cap (~2 GB, `FLUTTER_NETWORK_MCP_MAX_DB_BYTES`, `0`/`off` disables) drives a low-frequency watchdog on the capture poll loop (every ~60s at the default tick, off the hot write path). When the DB exceeds the cap it evicts **oldest-first, cheap-bytes-first** down to ~90% of the cap:
+
+1. oldest body BLOBs (the dense bytes; the request metadata stays for shape/latency),
+2. then oldest `log_records`,
+3. then whole oldest sessions,
+
+and vacuums so the file actually shrinks. It **never evicts a currently-attached session** — recent/live captures are always kept. The loss is visible, never silent: `db_stats` reports `sizeCap` + `lastEviction: {bytesFreed, bodiesDropped, logsDropped, sessionsDropped, oldestRetainedMs}`, and a one-line stderr note fires per sweep. When the DB is over cap but everything left is live data, it warns once (on transition) instead of clobbering the last real eviction record.
+
+Built on the existing `purge`/`deleteSession`/`vacuum` primitives plus new oldest-first eviction queries. 302 tests green (+10: config parsing + eviction primitives + protect-live invariant); verified live (a detached 6 MB session was fully evicted while the attached session's 46 bodies were retained, holding the DB at the 1 MB test cap).
+
 ## [0.9.11] — 2026-06-29
 
 ### Changed — network_replay shows real auth by default; redaction moves to the share boundary (#57)

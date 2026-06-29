@@ -7,9 +7,11 @@ import 'package:vm_service/vm_service.dart';
 
 import '../alerts/alert_detector.dart';
 import '../config/capabilities.dart';
+import '../state/session.dart';
 import '../util/body_decoder.dart';
 import '../vm/vm_client.dart';
 import 'captures_db.dart';
+import 'db_cap.dart';
 
 /// Periodically polls the VM service and writes HTTP + socket data into the
 /// captures DB. Also drives the alert detector on each upserted request and
@@ -37,6 +39,11 @@ class CaptureWriter {
   /// means ~20s discovery lag for fresh isolates.
   static const int _rescanEveryNTicks = 10;
 
+  /// Rolling-cap watchdog cadence (issue #58). At the default 2s tick this
+  /// checks DB size every ~60s — off the hot write path. The check is cheap
+  /// (one PRAGMA) when under cap; it only evicts when over.
+  static const int _capCheckEveryNTicks = 30;
+
   VmClient? _vm;
   int? _sessionId;
   Timer? _timer;
@@ -49,6 +56,9 @@ class CaptureWriter {
 
   /// Tick counter modulo [_rescanEveryNTicks].
   int _ticksSinceRescan = 0;
+
+  /// Tick counter modulo [_capCheckEveryNTicks].
+  int _ticksSinceCapCheck = 0;
 
   Set<String> _ignoredHosts = const {};
 
@@ -106,11 +116,26 @@ class CaptureWriter {
       if (CapabilityConfig.instance.isEnabled(Category.http)) {
         await _backfillBodies(vm, sid);
       }
+      _maybeEnforceDbCap();
     } catch (e, st) {
       io.stderr.writeln('CaptureWriter tick failed: $e\n$st');
     } finally {
       _ticking = false;
     }
+  }
+
+  /// Low-frequency rolling-cap watchdog (issue #58). Runs every
+  /// [_capCheckEveryNTicks] ticks. Protects every currently-attached session
+  /// so live data is never evicted; the manager no-ops when under cap.
+  void _maybeEnforceDbCap() {
+    _ticksSinceCapCheck++;
+    if (_ticksSinceCapCheck < _capCheckEveryNTicks) return;
+    _ticksSinceCapCheck = 0;
+    if (!DbCapManager.instance.isEnabled) return;
+    final protected = SessionRegistry.instance.attached.values
+        .map((s) => s.id)
+        .toSet();
+    DbCapManager.instance.maybeSweep(protectedSessionIds: protected);
   }
 
   Future<void> _pollHttp(VmClient vm, int sid) async {

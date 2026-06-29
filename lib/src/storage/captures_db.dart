@@ -1174,6 +1174,106 @@ class CapturesDao {
     _db.execute('PRAGMA optimize');
   }
 
+  // ----- Rolling-cap eviction primitives (issue #58) -----
+
+  /// Current on-disk size of the DB file in bytes (page_count * page_size).
+  /// Cheap enough to poll from the capture watchdog.
+  int dbSizeBytes() {
+    final pageCount = _db.select('PRAGMA page_count').first['page_count'] as int;
+    final pageSize = _db.select('PRAGMA page_size').first['page_size'] as int;
+    return pageCount * pageSize;
+  }
+
+  /// Deletes the oldest body BLOBs (ordered by their request's `start_us`)
+  /// across all sessions except [protectedSessionIds], stopping once at least
+  /// [targetBytes] of body content has been freed (or nothing is left). Keeps
+  /// the `http_requests` metadata rows (their shape/latency stays useful) and
+  /// clears their `bodies_fetched`. Returns the count + bytes freed.
+  ({int dropped, int bytesFreed}) evictOldestBodies({
+    required int targetBytes,
+    Set<int> protectedSessionIds = const {},
+  }) {
+    if (targetBytes <= 0) return (dropped: 0, bytesFreed: 0);
+    final notIn = _notInClause('b.session_id', protectedSessionIds);
+    final rows = _db.select(
+      'SELECT b.rowid AS rid, b.session_id AS sid, b.vm_id AS vid, b.size AS sz '
+      'FROM http_bodies b JOIN http_requests r '
+      '  ON b.session_id = r.session_id AND b.vm_id = r.vm_id '
+      '${notIn.isEmpty ? '' : 'WHERE $notIn '}'
+      'ORDER BY r.start_us ASC',
+    );
+    final rowids = <int>[];
+    final touched = <(int, String)>{};
+    var freed = 0;
+    for (final row in rows) {
+      rowids.add(row['rid'] as int);
+      touched.add((row['sid'] as int, row['vid'] as String));
+      freed += (row['sz'] as int?) ?? 0;
+      if (freed >= targetBytes) break;
+    }
+    if (rowids.isEmpty) return (dropped: 0, bytesFreed: 0);
+    _db.execute(
+      'DELETE FROM http_bodies WHERE rowid IN (${rowids.map((_) => '?').join(',')})',
+      rowids,
+    );
+    for (final (sid, vid) in touched) {
+      _db.execute(
+        'UPDATE http_requests SET bodies_fetched=0 WHERE session_id=? AND vm_id=?',
+        [sid, vid],
+      );
+    }
+    return (dropped: rowids.length, bytesFreed: freed);
+  }
+
+  /// Deletes up to [maxRows] of the oldest `log_records` (by `timestamp_ms`)
+  /// across all sessions except [protectedSessionIds]. Returns the count.
+  int evictOldestLogs({
+    required int maxRows,
+    Set<int> protectedSessionIds = const {},
+  }) {
+    if (maxRows <= 0) return 0;
+    final notIn = _notInClause('session_id', protectedSessionIds);
+    final before =
+        _db.select('SELECT COUNT(*) AS n FROM log_records').first['n'] as int;
+    _db.execute(
+      'DELETE FROM log_records WHERE id IN ('
+      '  SELECT id FROM log_records '
+      '  ${notIn.isEmpty ? '' : 'WHERE $notIn '}'
+      '  ORDER BY timestamp_ms ASC LIMIT ?'
+      ')',
+      [maxRows],
+    );
+    final after =
+        _db.select('SELECT COUNT(*) AS n FROM log_records').first['n'] as int;
+    return before - after;
+  }
+
+  /// Session ids ordered oldest-first (by `started_at`), excluding
+  /// [protectedSessionIds]. For whole-session eviction when bodies + logs
+  /// were not enough.
+  List<int> sessionIdsOldestFirst({Set<int> protectedSessionIds = const {}}) {
+    final notIn = _notInClause('id', protectedSessionIds);
+    final rows = _db.select(
+      'SELECT id FROM sessions '
+      '${notIn.isEmpty ? '' : 'WHERE $notIn '}'
+      'ORDER BY started_at ASC, id ASC',
+    );
+    return [for (final r in rows) r['id'] as int];
+  }
+
+  /// Millis-since-epoch of the oldest retained request (min `start_us`), or
+  /// null when no requests remain. Reported as `oldestRetainedMs`.
+  int? oldestRetainedRequestMs() {
+    final row = _db.select('SELECT MIN(start_us) AS m FROM http_requests').first;
+    final us = row['m'] as int?;
+    return us == null ? null : us ~/ 1000;
+  }
+
+  String _notInClause(String column, Set<int> ids) {
+    if (ids.isEmpty) return '';
+    return '$column NOT IN (${ids.join(',')})';
+  }
+
   bool addRedactedHeader(String name, {String? reason}) {
     final norm = name.trim().toLowerCase();
     if (norm.isEmpty) throw ArgumentError('header name cannot be empty');
