@@ -53,7 +53,7 @@ Header values longer than `headerTruncateBytes` become `{value, truncated, total
 {
   "source": "live",
   "sessionId": 1,
-  "summary": "GET https://nexus.sangaeats.com/feed/vendors?page=1&limit=20 → 200 OK · 372ms · -1-byte response (application/json)",
+  "summary": "GET https://nexus.sangaeats.com/feed/vendors?page=1&limit=20 → 200 OK · 372ms (application/json)",
   "id": "-748091783736179394",
   "method": "GET",
   "uri": "https://...",
@@ -64,13 +64,15 @@ Header values longer than `headerTruncateBytes` become `{value, truncated, total
   "isResponseComplete": true,
   "request": {
     "headers": {"Accept":"application/json", "Authorization":"Bearer <very long token>"},
-    "contentLength": 0
+    "contentLength": 0,
+    "bodyStatus": "empty"
   },
   "response": {
     "statusCode": 200,
     "reasonPhrase": "OK",
     "headers": {"content-type": "application/json; charset=utf-8"},
-    "contentLength": -1,
+    "sizeKnown": false,
+    "bodyStatus": "stored",
     "body": {"encoding":"utf8","size":4096,"totalSize":18432,"truncated":true,
              "mimeType":"application/json","value":"..."}
   },
@@ -86,6 +88,10 @@ Header values longer than `headerTruncateBytes` become `{value, truncated, total
 ```
 
 Null-valued fields are omitted. The `warnings` array only appears when something is degraded (truncation, in-flight, error). `nextSteps` is filtered against active capabilities.
+
+**`contentLength` vs `sizeKnown` (#62).** A `contentLength` is a real byte count (`0` = the message genuinely had no body). When the size was unknown ahead of the body (chunked transfer-encoding, or no `Content-Length` header) you get `sizeKnown: false` *instead of* a misleading `contentLength: -1` — the true size is only known once the body is read. Pair it with `bodyStatus` to tell a streamed-but-present body (`sizeKnown:false` + `bodyStatus:"stored"`) from a genuinely empty one (`contentLength:0` + `bodyStatus:"empty"`).
+
+**`bodyStatus` (#59).** Every request/response carries one of: `stored` (bytes present), `empty` (server sent no body), `pending` (the async body backfill has not run yet — retry in ~2s or read live), or `unavailable` (the body was lost before capture; `fetchAttempts` + `reason` explain). This is what stops "no body" from being ambiguous.
 
 Errors:
 
