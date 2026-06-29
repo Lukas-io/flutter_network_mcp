@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.9.11] — 2026-06-29
+
+### Changed — network_replay shows real auth by default; redaction moves to the share boundary (#57)
+
+`network_replay`'s `redact` now defaults to **false**. This is a local tool inspecting the developer's own traffic on their own machine, and the most common task — debugging auth (is the right token attached? stale? does the replay reproduce the 401?) — needs the real value. Default-redact forced a `redact:false` on every call AND left the agent unable to tell whether a value was *wrong* vs simply *hidden*, which sends debugging down the wrong path. Redaction was always display-only (the DB stores real values regardless), so this exposes nothing new on disk.
+
+Safety moves to where data actually leaves the machine:
+- `network_replay` warns loudly whenever auth is unredacted (now the default) and tells you to pass `redact:true` before sharing the curl.
+- `session_export` (writes a shareable HAR/ndjson file) now warns that the export contains UNREDACTED auth headers, cookies, and bodies — scrub before sharing.
+- `redact:true` stays available as an explicit opt-in; `network_replay_as_test` (a committable test file) and `report_issue` (posts to GitHub) keep redaction ON by default — those are share boundaries.
+
+292 tests green; verified live (default replay emits the real `Bearer` token + a not-redacted warning; `redact:true` masks 2 headers; `session_export` warns about unredacted secrets — none of which master did).
+
 ## [0.9.10] — 2026-06-29
 
 ### Added — network_body_query: search/extract WITHIN one body (#61)

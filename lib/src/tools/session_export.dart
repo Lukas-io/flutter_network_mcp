@@ -86,6 +86,15 @@ FutureOr<CallToolResult> sessionExport(CallToolRequest request) async {
     if (format == 'har' && (httpCount as int) == 0) {
       warnings.add('Session has no HTTP requests — the HAR file will have an empty entries[] array.');
     }
+    // #57: this is the share boundary. The export contains full headers and
+    // bodies (auth tokens, cookies) unredacted — warn loudly before it leaves
+    // the machine.
+    if ((httpCount as int) > 0) {
+      warnings.add(
+        'This $format contains UNREDACTED auth headers, cookies, and bodies — '
+        'scrub it before sharing or attaching to an issue.',
+      );
+    }
 
     return jsonResult({
       'summary': summary,
