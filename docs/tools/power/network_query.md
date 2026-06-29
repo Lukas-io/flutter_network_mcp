@@ -39,6 +39,17 @@ redacted_headers(name, added_at, reason)
 alert_patterns(id, kind, regex, severity, label, added_at)
 ```
 
+**Size sentinels.** `http_requests.request_size` / `response_size` come straight
+from the VM profiler's `contentLength`: `>= 0` is a real byte count (`0` = the
+message genuinely had no body), and `-1` means the size was unknown ahead of the
+body (chunked transfer-encoding, or no `Content-Length` header) — NOT "no body".
+So `WHERE response_size = 0` finds genuinely-empty responses, while
+`response_size = -1` is a streamed/chunked one whose true size is only known
+after the body is read. The structured tools (`network_get`, `network_list`)
+render `-1` as `sizeKnown: false` instead of a misleading negative number, and
+pair it with `bodyStatus` (`stored` / `empty` / `pending` / `unavailable`) so a
+chunked-but-present body is never confused with an empty one.
+
 ## Args
 
 - `sql` (string, required) — a single SELECT or WITH...SELECT statement.

@@ -31,3 +31,23 @@ Map<String, Object?> bodyStatusFor({
     'reason': 'evicted-before-backfill-or-fetch-failed',
   };
 }
+
+/// Renders an `http_requests` content-length [size] into agent-facing fields,
+/// disambiguating the VM profiler's sentinels (issue #62). dart:io reports
+/// `contentLength == -1` when the size is unknown ahead of the body (chunked
+/// transfer-encoding, or no `Content-Length` header) — which reads as a bug or
+/// "no body" if surfaced raw. We therefore:
+/// - `size >= 0`  -> `{'contentLength': size}` (a real byte count, 0 = empty),
+/// - `size == -1` -> `{'sizeKnown': false}` (chunked/unknown; the actual size
+///   is only known once the body is read — pair with `bodyStatus` to tell a
+///   chunked-but-present body from a genuinely empty one),
+/// - `size == null` -> `{}` (column not populated).
+Map<String, Object?> sizeFields(
+  int? size, {
+  String key = 'contentLength',
+  String unknownKey = 'sizeKnown',
+}) {
+  if (size == null) return const {};
+  if (size < 0) return {unknownKey: false};
+  return {key: size};
+}
