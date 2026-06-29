@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.9.9] — 2026-06-29
+
+### Added — network_body_outline: structural skeleton of a large body (#60)
+
+New tool. For a large JSON response, the first 4 KB `network_get` inlines is often just the opening of one big array — low information per token. `network_body_outline` returns the body's STRUCTURE instead of its bytes: keys, value types, array lengths, and **per-branch byte sizes**, with no values. An agent understands a 1-2 MB response and sees WHERE the bytes are in a few hundred tokens, then `network_body`s exactly the slice it needs. Arrays collapse to `count` + the first element's shape; objects to `key:type` maps (capped by `maxKeys`, depth-bounded by `maxDepth`); non-JSON falls back to content-type + total size + a short head. `network_get` now points at it from the truncation `nextSteps`. Pairs with `bodyStatus` (#59) and the in-body search request (#61).
+
+Internals: extracted the live-VM/history body-fetch + the no-body classifier out of `network_body` into a shared `body_fetch.dart` (`fetchBodyBytes` / `noBodyResult`), so `network_body` and `network_body_outline` fetch identically — one flow, hardened once. New `jsonSkeleton` in `json_shape.dart`. 282 tests green; verified live (a 1000-element array response renders `count:1000` with `bytes:113781 of 113827` in the `data` branch, no values leaked; a text/plain body falls back with a head).
+
 ## [0.9.8] — 2026-06-29
 
 ### Fixed — size sentinels are legible: `sizeKnown:false`, never a raw `-1` (#62)
