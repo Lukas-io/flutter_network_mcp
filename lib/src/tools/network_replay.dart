@@ -30,7 +30,10 @@ final networkReplayTool = Tool(
         description: 'Pick the session by app-name substring instead of sessionId.',
       ),
       'redact': Schema.bool(
-        description: 'Mask auth-like headers (default true). false only for local terminal use.',
+        description:
+            'Mask auth-like headers with <redacted> (default FALSE — this is a '
+            'local repro of your own traffic, and debugging auth needs the real '
+            'token). Set redact:true before sharing the curl externally.',
       ),
       'bodyTruncateBytes': Schema.int(
         description: 'Max body bytes in the curl (default 4096, cap 262144; 0 = cap).',
@@ -58,7 +61,11 @@ FutureOr<CallToolResult> networkReplay(CallToolRequest request) async {
   if (scopeErr != null) return scopeErr;
   scope!;
   final sessionId = scope.sessionId;
-  final redact = (args['redact'] as bool?) ?? true;
+  // #57: default OFF. This is a local repro of the developer's own traffic;
+  // the most common task (debugging auth) needs the real token, and redaction
+  // is display-only (the data is stored unredacted regardless). Safety lives at
+  // the share boundary (session_export warns; replay warns when not redacted).
+  final redact = (args['redact'] as bool?) ?? false;
   final bodyMaxRaw = (args['bodyTruncateBytes'] as int?) ?? _kDefaultBodyTruncate;
   final bodyMax = bodyMaxRaw <= 0
       ? _kMaxBodyTruncate
@@ -130,7 +137,10 @@ FutureOr<CallToolResult> networkReplay(CallToolRequest request) async {
       );
     }
     if (!redact) {
-      warnings.add('Auth headers are NOT redacted — do not share this curl externally.');
+      warnings.add(
+        'Auth headers are NOT redacted (the default for local repro) — pass '
+        'redact:true before sharing this curl externally.',
+      );
     }
 
     final nextSteps = <String>[];
