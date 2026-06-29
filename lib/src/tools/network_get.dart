@@ -8,6 +8,7 @@ import '../config/capabilities.dart';
 import '../state/session.dart';
 import '../storage/captures_db.dart';
 import '../util/body_decoder.dart';
+import '../util/body_status.dart';
 import '../util/scope.dart';
 import 'error_kind.dart';
 import 'result.dart';
@@ -201,6 +202,21 @@ CallToolResult _buildLiveResponse({
       ? decodeBody(r.responseBody, respCt, maxBytes: maxBytes)?.toJson()
       : null;
 
+  // Classify body presence (#59) from the persisted row when available, so a
+  // body lost upstream reads as `unavailable`, not the same `empty` a genuine
+  // no-body response gets. Pre-persist (live, before the async backfill) there
+  // is no row yet, so fall back to what the VM profiler itself surfaced.
+  final dbRow = CapturesDao().getHttpRequest(scope.sessionId, r.id);
+  Map<String, Object?> liveBodyStatus(String which, List<int>? body, int? contentLength) {
+    final hasBytes = body != null && body.isNotEmpty;
+    if (dbRow != null) {
+      return bodyStatusFor(row: dbRow, which: which, hasBytes: hasBytes);
+    }
+    if (hasBytes) return const {'bodyStatus': 'stored'};
+    if (contentLength == 0) return const {'bodyStatus': 'empty'};
+    return const {'bodyStatus': 'pending'};
+  }
+
   final requestData = r.request == null
       ? null
       : {
@@ -209,6 +225,7 @@ CallToolResult _buildLiveResponse({
             'headers': truncateHeaders(r.request!.headers, maxValueBytes: headerTruncateBytes),
             if (r.request!.contentLength != null) 'contentLength': r.request!.contentLength,
             if ((r.request!.cookies ?? []).isNotEmpty) 'cookies': r.request!.cookies,
+            ...liveBodyStatus('request', r.requestBody, r.request!.contentLength),
           },
           if (reqBody != null) 'body': reqBody,
         };
@@ -222,6 +239,7 @@ CallToolResult _buildLiveResponse({
             'headers': truncateHeaders(r.response!.headers, maxValueBytes: headerTruncateBytes),
             if (r.response!.contentLength != null) 'contentLength': r.response!.contentLength,
             if (r.response!.compressionState != null) 'compressionState': r.response!.compressionState,
+            ...liveBodyStatus('response', r.responseBody, r.response!.contentLength),
           },
           if (respBody != null) 'body': respBody,
         };
@@ -318,6 +336,8 @@ FutureOr<CallToolResult> _historyGet({
       if (reqHeaders != null)
         'headers': truncateHeaders(reqHeaders, maxValueBytes: headerTruncateBytes),
       if (row['request_size'] != null) 'contentLength': row['request_size'],
+      ...bodyStatusFor(
+          row: row, which: 'request', hasBytes: reqBlob != null && reqBlob.isNotEmpty),
       if (reqBody != null) 'body': reqBody,
     };
     final responseData = {
@@ -326,6 +346,8 @@ FutureOr<CallToolResult> _historyGet({
       if (respHeaders != null)
         'headers': truncateHeaders(respHeaders, maxValueBytes: headerTruncateBytes),
       if (row['response_size'] != null) 'contentLength': row['response_size'],
+      ...bodyStatusFor(
+          row: row, which: 'response', hasBytes: respBlob != null && respBlob.isNotEmpty),
       if (respBody != null) 'body': respBody,
     };
 
