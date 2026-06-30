@@ -92,7 +92,10 @@ class CaptureWriter {
 
   void _refreshIgnoredHosts() {
     try {
-      _captureFilter = CaptureFilter.build(_dao.ignoredHostSet());
+      _captureFilter = CaptureFilter.build(
+        _dao.ignoredHostSet(),
+        allowEntries: _dao.captureAllowSet(),
+      );
     } catch (_) {
       _captureFilter = CaptureFilter.empty();
     }

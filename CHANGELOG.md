@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.9.16] — 2026-06-30
+
+### Added — capture_allow tool: manage the allowlist mid-session (#64 follow-up)
+
+The capture allowlist (#64) was startup-only via `FLUTTER_NETWORK_MCP_CAPTURE_ALLOW`, while the denylist (`ignored_hosts`) had a full add/remove tool — an asymmetry. New `capture_allow` tool (`list`/`add`/`remove`, admin capability) closes it: narrow capture to "just `/stock/*`" partway through a session, then widen it back, without restarting. Backed by a persistent `capture_allow` table (schema v10, migrated for existing DBs); the effective allowlist is the union of the table and the env var. Deny still wins inside the allowed set. 320 tests green (+3: DAO round-trip, the v9->v10 migration, the table-driven filter); verified live (mid-session `add` narrowed capture to `/stock/*` only, `list` showed it, `remove` widened back to all paths).
+
 ## [0.9.15] — 2026-06-30
 
 ### Security — parameterize the ignored_hosts "already-captured" count query

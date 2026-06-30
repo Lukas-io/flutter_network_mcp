@@ -38,13 +38,17 @@ class CaptureFilter {
     return true;
   }
 
-  /// Builds from the denylist [denyEntries] (ignored_hosts) and the allowlist
-  /// env var. [allowOverride] lets tests inject patterns instead of the env.
+  /// Builds from the denylist [denyEntries] (ignored_hosts) and the allowlist,
+  /// which is the union of the persistent [allowEntries] (the `capture_allow`
+  /// table) and the `FLUTTER_NETWORK_MCP_CAPTURE_ALLOW` env var. [allowOverride]
+  /// lets tests inject the full allowlist instead of the table + env.
   static CaptureFilter build(
     Set<String> denyEntries, {
+    Set<String>? allowEntries,
     List<String>? allowOverride,
   }) {
-    final allowRaw = allowOverride ?? _allowFromEnv();
+    final allowRaw = allowOverride ??
+        <String>{...?allowEntries, ..._allowFromEnv()}.toList();
     return CaptureFilter._(
       [for (final e in denyEntries) _Pattern.parse(e)],
       [for (final e in allowRaw) _Pattern.parse(e)],
