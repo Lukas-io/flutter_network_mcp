@@ -1,6 +1,6 @@
 /// Captures-DB schema version. Bump this AND add a migration block in the
 /// `_migrationFor` switch in `database.dart` whenever a table here changes.
-const int currentVersion = 9;
+const int currentVersion = 10;
 
 const List<String> initialSchema = [
   '''
@@ -114,6 +114,13 @@ const List<String> initialSchema = [
   '''
   CREATE TABLE ignored_hosts (
     host      TEXT PRIMARY KEY,
+    added_at  INTEGER NOT NULL,
+    reason    TEXT
+  )
+  ''',
+  '''
+  CREATE TABLE capture_allow (
+    pattern   TEXT PRIMARY KEY,
     added_at  INTEGER NOT NULL,
     reason    TEXT
   )
@@ -328,4 +335,17 @@ const List<String> migrationV7toV8 = [
 const List<String> migrationV8toV9 = [
   'ALTER TABLE tool_events ADD COLUMN error_kind TEXT',
   'ALTER TABLE tool_events ADD COLUMN degraded INTEGER NOT NULL DEFAULT 0',
+];
+
+/// v9 -> v10: persistent capture allowlist (#64 follow-up). Mirrors
+/// `ignored_hosts` but for the opt-in allowlist, so it can be managed mid-
+/// session via the `capture_allow` tool instead of only the startup env var.
+const List<String> migrationV9toV10 = [
+  '''
+  CREATE TABLE IF NOT EXISTS capture_allow (
+    pattern   TEXT PRIMARY KEY,
+    added_at  INTEGER NOT NULL,
+    reason    TEXT
+  )
+  ''',
 ];
