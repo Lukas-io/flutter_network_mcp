@@ -3,8 +3,10 @@ import 'dart:async';
 import 'package:dart_mcp/server.dart';
 
 import '../config/capabilities.dart';
+import '../config/db_cap_config.dart';
 import '../storage/captures_db.dart';
 import '../storage/database.dart';
+import '../storage/db_cap.dart';
 import 'error_kind.dart';
 import 'result.dart';
 
@@ -45,8 +47,11 @@ FutureOr<CallToolResult> dbStats(CallToolRequest request) async {
         'Bodies are ${(bodyRatio * 100).toStringAsFixed(0)}% of the DB — bodies_purge is the highest-impact cleanup.',
       );
     }
-    if (sessionCount >= 50) {
-      warnings.add('Many sessions ($sessionCount) — old ones may be ready for session_delete.');
+    // #58: rolling cap is self-managing, so only nudge manual cleanup when it
+    // is turned OFF. When on, the watchdog handles growth; just report it.
+    final capBytes = DbCapConfig.maxBytes;
+    if (capBytes == null && sessionCount >= 50) {
+      warnings.add('Many sessions ($sessionCount) and the rolling cap is OFF — old ones may be ready for session_delete.');
     }
 
     final nextSteps = <String>[];
@@ -66,10 +71,20 @@ FutureOr<CallToolResult> dbStats(CallToolRequest request) async {
       nextSteps.add('No action needed — DB is healthy.');
     }
 
+    final lastEviction = DbCapManager.instance.lastEviction;
+    final ephemeral = CapturesDatabase.instance.isEphemeral;
     return jsonResult({
-      'summary': summary,
+      'summary': ephemeral ? '$summary (NO-PERSIST: in-memory only)' : summary,
       'path': CapturesDatabase.instance.path,
+      'ephemeral': ephemeral,
       ...stats,
+      'sizeCap': {
+        'enabled': capBytes != null,
+        if (capBytes != null) 'maxBytes': capBytes,
+        if (capBytes != null) 'maxMb': (capBytes / (1024 * 1024)).toStringAsFixed(0),
+        'env': 'FLUTTER_NETWORK_MCP_MAX_DB_BYTES (0/off disables)',
+      },
+      if (lastEviction != null) 'lastEviction': lastEviction,
       if (warnings.isNotEmpty) 'warnings': warnings,
       'nextSteps': nextSteps,
     });

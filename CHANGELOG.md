@@ -4,6 +4,96 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.9.16] — 2026-06-30
+
+### Added — capture_allow tool: manage the allowlist mid-session (#64 follow-up)
+
+The capture allowlist (#64) was startup-only via `FLUTTER_NETWORK_MCP_CAPTURE_ALLOW`, while the denylist (`ignored_hosts`) had a full add/remove tool — an asymmetry. New `capture_allow` tool (`list`/`add`/`remove`, admin capability) closes it: narrow capture to "just `/stock/*`" partway through a session, then widen it back, without restarting. Backed by a persistent `capture_allow` table (schema v10, migrated for existing DBs); the effective allowlist is the union of the table and the env var. Deny still wins inside the allowed set. 320 tests green (+3: DAO round-trip, the v9->v10 migration, the table-driven filter); verified live (mid-session `add` narrowed capture to `/stock/*` only, `list` showed it, `remove` widened back to all paths).
+
+## [0.9.15] — 2026-06-30
+
+### Security — parameterize the ignored_hosts "already-captured" count query
+
+The `ignored_hosts action:add` path counted existing rows with a string-interpolated `WHERE host = '<input>'`. Harmless while inputs were plain hosts, but #64 made that input an agent-supplied host/path glob, turning it injection-shaped. Replaced with a parameterized `CapturesDao.countRequestsForHost`. A glob pattern matches no literal host (returns 0, which is correct — the "already-captured" warning only applies to a whole-host entry). 317 tests green (+3, incl. an injection-shaped input that now returns 0 and leaves the table intact).
+
+## [0.9.14] — 2026-06-30
+
+### Added — no-persist / ephemeral capture mode (#64 part 3, closes #64)
+
+`--no-persist` (or `FLUTTER_NETWORK_MCP_NO_PERSIST=true`) opens the captures DB in memory only: traffic is readable live through every tool, but nothing is written to disk and everything vanishes when the server exits. For noisy or sensitive flows where on-disk retention is unwanted. The data dir is never created — not even the `last-session.json` reattach hint is written. `db_stats` reports `ephemeral:true` and a `:memory:` path. Completes issue #64 (path/URL filtering + allowlist landed in 0.9.13).
+
+314 tests green (+3: in-memory open is ephemeral, schema is fully usable in memory, file-backed open is not ephemeral); verified live (captures readable live, `db_stats` ephemeral, zero files written to the data dir; master rejects the `--no-persist` flag entirely).
+
+## [0.9.13] — 2026-06-30
+
+### Added — precise capture filtering: host/path globs + opt-in allowlist (#64, parts 1/2/4)
+
+The only capture filter was `ignored_hosts` — a host-level denylist, all-or-nothing per host. That is a foot-gun: to silence `dev.example.com/socket.io/*` reconnect noise you had to drop the whole host, which silently took the entire REST API with it. Now:
+
+- **Path/URL-pattern denylist.** `ignored_hosts` entries with a `/` are `host/path` globs (`*` = any chars, `?` = one char). `dev.example.com/socket.io/*` silences just the polling while the REST API on the same host keeps flowing. Bare-host entries are unchanged (exact host, any path).
+- **Opt-in allowlist (capture-only).** `FLUTTER_NETWORK_MCP_CAPTURE_ALLOW` (comma-separated host/path globs) captures ONLY matching requests and drops the rest — for focused debugging ("just `/stock/*`"). Deny still wins inside the allowed set. Surfaced in `ignored_hosts action:list` as `captureAllowlist`.
+- **Doc-label fix.** `capabilities.dart` described `ignored_hosts` as a "host allowlist"; it is a denylist. Fixed there and in the tool's output/docs.
+
+Both layers fold into one `CaptureFilter` applied at the writer's poll tick (pre-persist), so filtered requests never hit the DB, alerts, FTS, or body backfill. 311 tests green (+9: host/path globs, allowlist, deny-wins-inside-allow); verified live (`socket.io/*` dropped while `/api` + `/stock` on the same host were kept; the allowlist captured only `/stock/*`). No-persist mode (#64 part 3) ships separately.
+
+## [0.9.12] — 2026-06-29
+
+### Added — rolling DB size cap: auto-evict oldest-first, never the live session (#58)
+
+`captures.db` grew unbounded — the only mitigations were manual (`bodies_purge`, `session_delete`, `db_vacuum`). It now self-manages: a default-on cap (~2 GB, `FLUTTER_NETWORK_MCP_MAX_DB_BYTES`, `0`/`off` disables) drives a low-frequency watchdog on the capture poll loop (every ~60s at the default tick, off the hot write path). When the DB exceeds the cap it evicts **oldest-first, cheap-bytes-first** down to ~90% of the cap:
+
+1. oldest body BLOBs (the dense bytes; the request metadata stays for shape/latency),
+2. then oldest `log_records`,
+3. then whole oldest sessions,
+
+and vacuums so the file actually shrinks. It **never evicts a currently-attached session** — recent/live captures are always kept. The loss is visible, never silent: `db_stats` reports `sizeCap` + `lastEviction: {bytesFreed, bodiesDropped, logsDropped, sessionsDropped, oldestRetainedMs}`, and a one-line stderr note fires per sweep. When the DB is over cap but everything left is live data, it warns once (on transition) instead of clobbering the last real eviction record.
+
+Built on the existing `purge`/`deleteSession`/`vacuum` primitives plus new oldest-first eviction queries. 302 tests green (+10: config parsing + eviction primitives + protect-live invariant); verified live (a detached 6 MB session was fully evicted while the attached session's 46 bodies were retained, holding the DB at the 1 MB test cap).
+
+## [0.9.11] — 2026-06-29
+
+### Changed — network_replay shows real auth by default; redaction moves to the share boundary (#57)
+
+`network_replay`'s `redact` now defaults to **false**. This is a local tool inspecting the developer's own traffic on their own machine, and the most common task — debugging auth (is the right token attached? stale? does the replay reproduce the 401?) — needs the real value. Default-redact forced a `redact:false` on every call AND left the agent unable to tell whether a value was *wrong* vs simply *hidden*, which sends debugging down the wrong path. Redaction was always display-only (the DB stores real values regardless), so this exposes nothing new on disk.
+
+Safety moves to where data actually leaves the machine:
+- `network_replay` warns loudly whenever auth is unredacted (now the default) and tells you to pass `redact:true` before sharing the curl.
+- `session_export` (writes a shareable HAR/ndjson file) now warns that the export contains UNREDACTED auth headers, cookies, and bodies — scrub before sharing.
+- `redact:true` stays available as an explicit opt-in; `network_replay_as_test` (a committable test file) and `report_issue` (posts to GitHub) keep redaction ON by default — those are share boundaries.
+
+292 tests green; verified live (default replay emits the real `Bearer` token + a not-redacted warning; `redact:true` masks 2 headers; `session_export` warns about unredacted secrets — none of which master did).
+
+## [0.9.10] — 2026-06-29
+
+### Added — network_body_query: search/extract WITHIN one body (#61)
+
+New tool, the drill half of the recon -> drill ladder. `network_search` finds the request (cross-request BM25); once you're on a 1-2 MB body, `network_body_query` reaches inside it and returns only the matching slice(s) — no 64-call byte-paging, no pulling the whole thing into context. Two modes:
+
+- `grep:"<regex>"` — Dart RegExp over the decoded text, returning up to `maxMatches` matches with char `offset` + a `context` window (works on any body; refused over 16 MB).
+- `jsonPath:"$.data[*].symbol"` — a deliberately small path extractor: dotted keys, array index, bracket key, and the `[*]` wildcard (a field across every array element / map value, with wildcards resolved to concrete paths). No filter predicates — use `grep` for value matching. A matched node over ~2 KB comes back as `{path, valueBytes, outline}` (reusing `jsonSkeleton`) so the result stays bounded.
+
+Reuses the shared `fetchBodyBytes` (live VM + history) from #60. `network_body_outline` now points at it from its `nextSteps`. New `json_path.dart` extractor. 292 tests green; verified live (`$.data[*].id` over a 1000-element array -> 1000 matches capped to 20 with `truncated:true`; index/key/scalar paths resolve; grep returns offsets on both JSON and text; malformed path + missing mode -> `bad_argument`).
+
+## [0.9.9] — 2026-06-29
+
+### Added — network_body_outline: structural skeleton of a large body (#60)
+
+New tool. For a large JSON response, the first 4 KB `network_get` inlines is often just the opening of one big array — low information per token. `network_body_outline` returns the body's STRUCTURE instead of its bytes: keys, value types, array lengths, and **per-branch byte sizes**, with no values. An agent understands a 1-2 MB response and sees WHERE the bytes are in a few hundred tokens, then `network_body`s exactly the slice it needs. Arrays collapse to `count` + the first element's shape; objects to `key:type` maps (capped by `maxKeys`, depth-bounded by `maxDepth`); non-JSON falls back to content-type + total size + a short head. `network_get` now points at it from the truncation `nextSteps`. Pairs with `bodyStatus` (#59) and the in-body search request (#61).
+
+Internals: extracted the live-VM/history body-fetch + the no-body classifier out of `network_body` into a shared `body_fetch.dart` (`fetchBodyBytes` / `noBodyResult`), so `network_body` and `network_body_outline` fetch identically — one flow, hardened once. New `jsonSkeleton` in `json_shape.dart`. 282 tests green; verified live (a 1000-element array response renders `count:1000` with `bytes:113781 of 113827` in the `data` branch, no values leaked; a text/plain body falls back with a head).
+
+## [0.9.8] — 2026-06-29
+
+### Fixed — size sentinels are legible: `sizeKnown:false`, never a raw `-1` (#62)
+
+`request_size` / `response_size` come straight from the VM profiler's `contentLength`, where `-1` means "size unknown ahead of the body" (chunked transfer-encoding, or no `Content-Length` header). Surfaced raw, a `contentLength: -1` reads as a bug or "no body" — e.g. an image endpoint that clearly returns bytes showed `-1`. `network_get` and `network_list` now render `-1` as `sizeKnown: false` (and `responseSizeKnown` / `requestSizeKnown` in the flat list rows) instead of a misleading negative number; a real byte count (including `0` for genuinely empty) is unchanged. Pairs with `bodyStatus` (#59) so a chunked-but-present body (`sizeKnown:false` + `bodyStatus:"stored"`) is never confused with an empty one (`contentLength:0` + `bodyStatus:"empty"`). Documented the sentinels in the `network_query` schema notes + the `network_get` / `network_list` tool docs. 276 tests green; verified live (chunked response -> `sizeKnown:false`, fixed-length -> real `contentLength`).
+
+## [0.9.7] — 2026-06-29
+
+### Fixed — network_get / network_body distinguish a lost body from an empty one (#59)
+
+A response with no body bytes was indistinguishable from one whose body the VM profiler evicted before the async backfill could store it: both just showed no `body`. An agent reading "no body" could not tell "the server genuinely sent nothing" from "we failed to capture it", and would draw the wrong conclusion. Every body now carries an explicit `bodyStatus`: `stored` (bytes present), `empty` (server sent nothing, `request_size`/`response_size` == 0 or the backfill ran and stored nothing), `pending` (backfill has not run yet — retry in ~2s), or `unavailable` (lost upstream after N `fetchAttempts`, with a `reason`). The no-body `network_body` return adds a matching warning so the agent stops retrying a body that is gone for good. Wired into both the live VM path and the history/DB path. 271 tests green; verified live (a 200 JSON body reads `stored`, a 204 reads `empty`).
+
 ## [0.9.6] — 2026-06-25
 
 ### Fixed — network_drift covers the whole timeline (not just recent N)

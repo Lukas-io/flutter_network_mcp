@@ -3,11 +3,12 @@ import 'dart:io' as io;
 import 'package:path/path.dart' as p;
 
 import '../util/data_dir.dart';
-import '../version.dart';
 
-/// `flutter_network_mcp install` subcommand: AOT-compiles this package's
-/// entrypoint via `dart compile exe` and writes the resulting native binary
-/// over the JIT wrapper that `dart pub global activate` ships.
+/// `flutter_network_mcp install` subcommand: AOT-builds this package's
+/// entrypoint via `dart build cli` (a relocatable bundle, since Dart 3.12's
+/// `dart compile exe` rejects packages with native build hooks like sqlite3)
+/// and points the JIT wrapper that `dart pub global activate` ships at the
+/// resulting native binary via an exec shim.
 ///
 /// Why: the standard `pub global activate -s git URL` install ships a snapshot
 /// wrapper that re-runs `pub get` + recompiles on every spawn. Cold start is
@@ -48,26 +49,31 @@ Future<void> runInstall(List<String> args) async {
     return;
   }
 
-  final sha = currentCommitSha();
+  // Dart 3.12 made `dart compile exe` reject packages with native build hooks
+  // (sqlite3 ships them), so we build a relocatable CLI bundle with
+  // `dart build cli` instead. That produces `<bundleDir>/bundle/bin/<exe>` plus
+  // a sibling `lib/` (libsqlite3.dylib) the exe finds via its own rpath. We
+  // then point the install target [output] at it with a tiny exec shim, so the
+  // MCP host config (which runs [output]) is unchanged.
+  final bundleDir = p.join(p.dirname(output), '.flutter_network_mcp_aot');
+  final exePath = p.join(bundleDir, 'bundle', 'bin', 'flutter_network_mcp');
+
   io.stderr.writeln(
-    'flutter_network_mcp install: compiling $source\n'
-    '                          to $output\n'
-    '${sha != null ? "                       commit ${sha.substring(0, 12)}\n" : ""}'
+    'flutter_network_mcp install: building $source\n'
+    '                          to $bundleDir\n'
     '(this takes ~10–20s; the resulting binary starts in <100ms).',
   );
 
-  final io.Process compile;
   try {
-    compile = await io.Process.start(
+    final old = io.Directory(bundleDir);
+    if (old.existsSync()) old.deleteSync(recursive: true);
+  } catch (_) {/* best-effort clean rebuild */}
+
+  final io.Process build;
+  try {
+    build = await io.Process.start(
       'dart',
-      [
-        'compile',
-        'exe',
-        source,
-        if (sha != null) '-Dflutter_network_mcp_sha=$sha',
-        '-o',
-        output,
-      ],
+      ['build', 'cli', '-t', source, '-o', bundleDir],
       mode: io.ProcessStartMode.inheritStdio,
     );
   } on io.ProcessException catch (e) {
@@ -79,13 +85,34 @@ Future<void> runInstall(List<String> args) async {
     io.exitCode = 127;
     return;
   }
-  final exitCode = await compile.exitCode;
+  final exitCode = await build.exitCode;
   if (exitCode != 0) {
     io.stderr.writeln(
-      'flutter_network_mcp install: dart compile exe exited $exitCode. '
+      'flutter_network_mcp install: dart build cli exited $exitCode. '
       'See the dart output above. The JIT wrapper at $output is unchanged.',
     );
     io.exitCode = exitCode;
+    return;
+  }
+  if (!io.File(exePath).existsSync()) {
+    io.stderr.writeln(
+      'flutter_network_mcp install: build succeeded but the expected binary '
+      'is missing at $exePath. The JIT wrapper at $output is unchanged.',
+    );
+    io.exitCode = 70;
+    return;
+  }
+
+  // Replace the install target with an exec shim at the bundle binary.
+  try {
+    io.File(output).writeAsStringSync('#!/bin/sh\nexec "$exePath" "\$@"\n');
+    await io.Process.run('chmod', ['0755', output]);
+  } catch (e) {
+    io.stderr.writeln(
+      'flutter_network_mcp install: built the binary but could not write the '
+      'shim at $output ($e). Point your MCP host directly at:\n  $exePath',
+    );
+    io.exitCode = 70;
     return;
   }
 
