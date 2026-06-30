@@ -18,12 +18,33 @@ class CapturesDatabase {
       _instance ?? (throw StateError('Database not opened. Call open() first.'));
   static bool get isOpen => _instance != null;
 
+  /// True when the database lives in memory only (no-persist / ephemeral mode,
+  /// issue #64) — nothing is written to disk and everything is lost on exit.
+  bool get isEphemeral => path == _memoryPath;
+  static const String _memoryPath = ':memory:';
+
   /// Opens the database at `<dataDir>/captures.db`. When [dataDir] is null,
   /// walks a prioritized candidate list (see [_candidateDataDirs]) and uses
   /// the first writable one. Throws [StateError] (caller catches in `bin/`)
   /// if every candidate fails.
-  static CapturesDatabase open({String? dataDir}) {
+  ///
+  /// When [inMemory] (or `FLUTTER_NETWORK_MCP_NO_PERSIST`) is set, opens a
+  /// purely in-memory database instead: captures are readable live but never
+  /// touch disk and vanish on exit. For noisy or sensitive flows where on-disk
+  /// retention is unwanted.
+  static CapturesDatabase open({String? dataDir, bool inMemory = false}) {
     if (_instance != null) return _instance!;
+
+    if (inMemory || _noPersistFromEnv()) {
+      final db = sql.sqlite3.openInMemory();
+      db.execute('PRAGMA foreign_keys = ON');
+      _migrate(db);
+      stderr.writeln(
+        'flutter_network_mcp: NO-PERSIST mode — captures live in memory only '
+        'and are lost when the server exits. Nothing is written to disk.',
+      );
+      return _instance = CapturesDatabase._(db, _memoryPath);
+    }
 
     final candidates = _candidateDataDirs(dataDir);
     final errors = <String>[];
@@ -56,6 +77,11 @@ class CapturesDatabase {
       '${errors.join('\n')}\n'
       'Pass --data-dir <writable path> or set FLUTTER_NETWORK_MCP_DATA_DIR.',
     );
+  }
+
+  static bool _noPersistFromEnv() {
+    final raw = Platform.environment['FLUTTER_NETWORK_MCP_NO_PERSIST']?.toLowerCase();
+    return raw == 'true' || raw == '1' || raw == 'yes' || raw == 'on';
   }
 
   static void _migrate(sql.Database db) {

@@ -110,6 +110,15 @@ Future<void> _runMain(List<String> args) async {
           '~/.local/share/flutter_network_mcp. Env-var fallback: '
           'FLUTTER_NETWORK_MCP_DATA_DIR.',
     )
+    ..addFlag(
+      'no-persist',
+      negatable: false,
+      help:
+          'Ephemeral mode: keep captures in memory only, never write to disk. '
+          'Captures are readable live but vanish when the server exits. For '
+          'noisy or sensitive flows. Env-var fallback: '
+          'FLUTTER_NETWORK_MCP_NO_PERSIST=true.',
+    )
     ..addOption(
       'capabilities',
       help:
@@ -214,8 +223,11 @@ Future<void> _runMain(List<String> args) async {
     return;
   }
 
+  final noPersist = (results['no-persist'] as bool? ?? false) ||
+      env['FLUTTER_NETWORK_MCP_NO_PERSIST']?.toLowerCase() == 'true';
+
   try {
-    CapturesDatabase.open(dataDir: dataDir);
+    CapturesDatabase.open(dataDir: dataDir, inMemory: noPersist);
   } on io.FileSystemException catch (e) {
     io.stderr.writeln(
       'flutter_network_mcp: cannot create data dir '

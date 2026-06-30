@@ -3,6 +3,7 @@ import 'dart:io' as io;
 
 import 'package:path/path.dart' as p;
 
+import '../storage/database.dart';
 import '../util/data_dir.dart';
 import 'session.dart';
 
@@ -21,6 +22,8 @@ class SessionContinuation {
   /// Writes the current attachment set. Pass the registry's full
   /// `attached.values.toList()` so multi-attach is preserved.
   static void record(Iterable<AttachedSession> attached) {
+    // No-persist mode (#64): nothing touches disk, not even the reattach hint.
+    if (CapturesDatabase.isOpen && CapturesDatabase.instance.isEphemeral) return;
     try {
       final dataDir = resolveCandidateDataDir();
       if (dataDir == null) return;

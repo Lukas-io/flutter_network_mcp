@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.9.14] — 2026-06-30
+
+### Added — no-persist / ephemeral capture mode (#64 part 3, closes #64)
+
+`--no-persist` (or `FLUTTER_NETWORK_MCP_NO_PERSIST=true`) opens the captures DB in memory only: traffic is readable live through every tool, but nothing is written to disk and everything vanishes when the server exits. For noisy or sensitive flows where on-disk retention is unwanted. The data dir is never created — not even the `last-session.json` reattach hint is written. `db_stats` reports `ephemeral:true` and a `:memory:` path. Completes issue #64 (path/URL filtering + allowlist landed in 0.9.13).
+
+314 tests green (+3: in-memory open is ephemeral, schema is fully usable in memory, file-backed open is not ephemeral); verified live (captures readable live, `db_stats` ephemeral, zero files written to the data dir; master rejects the `--no-persist` flag entirely).
+
 ## [0.9.13] — 2026-06-30
 
 ### Added — precise capture filtering: host/path globs + opt-in allowlist (#64, parts 1/2/4)
