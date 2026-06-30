@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:dart_mcp/server.dart';
 
+import '../config/capture_filter.dart';
 import '../state/session.dart';
 import '../storage/captures_db.dart';
 import 'error_kind.dart';
@@ -10,13 +11,22 @@ import 'result.dart';
 final ignoredHostsTool = Tool(
   name: 'ignored_hosts',
   description:
-      'Manage the host skiplist: the capture writer drops requests whose host '
-      'matches an entry (analytics, crash reporters, noisy telemetry). Exact '
-      'case-insensitive match; only new captures are filtered.',
+      'Manage the capture skiplist (a denylist): the writer drops requests that '
+      'match an entry (analytics, crash reporters, noisy telemetry). An entry '
+      'with no "/" matches a whole host; an entry with "/" is a host/path glob '
+      '(e.g. dev.example.com/socket.io/*) so you can silence one noisy path '
+      'while keeping the rest of the host. Case-insensitive; only new captures '
+      'are filtered. The opposite (capture ONLY matching requests) is the '
+      'capture_allow tool / FLUTTER_NETWORK_MCP_CAPTURE_ALLOW env var, surfaced '
+      'in the list output as captureAllowlist.',
   inputSchema: Schema.object(
     properties: {
       'action': Schema.string(description: '"list" (default) | "add" | "remove".'),
-      'host': Schema.string(description: 'Hostname (required for add/remove). No scheme, no port.'),
+      'host': Schema.string(
+        description:
+            'Host or host/path glob (required for add/remove). No scheme, no '
+            'port. Examples: "analytics.example.com", "dev.example.com/socket.io/*".',
+      ),
       'reason': Schema.string(description: 'Optional reason shown in list output.'),
     },
   ),
@@ -33,11 +43,14 @@ FutureOr<CallToolResult> ignoredHosts(CallToolRequest request) async {
     switch (action) {
       case 'list':
         final rows = dao.listIgnoredHosts();
+        final allowlist = CaptureFilter.build(const {},
+                allowEntries: dao.captureAllowSet())
+            .allowPatterns;
         return jsonResult({
           'action': 'list',
           'summary': rows.isEmpty
-              ? 'No ignored hosts. The writer captures every request.'
-              : '${rows.length} ignored host(s) — new captures from these hosts are skipped.',
+              ? 'No skiplist entries. The writer captures every request${allowlist.isEmpty ? '' : ' that matches the allowlist'}.'
+              : '${rows.length} skiplist entr(ies) — matching new captures are dropped.',
           'count': rows.length,
           'hosts': [
             for (final r in rows)
@@ -47,11 +60,18 @@ FutureOr<CallToolResult> ignoredHosts(CallToolRequest request) async {
                 if (r['reason'] != null) 'reason': r['reason'],
               },
           ],
+          'captureAllowlist': {
+            'active': allowlist.isNotEmpty,
+            'patterns': allowlist,
+            'managedBy': 'capture_allow tool (persistent) + FLUTTER_NETWORK_MCP_CAPTURE_ALLOW env',
+            if (allowlist.isNotEmpty)
+              'note': 'Only requests matching these patterns are captured; everything else is dropped.',
+          },
           'nextSteps': [
             if (rows.isEmpty)
-              'ignored_hosts action:"add" host:"<analytics host>" — add your first filter'
+              'ignored_hosts action:"add" host:"dev.example.com/socket.io/*" — skip one noisy path'
             else
-              'network_list — confirm noisy hosts are no longer being captured',
+              'network_list — confirm noisy paths are no longer being captured',
             'network_query sql:"SELECT host, COUNT(*) FROM http_requests GROUP BY host ORDER BY 2 DESC" — find noisy hosts to add',
           ],
         });
@@ -66,10 +86,7 @@ FutureOr<CallToolResult> ignoredHosts(CallToolRequest request) async {
 
         int existingCount = 0;
         try {
-          final rows = dao.rawSelect(
-            "SELECT COUNT(*) AS n FROM http_requests WHERE host = '${host.toLowerCase()}'",
-          );
-          if (rows.isNotEmpty) existingCount = (rows.first['n'] as int?) ?? 0;
+          existingCount = dao.countRequestsForHost(host);
         } catch (_) {/* best effort */}
 
         final warnings = <String>[];
@@ -87,8 +104,8 @@ FutureOr<CallToolResult> ignoredHosts(CallToolRequest request) async {
           'inserted': isNew,
           if (warnings.isNotEmpty) 'warnings': warnings,
           'nextSteps': const [
-            'network_list — confirm new requests from this host are skipped',
-            'ignored_hosts action:"list" — see current allowlist',
+            'network_list — confirm new requests matching this pattern are skipped',
+            'ignored_hosts action:"list" — see the current skiplist + allowlist',
           ],
         });
       case 'remove':

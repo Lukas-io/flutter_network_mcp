@@ -85,6 +85,9 @@ Beyond capability gating, these env vars tune runtime behavior:
 | `FLUTTER_NETWORK_MCP_DTD_URI` | — | — | Default DTD URI for `network_attach`. When unset, auto-discovery scans the standard `package:dtd` directory. |
 | `FLUTTER_NETWORK_MCP_AUTO_DISCOVER_DTD` | `true` | `false` to disable | Set `false` to skip filesystem DTD auto-discovery at startup. Equivalent to `--no-auto-discover-dtd`. |
 | `FLUTTER_NETWORK_MCP_DATA_DIR` | — | — | Directory for `captures.db`. Equivalent to `--data-dir`. When set, the candidate-fallback chain is skipped — unwritable values error loudly. |
+| `FLUTTER_NETWORK_MCP_MAX_DB_BYTES` | `2147483648` (2 GB) | ≥1 MB, `0`/`off` disables | **Rolling DB size cap (0.9.12+).** Once `captures.db` exceeds this, a low-frequency watchdog evicts OLDEST-first — bodies, then logs, then whole sessions — down to ~90% of the cap, never touching the currently-attached session(s). Surfaced in `db_stats` as `sizeCap` + `lastEviction`. Set `0`/`off` to keep the old unbounded behavior. |
+| `FLUTTER_NETWORK_MCP_CAPTURE_ALLOW` | — | comma-list | **Capture allowlist (0.9.13+).** Startup host or host/path globs (e.g. `api.example.com/stock/*`). When set, ONLY matching requests are persisted — everything else is dropped at capture time. For focused debugging. Unions with the `capture_allow` tool (0.9.16+, mid-session). Complements the `ignored_hosts` denylist; deny still wins inside the allowed set. Surfaced in `ignored_hosts action:list`. |
+| `FLUTTER_NETWORK_MCP_NO_PERSIST` | — | `true` to enable | **Ephemeral / no-persist mode (0.9.14+).** Keeps captures in an in-memory SQLite DB — readable live, but never written to disk and gone when the server exits. Nothing (not even the reattach hint) touches the data dir. For noisy or sensitive flows. Equivalent to `--no-persist`. Surfaced in `db_stats` as `ephemeral:true`. |
 | `FLUTTER_NETWORK_MCP_MAX_ATTACH` | 4 | 1–32 | Max concurrent attached sessions in multi-attach mode. |
 | `FLUTTER_NETWORK_MCP_AUTO_ATTACH` | — | comma-list | **Allowlist** for auto-attach. Comma-separated substring patterns matched against the DTD app name. Non-empty value enables; empty / absent disables. Equivalent to `--auto-attach=app1,app2`. |
 | `FLUTTER_NETWORK_MCP_AUTO_ATTACH_DENY` | — | comma-list | **Denylist** for auto-attach (optional). Matching apps are skipped even when the allowlist would otherwise admit them. Equivalent to `--auto-attach-deny=pat1,pat2`. |
@@ -361,7 +364,8 @@ Each tool's MCP `description` (loaded into every agent at handshake) tells the a
 | **SQL** | | |
 | `network_query` | — | Run custom SELECT against the DB when the typed tools can't express what you need — aggregates, joins, percentile timings, cross-session queries. |
 | **Admin** | | |
-| `ignored_hosts` | — | Manage the capture-time host denylist (drop analytics / Sentry / telemetry). |
+| `ignored_hosts` | — | Manage the capture-time denylist of host or host/path globs (drop analytics / Sentry / telemetry / one noisy path). |
+| `capture_allow` | — | Manage the capture-time allowlist (capture ONLY matching host/path globs). The inverse of `ignored_hosts`, for focused debugging. |
 | `redacted_headers` | — | Manage the header denylist for `network_replay` curl emission. |
 | `db_stats` | — | Report DB size, per-table row counts, body bytes. Tells you when to vacuum. |
 | `db_vacuum` | — | WAL-checkpoint + VACUUM + optimize. Run after big deletes. |

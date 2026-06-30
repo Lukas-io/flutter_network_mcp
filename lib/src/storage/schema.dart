@@ -1,6 +1,6 @@
 /// Captures-DB schema version. Bump this AND add a migration block in the
 /// `_migrationFor` switch in `database.dart` whenever a table here changes.
-const int currentVersion = 10;
+const int currentVersion = 11;
 
 const List<String> initialSchema = [
   '''
@@ -142,6 +142,13 @@ const List<String> initialSchema = [
   '''
   CREATE TABLE ignored_hosts (
     host      TEXT PRIMARY KEY,
+    added_at  INTEGER NOT NULL,
+    reason    TEXT
+  )
+  ''',
+  '''
+  CREATE TABLE capture_allow (
+    pattern   TEXT PRIMARY KEY,
     added_at  INTEGER NOT NULL,
     reason    TEXT
   )
@@ -344,12 +351,16 @@ const List<String> migrationV6toV7 = [
   'CREATE INDEX IF NOT EXISTS idx_tool_events_tool ON tool_events(tool, ts_ms)',
 ];
 
-/// v9 -> v10: WebSocket frame capture (0.9.0, shelved companion). The dart:io
+/// v10 -> v11: WebSocket frame capture (0.9.0, shelved companion). The dart:io
 /// VM profiler stops at the HTTP upgrade, so post-upgrade frames are invisible
 /// to getHttpProfile. The `flutter_network_mcp_hooks` companion captures frames
 /// in-app; the MCP drains them over `ext.flutter_network_mcp.getRealtimeProfile`
 /// into these two tables. Apps without the companion leave them empty.
-const List<String> migrationV9toV10 = [
+///
+/// Renumbered from v9->v10 to v10->v11: master took v10 for the capture_allow
+/// table (#64), so the shelved WS tables move one slot up to keep this branch
+/// mergeable with master without a version collision.
+const List<String> migrationV10toV11 = [
   '''
   CREATE TABLE IF NOT EXISTS websocket_connections (
     session_id  INTEGER NOT NULL,
@@ -396,4 +407,17 @@ const List<String> migrationV7toV8 = [
 const List<String> migrationV8toV9 = [
   'ALTER TABLE tool_events ADD COLUMN error_kind TEXT',
   'ALTER TABLE tool_events ADD COLUMN degraded INTEGER NOT NULL DEFAULT 0',
+];
+
+/// v9 -> v10: persistent capture allowlist (#64 follow-up). Mirrors
+/// `ignored_hosts` but for the opt-in allowlist, so it can be managed mid-
+/// session via the `capture_allow` tool instead of only the startup env var.
+const List<String> migrationV9toV10 = [
+  '''
+  CREATE TABLE IF NOT EXISTS capture_allow (
+    pattern   TEXT PRIMARY KEY,
+    added_at  INTEGER NOT NULL,
+    reason    TEXT
+  )
+  ''',
 ];

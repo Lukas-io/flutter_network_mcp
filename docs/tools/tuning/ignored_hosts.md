@@ -1,15 +1,21 @@
 ---
 tool: ignored_hosts
-description: Manage the host allowlist. Capture writer skips matching HTTP requests at capture time.
-when_to_use: To filter out analytics, crash reporters, and noisy telemetry BEFORE they pollute the DB.
+description: Manage the capture skiplist (a denylist) of host or host/path globs. Capture writer skips matching HTTP requests at capture time.
+when_to_use: To filter out analytics, crash reporters, noisy telemetry, or one chatty path BEFORE it pollutes the DB.
 ---
 
 ## DO NOT USE THIS TOOL WHEN
 
 - You want to filter at READ time — use `network_list hostContains:` instead. This drops requests at CAPTURE time; they won't appear in history at all.
-- You're trying to redact bodies — this is an all-or-nothing host filter. Use `redacted_headers` for header masking or SQL UPDATE for body redaction.
-- The host has dynamic prefixes (`xyz123.cdn.example.com`) — this is exact-match. Add each variant or filter at read time.
+- You're trying to redact bodies — this is a host/path skip filter, not a masker. Use `redacted_headers` for header masking or SQL UPDATE for body redaction.
+- The host has dynamic prefixes (`xyz123.cdn.example.com`) — a bare-host entry is exact-match. Use a glob (`*.cdn.example.com` is NOT supported, but `cdn.example.com/*` is) or filter at read time.
 - The session is already running and you want existing rows gone — entries take effect on the next capture tick. Already-captured rows stay (a warning surfaces).
+
+## Denylist vs allowlist (#64)
+
+This tool manages the **denylist** (skiplist): matching requests are dropped. An entry with **no `/`** matches a whole host (the original behavior); an entry **with `/`** is a `host/path` glob (`*` = any chars, `?` = one char), so `dev.example.com/socket.io/*` silences just the socket.io polling while the REST API on the same host keeps flowing.
+
+The opt-in **allowlist** is separate: set `FLUTTER_NETWORK_MCP_CAPTURE_ALLOW` (comma-separated host/path globs) at startup to capture ONLY matching requests and drop everything else — for focused debugging ("just `/stock/*`"). It is surfaced in this tool's `list` output as `captureAllowlist`. Deny still wins inside the allowed set.
 
 ## Use this when
 
@@ -21,12 +27,12 @@ when_to_use: To filter out analytics, crash reporters, and noisy telemetry BEFOR
 
 `add`: insert into `ignored_hosts`, refresh writer's in-memory set immediately. `remove`: delete + refresh. `list`: SELECT.
 
-Writer checks `req.uri.host` against the set on every poll tick and skips upserts (and therefore alerts, FTS indexing, body backfill) for matching hosts.
+Writer builds a `CaptureFilter` from the entries on every refresh and checks each request's `host + path` against it on every poll tick, skipping upserts (and therefore alerts, FTS indexing, body backfill) for matching requests. The allowlist env is folded into the same filter.
 
 ## Args
 
 - `action` (string, default `"list"`) — `"list"` | `"add"` | `"remove"`.
-- `host` (string, required for add/remove) — exact hostname, no scheme, no port.
+- `host` (string, required for add/remove) — a host (`analytics.example.com`) or host/path glob (`dev.example.com/socket.io/*`). No scheme, no port.
 - `reason` (string, optional, add only).
 
 ## Returns

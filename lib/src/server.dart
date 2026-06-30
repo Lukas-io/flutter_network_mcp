@@ -17,11 +17,14 @@ import 'tools/bodies_purge.dart';
 import 'tools/correlate_at.dart';
 import 'tools/db_stats.dart';
 import 'tools/db_vacuum.dart';
+import 'tools/capture_allow.dart';
 import 'tools/ignored_hosts.dart';
 import 'tools/logs_clear.dart';
 import 'tools/logs_tail.dart';
 import 'tools/network_attach.dart';
 import 'tools/network_body.dart';
+import 'tools/network_body_outline.dart';
+import 'tools/network_body_query.dart';
 import 'tools/network_clear.dart';
 import 'tools/network_correlate.dart';
 import 'tools/network_detach.dart';
@@ -94,6 +97,8 @@ base class FlutterNetworkMcpServer extends MCPServer with ToolsSupport {
       _register(networkListTool, networkList);
       _register(networkGetTool, networkGet);
       _register(networkBodyTool, networkBody);
+      _register(networkBodyOutlineTool, networkBodyOutline);
+      _register(networkBodyQueryTool, networkBodyQuery);
       _register(networkClearTool, networkClear);
       _register(networkDiffTool, networkDiff);
       _register(networkReplayTool, networkReplay);
@@ -154,6 +159,7 @@ base class FlutterNetworkMcpServer extends MCPServer with ToolsSupport {
 
     if (caps.isEnabled(Category.admin)) {
       _register(ignoredHostsTool, ignoredHosts);
+      _register(captureAllowTool, captureAllow);
       _register(redactedHeadersTool, redactedHeaders);
       _register(dbStatsTool, dbStats);
       _register(dbVacuumTool, dbVacuum);

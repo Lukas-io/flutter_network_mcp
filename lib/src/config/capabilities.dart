@@ -26,7 +26,7 @@ enum Category {
   /// Read-only SQL escape hatch: network_query.
   sql('sql'),
 
-  /// Admin: ignored_hosts (host allowlist).
+  /// Admin: ignored_hosts (host/path skiplist — a denylist, not an allowlist).
   admin('admin');
 
   const Category(this.key);

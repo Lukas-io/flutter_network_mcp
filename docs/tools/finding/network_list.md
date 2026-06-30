@@ -69,6 +69,8 @@ In both modes, the response includes:
 
 Null-valued fields are omitted per-request to keep payloads tight.
 
+`requestContentLength` / `responseContentLength` are real byte counts (`0` = no body). A chunked / unknown-length message is reported as `requestSizeKnown: false` / `responseSizeKnown: false` instead of a misleading `-1` (#62); `network_get` on that id resolves the true size once the body is read.
+
 Error shapes:
 
 ```json

@@ -8,6 +8,7 @@ import '../config/capabilities.dart';
 import '../state/session.dart';
 import '../storage/captures_db.dart';
 import '../util/body_decoder.dart';
+import '../util/body_status.dart';
 import '../util/scope.dart';
 import 'error_kind.dart';
 import 'result.dart';
@@ -201,14 +202,30 @@ CallToolResult _buildLiveResponse({
       ? decodeBody(r.responseBody, respCt, maxBytes: maxBytes)?.toJson()
       : null;
 
+  // Classify body presence (#59) from the persisted row when available, so a
+  // body lost upstream reads as `unavailable`, not the same `empty` a genuine
+  // no-body response gets. Pre-persist (live, before the async backfill) there
+  // is no row yet, so fall back to what the VM profiler itself surfaced.
+  final dbRow = CapturesDao().getHttpRequest(scope.sessionId, r.id);
+  Map<String, Object?> liveBodyStatus(String which, List<int>? body, int? contentLength) {
+    final hasBytes = body != null && body.isNotEmpty;
+    if (dbRow != null) {
+      return bodyStatusFor(row: dbRow, which: which, hasBytes: hasBytes);
+    }
+    if (hasBytes) return const {'bodyStatus': 'stored'};
+    if (contentLength == 0) return const {'bodyStatus': 'empty'};
+    return const {'bodyStatus': 'pending'};
+  }
+
   final requestData = r.request == null
       ? null
       : {
           if (r.request!.hasError) 'error': r.request!.error,
           if (!r.request!.hasError) ...{
             'headers': truncateHeaders(r.request!.headers, maxValueBytes: headerTruncateBytes),
-            if (r.request!.contentLength != null) 'contentLength': r.request!.contentLength,
+            ...sizeFields(r.request!.contentLength),
             if ((r.request!.cookies ?? []).isNotEmpty) 'cookies': r.request!.cookies,
+            ...liveBodyStatus('request', r.requestBody, r.request!.contentLength),
           },
           if (reqBody != null) 'body': reqBody,
         };
@@ -220,8 +237,9 @@ CallToolResult _buildLiveResponse({
             if (r.response!.statusCode != null) 'statusCode': r.response!.statusCode,
             if (r.response!.reasonPhrase != null) 'reasonPhrase': r.response!.reasonPhrase,
             'headers': truncateHeaders(r.response!.headers, maxValueBytes: headerTruncateBytes),
-            if (r.response!.contentLength != null) 'contentLength': r.response!.contentLength,
+            ...sizeFields(r.response!.contentLength),
             if (r.response!.compressionState != null) 'compressionState': r.response!.compressionState,
+            ...liveBodyStatus('response', r.responseBody, r.response!.contentLength),
           },
           if (respBody != null) 'body': respBody,
         };
@@ -317,7 +335,9 @@ FutureOr<CallToolResult> _historyGet({
     final requestData = {
       if (reqHeaders != null)
         'headers': truncateHeaders(reqHeaders, maxValueBytes: headerTruncateBytes),
-      if (row['request_size'] != null) 'contentLength': row['request_size'],
+      ...sizeFields(row['request_size'] as int?),
+      ...bodyStatusFor(
+          row: row, which: 'request', hasBytes: reqBlob != null && reqBlob.isNotEmpty),
       if (reqBody != null) 'body': reqBody,
     };
     final responseData = {
@@ -325,7 +345,9 @@ FutureOr<CallToolResult> _historyGet({
       if (row['reason_phrase'] != null) 'reasonPhrase': row['reason_phrase'],
       if (respHeaders != null)
         'headers': truncateHeaders(respHeaders, maxValueBytes: headerTruncateBytes),
-      if (row['response_size'] != null) 'contentLength': row['response_size'],
+      ...sizeFields(row['response_size'] as int?),
+      ...bodyStatusFor(
+          row: row, which: 'response', hasBytes: respBlob != null && respBlob.isNotEmpty),
       if (respBody != null) 'body': respBody,
     };
 
@@ -440,6 +462,7 @@ List<String> _nextStepsFor({
   if (caps.isEnabled(Category.http)) {
     if (respTrunc) {
       final total = responseBody!['totalSize'];
+      steps.add('network_body_outline id:"$id" — structure of the full body (keys/types/sizes, no values) so you drill the right branch');
       steps.add('network_body id:"$id" which:response offset:4096 length:16384 — page beyond the cap (totalSize $total)');
     } else if (reqTrunc) {
       final total = requestBody!['totalSize'];
