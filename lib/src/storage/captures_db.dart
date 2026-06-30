@@ -854,6 +854,18 @@ class CapturesDao {
     return true;
   }
 
+  /// Count of already-captured requests for an exact [host] (case-insensitive).
+  /// Parameterized — safe for arbitrary host/glob strings. A glob pattern
+  /// (e.g. `h/path/*`) matches no literal host, so returns 0, which is correct:
+  /// the "already-captured" warning only applies to a whole-host entry.
+  int countRequestsForHost(String host) {
+    final row = _db.select(
+      'SELECT COUNT(*) AS n FROM http_requests WHERE host = ?',
+      [host.toLowerCase()],
+    ).first;
+    return (row['n'] as int?) ?? 0;
+  }
+
   List<Map<String, Object?>> listIgnoredHosts() {
     final rows = _db.select(
       'SELECT host, added_at, reason FROM ignored_hosts ORDER BY host',
