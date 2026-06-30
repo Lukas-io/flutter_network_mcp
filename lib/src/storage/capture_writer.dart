@@ -7,6 +7,7 @@ import 'package:vm_service/vm_service.dart';
 
 import '../alerts/alert_detector.dart';
 import '../config/capabilities.dart';
+import '../config/capture_filter.dart';
 import '../state/session.dart';
 import '../util/body_decoder.dart';
 import '../vm/vm_client.dart';
@@ -60,7 +61,7 @@ class CaptureWriter {
   /// Tick counter modulo [_capCheckEveryNTicks].
   int _ticksSinceCapCheck = 0;
 
-  Set<String> _ignoredHosts = const {};
+  CaptureFilter _captureFilter = CaptureFilter.empty();
 
   bool get isRunning => _timer != null;
 
@@ -91,9 +92,9 @@ class CaptureWriter {
 
   void _refreshIgnoredHosts() {
     try {
-      _ignoredHosts = _dao.ignoredHostSet();
+      _captureFilter = CaptureFilter.build(_dao.ignoredHostSet());
     } catch (_) {
-      _ignoredHosts = const {};
+      _captureFilter = CaptureFilter.empty();
     }
   }
 
@@ -153,7 +154,7 @@ class CaptureWriter {
         );
         _lastCursorPerIsolate[iso.id] = profile.timestamp;
         for (final req in profile.requests) {
-          if (_ignoredHosts.contains(req.uri.host)) continue;
+          if (!_captureFilter.shouldCapture(req.uri)) continue;
           _dao.upsertHttpRequest(sid, req, isolateId: iso.id);
           if (alertsOn) _detector.forHttpRequest(sid, req);
         }
