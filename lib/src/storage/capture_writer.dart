@@ -117,6 +117,9 @@ class CaptureWriter {
       if (CapabilityConfig.instance.isEnabled(Category.sockets)) {
         await _pollSockets(vm, sid);
       }
+      if (CapabilityConfig.instance.isEnabled(Category.realtime)) {
+        await _pollRealtime(vm, sid);
+      }
       if (CapabilityConfig.instance.isEnabled(Category.http)) {
         await _backfillBodies(vm, sid);
       }
@@ -177,6 +180,59 @@ class CaptureWriter {
           _dao.upsertSocket(sid, s, isolateId: iso.id);
         }
       } catch (_) {
+      }
+    }
+  }
+
+  /// Drains the companion package's WebSocket capture buffer over its VM
+  /// service extension and persists connections + frames. Only isolates that
+  /// registered the extension respond; apps without `flutter_network_mcp_hooks`
+  /// simply have no realtime isolates, so this is a no-op for them.
+  Future<void> _pollRealtime(VmClient vm, int sid) async {
+    // The HTTP path drives isolate discovery; when http is disabled, kick off
+    // a one-time discovery here so the companion isolate is found.
+    if (vm.realtimeIsolates.isEmpty && vm.httpProfilingIsolates.isEmpty) {
+      try {
+        await vm.discoverHttpProfilingIsolates();
+      } catch (_) {/* transient; retry next tick */}
+    }
+    for (final isoId in vm.realtimeIsolates) {
+      try {
+        final profile = await vm.getRealtimeProfile(isoId);
+        final connections = profile['connections'];
+        if (connections is List) {
+          for (final c in connections) {
+            if (c is! Map || c['id'] is! num) continue;
+            _dao.upsertWsConnection(
+              sid,
+              connId: (c['id'] as num).toInt(),
+              host: c['host'] as String?,
+              port: (c['port'] as num?)?.toInt(),
+              path: c['path'] as String?,
+              startedMs: (c['startedMs'] as num?)?.toInt(),
+              isolateId: isoId,
+            );
+          }
+        }
+        final frames = profile['frames'];
+        if (frames is List) {
+          for (final f in frames) {
+            if (f is! Map || f['connectionId'] is! num) continue;
+            _dao.insertWsFrame(
+              sid,
+              connId: (f['connectionId'] as num).toInt(),
+              tsMs: (f['tsMs'] as num?)?.toInt(),
+              direction: (f['dir'] as String?) ?? 'in',
+              opcode: (f['opcode'] as String?) ?? 'binary',
+              length: (f['len'] as num?)?.toInt(),
+              isText: f['isText'] == true,
+              compressed: f['compressed'] == true,
+              preview: f['preview'] as String?,
+            );
+          }
+        }
+      } catch (e, st) {
+        io.stderr.writeln('CaptureWriter _pollRealtime($isoId) failed: $e\n$st');
       }
     }
   }

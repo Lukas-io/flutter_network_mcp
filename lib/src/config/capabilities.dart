@@ -7,6 +7,10 @@ enum Category {
   /// dart:io socket tools.
   sockets('sockets'),
 
+  /// WebSocket frame capture via the flutter_network_mcp_hooks companion:
+  /// ws_list / ws_get. Empty unless the app installs the companion package.
+  realtime('realtime'),
+
   /// Log streams + logs_tail / logs_clear.
   logs('logs'),
 

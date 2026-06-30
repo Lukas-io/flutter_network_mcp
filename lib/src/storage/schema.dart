@@ -72,6 +72,34 @@ const List<String> initialSchema = [
   )
   ''',
   '''
+  CREATE TABLE websocket_connections (
+    session_id  INTEGER NOT NULL,
+    conn_id     INTEGER NOT NULL,
+    host        TEXT,
+    port        INTEGER,
+    path        TEXT,
+    started_ms  INTEGER,
+    isolate_id  TEXT,
+    PRIMARY KEY (session_id, conn_id),
+    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+  )
+  ''',
+  '''
+  CREATE TABLE websocket_frames (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id  INTEGER NOT NULL,
+    conn_id     INTEGER NOT NULL,
+    ts_ms       INTEGER,
+    direction   TEXT,
+    opcode      TEXT,
+    length      INTEGER,
+    is_text     INTEGER NOT NULL DEFAULT 0,
+    compressed  INTEGER NOT NULL DEFAULT 0,
+    preview     TEXT,
+    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+  )
+  ''',
+  '''
   CREATE TABLE log_records (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id   INTEGER NOT NULL,
@@ -145,6 +173,8 @@ const List<String> initialSchema = [
   'CREATE INDEX idx_http_status ON http_requests(status_code)',
   'CREATE INDEX idx_http_isolate ON http_requests(session_id, isolate_id)',
   'CREATE INDEX idx_socket_session_start ON socket_events(session_id, start_us)',
+  'CREATE INDEX idx_ws_conn_session ON websocket_connections(session_id, started_ms)',
+  'CREATE INDEX idx_ws_frames_conn ON websocket_frames(session_id, conn_id, id)',
   'CREATE INDEX idx_logs_session_time ON log_records(session_id, timestamp_ms)',
   'CREATE INDEX idx_logs_level ON log_records(level)',
   'CREATE INDEX idx_logs_isolate ON log_records(session_id, isolate_id)',
@@ -319,6 +349,44 @@ const List<String> migrationV6toV7 = [
   ''',
   'CREATE INDEX IF NOT EXISTS idx_tool_events_corr ON tool_events(correlation_id, ts_ms)',
   'CREATE INDEX IF NOT EXISTS idx_tool_events_tool ON tool_events(tool, ts_ms)',
+];
+
+/// v9 -> v10: WebSocket frame capture (0.9.0, shelved companion). The dart:io
+/// VM profiler stops at the HTTP upgrade, so post-upgrade frames are invisible
+/// to getHttpProfile. The `flutter_network_mcp_hooks` companion captures frames
+/// in-app; the MCP drains them over `ext.flutter_network_mcp.getRealtimeProfile`
+/// into these two tables. Apps without the companion leave them empty.
+const List<String> migrationV9toV10 = [
+  '''
+  CREATE TABLE IF NOT EXISTS websocket_connections (
+    session_id  INTEGER NOT NULL,
+    conn_id     INTEGER NOT NULL,
+    host        TEXT,
+    port        INTEGER,
+    path        TEXT,
+    started_ms  INTEGER,
+    isolate_id  TEXT,
+    PRIMARY KEY (session_id, conn_id),
+    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+  )
+  ''',
+  '''
+  CREATE TABLE IF NOT EXISTS websocket_frames (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id  INTEGER NOT NULL,
+    conn_id     INTEGER NOT NULL,
+    ts_ms       INTEGER,
+    direction   TEXT,
+    opcode      TEXT,
+    length      INTEGER,
+    is_text     INTEGER NOT NULL DEFAULT 0,
+    compressed  INTEGER NOT NULL DEFAULT 0,
+    preview     TEXT,
+    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+  )
+  ''',
+  'CREATE INDEX IF NOT EXISTS idx_ws_conn_session ON websocket_connections(session_id, started_ms)',
+  'CREATE INDEX IF NOT EXISTS idx_ws_frames_conn ON websocket_frames(session_id, conn_id, id)',
 ];
 
 /// v7 -> v8: token-usage tracking. Adds [estimated_tokens] to [tool_events]

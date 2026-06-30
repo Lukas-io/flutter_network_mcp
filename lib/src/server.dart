@@ -54,6 +54,8 @@ import 'tools/socket_clear.dart';
 import 'tools/socket_get.dart';
 import 'tools/socket_list.dart';
 import 'tools/usage_stats.dart';
+import 'tools/ws_get.dart';
+import 'tools/ws_list.dart';
 
 /// MCP server exposing Flutter DevTools data via DTD + VM service, with
 /// persistent capture sessions in SQLite, full-text search, proactive alerts,
@@ -111,6 +113,13 @@ base class FlutterNetworkMcpServer extends MCPServer with ToolsSupport {
       _register(socketListTool, socketList);
       _register(socketGetTool, socketGet);
       _register(socketClearTool, socketClear);
+    }
+
+    // WebSocket frame capture (0.9.0): needs the flutter_network_mcp_hooks
+    // companion installed in the app; the tools just read the persisted frames.
+    if (caps.isEnabled(Category.realtime)) {
+      _register(wsListTool, wsList);
+      _register(wsGetTool, wsGet);
     }
 
     if (caps.isEnabled(Category.logs)) {
