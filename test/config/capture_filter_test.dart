@@ -61,6 +61,14 @@ void main() {
       final f = CaptureFilter.build(const {}, allowOverride: ['a.com/x', 'b.com']);
       expect(f.allowPatterns, ['a.com/x', 'b.com']);
     });
+
+    test('allowEntries (the capture_allow table) drives the allowlist', () {
+      final f = CaptureFilter.build(const {}, allowEntries: {'a.com/x'});
+      expect(f.hasAllowlist, isTrue);
+      expect(f.allowPatterns, contains('a.com/x'));
+      expect(f.shouldCapture(u('https://a.com/x')), isTrue);
+      expect(f.shouldCapture(u('https://a.com/y')), isFalse);
+    });
   });
 
   test('empty() is inert', () {
