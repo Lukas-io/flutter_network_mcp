@@ -878,6 +878,39 @@ class CapturesDao {
     return {for (final r in rows) r['host'] as String};
   }
 
+  // ----- Capture allowlist (#64 follow-up): persistent, tool-managed -----
+
+  bool addCaptureAllow(String pattern, {String? reason}) {
+    final before =
+        _db.select('SELECT 1 FROM capture_allow WHERE pattern=?', [pattern]);
+    final isNew = before.isEmpty;
+    _db.execute(
+      'INSERT OR REPLACE INTO capture_allow(pattern, added_at, reason) VALUES (?,?,?)',
+      [pattern, DateTime.now().millisecondsSinceEpoch, reason],
+    );
+    return isNew;
+  }
+
+  bool removeCaptureAllow(String pattern) {
+    final before =
+        _db.select('SELECT 1 FROM capture_allow WHERE pattern=?', [pattern]);
+    if (before.isEmpty) return false;
+    _db.execute('DELETE FROM capture_allow WHERE pattern=?', [pattern]);
+    return true;
+  }
+
+  List<Map<String, Object?>> listCaptureAllow() {
+    final rows = _db.select(
+      'SELECT pattern, added_at, reason FROM capture_allow ORDER BY pattern',
+    );
+    return rows.map(_rowToMap).toList();
+  }
+
+  Set<String> captureAllowSet() {
+    final rows = _db.select('SELECT pattern FROM capture_allow');
+    return {for (final r in rows) r['pattern'] as String};
+  }
+
   void setSessionNote(int sessionId, String? note) {
     _db.execute('UPDATE sessions SET note=? WHERE id=?', [note, sessionId]);
   }

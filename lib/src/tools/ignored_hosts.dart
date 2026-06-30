@@ -16,9 +16,9 @@ final ignoredHostsTool = Tool(
       'with no "/" matches a whole host; an entry with "/" is a host/path glob '
       '(e.g. dev.example.com/socket.io/*) so you can silence one noisy path '
       'while keeping the rest of the host. Case-insensitive; only new captures '
-      'are filtered. The opt-in capture ALLOWlist (capture only matching '
-      'requests) is the FLUTTER_NETWORK_MCP_CAPTURE_ALLOW env var, surfaced in '
-      'the list output.',
+      'are filtered. The opposite (capture ONLY matching requests) is the '
+      'capture_allow tool / FLUTTER_NETWORK_MCP_CAPTURE_ALLOW env var, surfaced '
+      'in the list output as captureAllowlist.',
   inputSchema: Schema.object(
     properties: {
       'action': Schema.string(description: '"list" (default) | "add" | "remove".'),
@@ -43,7 +43,9 @@ FutureOr<CallToolResult> ignoredHosts(CallToolRequest request) async {
     switch (action) {
       case 'list':
         final rows = dao.listIgnoredHosts();
-        final allowlist = CaptureFilter.build(const {}).allowPatterns;
+        final allowlist = CaptureFilter.build(const {},
+                allowEntries: dao.captureAllowSet())
+            .allowPatterns;
         return jsonResult({
           'action': 'list',
           'summary': rows.isEmpty
@@ -61,7 +63,7 @@ FutureOr<CallToolResult> ignoredHosts(CallToolRequest request) async {
           'captureAllowlist': {
             'active': allowlist.isNotEmpty,
             'patterns': allowlist,
-            'env': 'FLUTTER_NETWORK_MCP_CAPTURE_ALLOW (comma-separated host or host/path globs)',
+            'managedBy': 'capture_allow tool (persistent) + FLUTTER_NETWORK_MCP_CAPTURE_ALLOW env',
             if (allowlist.isNotEmpty)
               'note': 'Only requests matching these patterns are captured; everything else is dropped.',
           },

@@ -17,6 +17,7 @@ import 'tools/bodies_purge.dart';
 import 'tools/correlate_at.dart';
 import 'tools/db_stats.dart';
 import 'tools/db_vacuum.dart';
+import 'tools/capture_allow.dart';
 import 'tools/ignored_hosts.dart';
 import 'tools/logs_clear.dart';
 import 'tools/logs_tail.dart';
@@ -149,6 +150,7 @@ base class FlutterNetworkMcpServer extends MCPServer with ToolsSupport {
 
     if (caps.isEnabled(Category.admin)) {
       _register(ignoredHostsTool, ignoredHosts);
+      _register(captureAllowTool, captureAllow);
       _register(redactedHeadersTool, redactedHeaders);
       _register(dbStatsTool, dbStats);
       _register(dbVacuumTool, dbVacuum);
