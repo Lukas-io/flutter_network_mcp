@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.9.15] — 2026-06-30
+
+### Security — parameterize the ignored_hosts "already-captured" count query
+
+The `ignored_hosts action:add` path counted existing rows with a string-interpolated `WHERE host = '<input>'`. Harmless while inputs were plain hosts, but #64 made that input an agent-supplied host/path glob, turning it injection-shaped. Replaced with a parameterized `CapturesDao.countRequestsForHost`. A glob pattern matches no literal host (returns 0, which is correct — the "already-captured" warning only applies to a whole-host entry). 317 tests green (+3, incl. an injection-shaped input that now returns 0 and leaves the table intact).
+
 ## [0.9.14] — 2026-06-30
 
 ### Added — no-persist / ephemeral capture mode (#64 part 3, closes #64)

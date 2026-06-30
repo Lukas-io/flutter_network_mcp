@@ -84,10 +84,7 @@ FutureOr<CallToolResult> ignoredHosts(CallToolRequest request) async {
 
         int existingCount = 0;
         try {
-          final rows = dao.rawSelect(
-            "SELECT COUNT(*) AS n FROM http_requests WHERE host = '${host.toLowerCase()}'",
-          );
-          if (rows.isNotEmpty) existingCount = (rows.first['n'] as int?) ?? 0;
+          existingCount = dao.countRequestsForHost(host);
         } catch (_) {/* best effort */}
 
         final warnings = <String>[];
