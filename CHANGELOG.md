@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.9.13] — 2026-06-30
+
+### Added — precise capture filtering: host/path globs + opt-in allowlist (#64, parts 1/2/4)
+
+The only capture filter was `ignored_hosts` — a host-level denylist, all-or-nothing per host. That is a foot-gun: to silence `dev.example.com/socket.io/*` reconnect noise you had to drop the whole host, which silently took the entire REST API with it. Now:
+
+- **Path/URL-pattern denylist.** `ignored_hosts` entries with a `/` are `host/path` globs (`*` = any chars, `?` = one char). `dev.example.com/socket.io/*` silences just the polling while the REST API on the same host keeps flowing. Bare-host entries are unchanged (exact host, any path).
+- **Opt-in allowlist (capture-only).** `FLUTTER_NETWORK_MCP_CAPTURE_ALLOW` (comma-separated host/path globs) captures ONLY matching requests and drops the rest — for focused debugging ("just `/stock/*`"). Deny still wins inside the allowed set. Surfaced in `ignored_hosts action:list` as `captureAllowlist`.
+- **Doc-label fix.** `capabilities.dart` described `ignored_hosts` as a "host allowlist"; it is a denylist. Fixed there and in the tool's output/docs.
+
+Both layers fold into one `CaptureFilter` applied at the writer's poll tick (pre-persist), so filtered requests never hit the DB, alerts, FTS, or body backfill. 311 tests green (+9: host/path globs, allowlist, deny-wins-inside-allow); verified live (`socket.io/*` dropped while `/api` + `/stock` on the same host were kept; the allowlist captured only `/stock/*`). No-persist mode (#64 part 3) ships separately.
+
 ## [0.9.12] — 2026-06-29
 
 ### Added — rolling DB size cap: auto-evict oldest-first, never the live session (#58)
