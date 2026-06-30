@@ -72,9 +72,11 @@ FutureOr<CallToolResult> dbStats(CallToolRequest request) async {
     }
 
     final lastEviction = DbCapManager.instance.lastEviction;
+    final ephemeral = CapturesDatabase.instance.isEphemeral;
     return jsonResult({
-      'summary': summary,
+      'summary': ephemeral ? '$summary (NO-PERSIST: in-memory only)' : summary,
       'path': CapturesDatabase.instance.path,
+      'ephemeral': ephemeral,
       ...stats,
       'sizeCap': {
         'enabled': capBytes != null,
