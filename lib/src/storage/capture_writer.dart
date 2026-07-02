@@ -146,6 +146,7 @@ class CaptureWriter {
     await _maybeRescanIsolates(vm);
 
     final alertsOn = CapabilityConfig.instance.isEnabled(Category.alerts);
+    final searchOn = CapabilityConfig.instance.isEnabled(Category.search);
     final isolates = vm.httpProfilingIsolates;
     if (isolates.isEmpty) return;
 
@@ -158,7 +159,19 @@ class CaptureWriter {
         _lastCursorPerIsolate[iso.id] = profile.timestamp;
         for (final req in profile.requests) {
           if (!_captureFilter.shouldCapture(req.uri)) continue;
-          _dao.upsertHttpRequest(sid, req, isolateId: iso.id);
+          final isNew = _dao.upsertHttpRequest(sid, req, isolateId: iso.id);
+          // RC2: URL searchable from first sight, not only after the body
+          // backfill (which never ran for empty-body / given-up requests).
+          // Only on isNew — the backfill's later full index (url + body
+          // text) must not be clobbered by re-delivered updates.
+          if (searchOn && isNew) {
+            _dao.indexForSearch(
+              sessionId: sid,
+              vmId: req.id,
+              isolateId: iso.id,
+              url: req.uri.toString(),
+            );
+          }
           if (alertsOn) _detector.forHttpRequest(sid, req);
         }
       } catch (e, st) {

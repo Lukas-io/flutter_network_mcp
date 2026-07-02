@@ -8,6 +8,7 @@ import '../config/session_filters.dart';
 import '../state/session.dart';
 import '../storage/captures_db.dart';
 import '../util/body_decoder.dart';
+import '../util/http_timing.dart';
 import '../util/body_status.dart';
 import '../util/filters.dart';
 import '../util/scope.dart';
@@ -453,6 +454,8 @@ Map<String, Object?> liveSummary(HttpProfileRequest r) {
   final reqErr = r.request?.hasError ?? false;
   final respErr = r.response?.hasError ?? false;
   final ct = firstHeader(r.response?.headers, 'content-type');
+  // RC1: exchange end, not request-upload end — see util/http_timing.dart.
+  final end = exchangeEndTime(r);
   return {
     'id': r.id,
     'method': r.method,
@@ -460,9 +463,9 @@ Map<String, Object?> liveSummary(HttpProfileRequest r) {
     'host': r.uri.host,
     'path': r.uri.path,
     'startTimeMs': r.startTime.millisecondsSinceEpoch,
-    if (r.endTime != null) 'endTimeMs': r.endTime!.millisecondsSinceEpoch,
-    if (r.endTime != null)
-      'durationMs': r.endTime!.difference(r.startTime).inMilliseconds,
+    if (end != null) 'endTimeMs': end.millisecondsSinceEpoch,
+    if (end != null)
+      'durationMs': end.difference(r.startTime).inMilliseconds,
     'isComplete': r.isRequestComplete,
     if (r.response?.statusCode != null) 'statusCode': r.response!.statusCode,
     if (r.response?.reasonPhrase != null) 'reasonPhrase': r.response!.reasonPhrase,
