@@ -19,6 +19,12 @@ final sessionExportTool = Tool(
       'id': Schema.int(description: 'Session id (from session_list).'),
       'format': Schema.string(description: '"har" | "ndjson".'),
       'outPath': Schema.string(description: 'Absolute path to write to.'),
+      'redact': Schema.bool(
+        description:
+            'Redact auth headers/cookies in the export. Default FALSE — this '
+            'is your own traffic and a faithful capture is usually what you '
+            'want; pass true for a scrubbed file to share.',
+      ),
     },
     required: ['id', 'format', 'outPath'],
   ),
@@ -61,10 +67,12 @@ FutureOr<CallToolResult> sessionExport(CallToolRequest request) async {
   final fileExists = io.File(outPath).existsSync();
 
   try {
+    final redact = (args['redact'] as bool?) ?? false;
     final written = await exportSession(
       sessionId: id,
       outPath: outPath,
       format: format,
+      redact: redact,
     );
     final sizeBytes = io.File(written).lengthSync();
     final httpCount = row['http_count'] ?? 0;
@@ -86,14 +94,14 @@ FutureOr<CallToolResult> sessionExport(CallToolRequest request) async {
     if (format == 'har' && (httpCount as int) == 0) {
       warnings.add('Session has no HTTP requests — the HAR file will have an empty entries[] array.');
     }
-    // #57: this is the share boundary. The export contains full headers and
-    // bodies (auth tokens, cookies) unredacted — warn loudly before it leaves
-    // the machine.
+    // #57: the share boundary. Auth-header redaction is opt-in (D5); bodies
+    // are never redacted, so warn regardless, but tune the message.
     if ((httpCount as int) > 0) {
-      warnings.add(
-        'This $format contains UNREDACTED auth headers, cookies, and bodies — '
-        'scrub it before sharing or attaching to an issue.',
-      );
+      warnings.add(redact
+          ? 'Auth HEADERS were redacted, but request/response BODIES are '
+              'exported as-is (they may contain tokens/PII) — review before sharing.'
+          : 'This $format contains UNREDACTED auth headers, cookies, and '
+              'bodies — pass redact:true or scrub it before sharing.');
     }
 
     return jsonResult({
