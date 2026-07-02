@@ -44,14 +44,23 @@ void main() {
     CapturesDatabase.open(dataDir: dir.path);
     final raw = CapturesDatabase.instance.raw;
     raw.execute('DROP TABLE capture_allow');
+    // A real v9 DB predates both capture_allow (v10) and redirects_json
+    // (v11), so drop the column too — else replaying 10->11 re-adds it.
+    raw.execute('ALTER TABLE http_requests DROP COLUMN redirects_json');
     raw.execute("UPDATE _meta SET value='9' WHERE key='schema_version'");
     CapturesDatabase.instance.close();
 
-    // Reopen → the v9 -> v10 migration recreates the table.
+    // Reopen → v9->v10 recreates capture_allow, v10->v11 re-adds redirects_json.
     CapturesDatabase.open(dataDir: dir.path);
     final dao = CapturesDao();
     expect(() => dao.addCaptureAllow('a.com/x'), returnsNormally);
     expect(dao.captureAllowSet(), {'a.com/x'});
+    // v11 column is back.
+    final cols = CapturesDatabase.instance.raw
+        .select('PRAGMA table_info(http_requests)')
+        .map((r) => r['name'])
+        .toList();
+    expect(cols, contains('redirects_json'));
 
     CapturesDatabase.instance.close();
     dir.deleteSync(recursive: true);

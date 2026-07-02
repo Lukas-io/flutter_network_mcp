@@ -84,6 +84,22 @@ void main() {
     expect(binary, isEmpty);
   });
 
+  test('URL index includes the percent-decoded form (F23 i18n)', () {
+    insertReq('r7', 'https://api.example.com/api/ok?coupon=%C3%9CMLAUT');
+    dao.indexForSearch(
+        sessionId: sid,
+        vmId: 'r7',
+        url: 'https://api.example.com/api/ok?coupon=%C3%9CMLAUT');
+    // The human spelling matches...
+    expect(
+        dao.searchRequests(sessionId: sid, query: 'ÜMLAUT', which: 'url'),
+        hasLength(1));
+    // ...and so does the wire encoding.
+    expect(
+        dao.searchRequests(sessionId: sid, query: '9CMLAUT', which: 'url'),
+        hasLength(1));
+  });
+
   test('repair is idempotent', () {
     insertReq('r5', 'https://api.example.com/one-off');
     expect(dao.repairSearchIndex(), 1);

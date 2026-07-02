@@ -126,6 +126,13 @@ class CapturesDao {
         : null;
     final contentType = _firstHeader(r.response?.headers, 'content-type') ??
         _firstHeader(r.request?.headers, 'content-type');
+    // D7/F22: dart:io collapses a followed redirect chain into ONE profile
+    // entry; the hops live in response.redirects. Persist them so
+    // network_get can show the chain and HAR export can fill redirectURL.
+    final redirects = r.response?.redirects;
+    final redirectsJson = (redirects != null && redirects.isNotEmpty)
+        ? jsonEncode(redirects)
+        : null;
     // RC1: exchange end, not request-upload end — see util/http_timing.dart.
     // In-flight requests persist NULL end/duration; the poller's
     // updatedSince cursor re-delivers them when the response completes and
@@ -141,8 +148,8 @@ class CapturesDao {
     final isNew = before.isEmpty;
 
     _db.execute(
-      'INSERT INTO http_requests(session_id, vm_id, isolate_id, method, url, host, path, status_code, reason_phrase, start_us, end_us, duration_us, request_size, response_size, content_type, request_headers_json, response_headers_json, has_error) '
-      'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) '
+      'INSERT INTO http_requests(session_id, vm_id, isolate_id, method, url, host, path, status_code, reason_phrase, start_us, end_us, duration_us, request_size, response_size, content_type, request_headers_json, response_headers_json, has_error, redirects_json) '
+      'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) '
       'ON CONFLICT(session_id, vm_id) DO UPDATE SET '
       '  isolate_id=COALESCE(excluded.isolate_id, isolate_id), '
       '  method=excluded.method, url=excluded.url, host=excluded.host, path=excluded.path, '
@@ -152,7 +159,8 @@ class CapturesDao {
       '  content_type=excluded.content_type, '
       '  request_headers_json=excluded.request_headers_json, '
       '  response_headers_json=excluded.response_headers_json, '
-      '  has_error=excluded.has_error',
+      '  has_error=excluded.has_error, '
+      '  redirects_json=COALESCE(excluded.redirects_json, redirects_json)',
       [
         sessionId,
         r.id,
@@ -172,6 +180,7 @@ class CapturesDao {
         headersReq,
         headersResp,
         ((r.request?.hasError ?? false) || (r.response?.hasError ?? false)) ? 1 : 0,
+        redirectsJson,
       ],
     );
     return isNew;
@@ -934,6 +943,17 @@ class CapturesDao {
 
   /// Indexes a (utf8-decoded) request/response body pair into the FTS table.
   /// Pass `null` for empty bodies. Idempotent on (session_id, vm_id).
+  /// D7/F23: the FTS-indexable URL string. Appends the percent-decoded
+  /// form when it differs so i18n query params (e.g. ÜMLAUT) match the
+  /// human spelling as well as the wire encoding.
+  static String _urlForIndex(String url) {
+    try {
+      final decoded = Uri.decodeFull(url);
+      if (decoded != url) return '$url $decoded';
+    } catch (_) {/* malformed escape — index raw only */}
+    return url;
+  }
+
   void indexForSearch({
     required int sessionId,
     required String vmId,
@@ -942,6 +962,11 @@ class CapturesDao {
     String? responseText,
     String? isolateId,
   }) {
+    // D7/F23: index the DECODED URL alongside the raw percent-encoded one at
+    // this single choke point (covers all three callers: writer first-sight,
+    // body-backfill re-index, and the repair pass). Before this, a search for
+    // "ÜMLAUT" missed `%C3%9CMLAUT` in the stored URL — invisible i18n.
+    final indexedUrl = _urlForIndex(url);
     final existing = _db.select(
       'SELECT rowid FROM http_search_map WHERE session_id=? AND vm_id=?',
       [sessionId, vmId],
@@ -951,7 +976,7 @@ class CapturesDao {
       _db.execute('DELETE FROM http_search WHERE rowid=?', [rowid]);
       _db.execute(
         'INSERT INTO http_search(rowid, url, content_request, content_response) VALUES (?,?,?,?)',
-        [rowid, url, requestText ?? '', responseText ?? ''],
+        [rowid, indexedUrl, requestText ?? '', responseText ?? ''],
       );
       _db.execute(
         'UPDATE http_search_map SET isolate_id = COALESCE(?, isolate_id) '
@@ -962,7 +987,7 @@ class CapturesDao {
     }
     _db.execute(
       'INSERT INTO http_search(url, content_request, content_response) VALUES (?,?,?)',
-      [url, requestText ?? '', responseText ?? ''],
+      [indexedUrl, requestText ?? '', responseText ?? ''],
     );
     final rowid = _db.lastInsertRowId;
     _db.execute(

@@ -105,7 +105,9 @@ class HarExporter {
         'cookies': const <dynamic>[],
         'headers': _harHeaders(respHeaders),
         'content': _content(respBody, respContentType),
-        'redirectURL': '',
+        // F22: fill redirectURL from the last hop's Location when the
+        // request followed a chain (dart:io collapses it into one entry).
+        'redirectURL': _lastRedirectLocation(r['redirects_json'] as String?),
         'headersSize': -1,
         'bodySize': r['response_size'] ?? -1,
       },
@@ -160,6 +162,23 @@ class HarExporter {
         'encoding': 'base64',
       },
     };
+  }
+
+  /// F22: the Location of the final redirect hop, or '' when none. dart:io
+  /// collapses a followed chain into one profile entry, so this is an
+  /// approximation of the HAR redirectURL field (the last known target).
+  String _lastRedirectLocation(String? redirectsJson) {
+    if (redirectsJson == null || redirectsJson.isEmpty) return '';
+    try {
+      final decoded = jsonDecode(redirectsJson);
+      if (decoded is List && decoded.isNotEmpty) {
+        final last = decoded.last;
+        if (last is Map && last['location'] is String) {
+          return last['location'] as String;
+        }
+      }
+    } catch (_) {/* malformed — no redirectURL */}
+    return '';
   }
 
   List<Map<String, Object?>> _harHeaders(Map<String, dynamic>? headers) {
