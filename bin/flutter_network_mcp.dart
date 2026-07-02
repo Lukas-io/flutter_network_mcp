@@ -10,6 +10,7 @@ import 'package:flutter_network_mcp/src/install/setup.dart';
 import 'package:flutter_network_mcp/src/install/update.dart';
 import 'package:flutter_network_mcp/src/server.dart';
 import 'package:flutter_network_mcp/src/session_migrator.dart';
+import 'package:flutter_network_mcp/src/alerts/alert_retention.dart';
 import 'package:flutter_network_mcp/src/storage/captures_db.dart';
 import 'package:flutter_network_mcp/src/storage/database.dart';
 import 'package:flutter_network_mcp/src/telemetry/audit_subcommand.dart';
@@ -350,6 +351,15 @@ Future<void> _runMain(List<String> args) async {
   // early-returns). Opt out with FLUTTER_NETWORK_MCP_NO_AUTO_MIGRATE=true.
   if (env['FLUTTER_NETWORK_MCP_NO_AUTO_MIGRATE']?.toLowerCase() != 'true') {
     SessionMigrator(defaultDtdUri: dtdUri).start();
+  }
+
+  // Alert retention: auto-expire old alerts from non-attached sessions so
+  // the pending banner reflects recent state instead of accumulating for
+  // weeks. Window via FLUTTER_NETWORK_MCP_ALERT_RETENTION_DAYS (default 14,
+  // 0 = keep forever); runtime-tunable via alerts_config. Runs a deferred
+  // first sweep + hourly, independent of attach.
+  if (!noPersist) {
+    AlertRetention().start();
   }
 }
 
