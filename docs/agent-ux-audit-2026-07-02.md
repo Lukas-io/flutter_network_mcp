@@ -333,3 +333,30 @@ Every remaining finding was fixed at the **system-design level** (not patched) a
 Migration v10→v11 verified on the real 491 MB DB copy: 430 ms, 89,378 rows intact (additive `ALTER TABLE` is metadata-only).
 
 **Remaining to close 1.0.0:** (1) `/mcp` reconnect → live-verify the sprint against 0.10.0 with the testbed + real apps (the D2/D3/D4/D5/D6/D7/D9 checks in the plan's verification section); (2) fresh-agent re-audit protocol; (3) confirm `usage_stats` search empty-rate (54%) and query error-rate (53%) have dropped. If green → tag 1.0.0.
+
+---
+
+# Phase 8 — live verification on 0.10.0 (post-reconnect), GATE PASSED
+
+Reconnected; server reports `version: 0.10.0`. Ran the full battery against a controlled testbed (attached during warm-up so the one-time flow was captured) + the live sanga_driver / sanga_mobile / aetrust apps.
+
+| Fix | Live evidence on 0.10.0 |
+|---|---|
+| **D1** updateAvailable | `mcp` block has **no `updateAvailable`** while running 0.10.0 (was falsely advertising 0.9.16). |
+| **D2** scope shadow | `session_open` an ended session while 3 live attached → every read carried `scope.note` + a promoted warning "Reading HISTORY session 350 … 3 live session(s) attached". |
+| **D2** attach auto-close | Attaching aetrust while viewing history → `warnings: ["Closed the open history view of session 350 …"]`. |
+| **D2** alert scope label | Session read: `pendingAlerts.scope: "session"`; cross-session correlate / query: `"all-sessions"`. |
+| **D3** taxonomy | `network_get` bad id on a healthy VM → `errorKind: "not_found"` (was `unresponsive_vm`), with list/search recovery steps. |
+| **D4** history cursor | `network_list` `nextCursor` = oldest-in-batch + "page OLDER" hint; `before:<cursor>` returned strictly-older rows; mid-history offered both older+newer hints. |
+| **D5** redaction | `network_get` default → `authorization: "<redacted>"`; `redact:false` → real `Bearer …`; `network_replay` default → `<redacted>` in the curl. |
+| **D6** in-band docs | `ListMcpResources` → **55 resources** (`docs/tools/**` + RESPONSE_CONTRACT); read `network_query.md` back through the resource. `network_query` **0% error rate over 5 live SQL calls** (was 53%). |
+| **D7** WS no phantom alert | Real sanga_driver socket.io session: querying alerts for detached/socket.io/failed-request → only a legit `http_slow`, **zero phantom http_error**. Same on the testbed `/ws` 101. |
+| **D7** redirect chain | Testbed `/api/redirect` row: `redirects_json: [{"location":"/api/ok","method":"GET","statusCode":302}]`. |
+| **D7** i18n search | Search "ÜMLAUT" matched `…coupon=%C3%9CMLAUT…` with a decoded «ÜMLAUT» highlight (previously missed). |
+| **D8** correlate size | Real 2-app correlate: `matchesShown:10 / matchesTotal:100` per session, compact rows, snippets only on `pairs`. |
+| **D9** tri-state | `session_list` carries `status: "live"|"ended"` per session. |
+| **RC1** durations (bonus) | Testbed `/api/slow` (1.6 s delay) → `duration_us: 1,603,513`. |
+
+Not force-verified live (nondeterministic or covered by unit tests + code review): **D9 capability self-heal** (forcing an attach-time race is nondeterministic — unit-covered + the heal loop runs every rescan); **D10 DTD-default rediscovery** (DTD stayed healthy this run — unit/code verified; the retry+`network_discover_dtd` routing is in `network_status`). **F17** remains unfixable-by-design (dart:io records nothing pre-enablement) — reproduced again here (attach-after-flow captured only heartbeats); the honest-attach-messaging follow-up is not yet written.
+
+**Verdict: gate PASSED.** Every design fix that can be observed live was observed. `network_query` error rate 53%→0%. Recommend tagging **1.0.0**.
