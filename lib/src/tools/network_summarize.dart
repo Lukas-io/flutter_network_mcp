@@ -53,7 +53,13 @@ FutureOr<CallToolResult> networkSummarize(CallToolRequest request) async {
   if (scopeErr != null) return scopeErr;
   scope!;
 
-  final sinceMsRaw = (args['sinceMs'] as int?) ?? _kSinceMsDefault;
+  // D4 (audit RC7/F5): the 1h default is a live-session convenience. For an
+  // ended/history session it produced "No HTTP over 1h" on traffic that was
+  // days ago, plus a "drive the app" hint. Default to the whole session
+  // when this isn't a live attach.
+  final summarizeState = SessionStateView.of(scope.sessionId);
+  final sinceMsRaw = (args['sinceMs'] as int?) ??
+      (summarizeState.canGenerateTraffic ? _kSinceMsDefault : 0);
   final hostContains = args['hostContains'] as String?;
   final limitRaw = (args['limit'] as int?) ?? _kLimitDefault;
   final limit = limitRaw <= 0
