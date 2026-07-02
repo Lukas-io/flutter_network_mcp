@@ -57,6 +57,12 @@ final networkGetTool = Tool(
             'Include the request lifecycle events array (HttpProfileRequest.events). '
             'Default false — events are rarely useful and add bulk.',
       ),
+      'redact': Schema.bool(
+        description:
+            'Redact auth-like headers (authorization, cookie, x-api-key, + '
+            'the redacted_headers list). Default TRUE — the agent transcript '
+            'is not a safe place for live tokens. Pass false to debug auth.',
+      ),
     },
     required: ['id'],
   ),
@@ -97,6 +103,10 @@ FutureOr<CallToolResult> networkGet(CallToolRequest request) async {
 
   final includeBodies = (args['includeBodies'] as bool?) ?? true;
   final includeEvents = (args['includeEvents'] as bool?) ?? false;
+  // D5: redact by default; opt out to debug auth flows.
+  final redact = (args['redact'] as bool?) ?? true;
+  final redactNames =
+      redact ? CapturesDao().redactedHeaderSet() : const <String>{};
   final truncateRaw = args['bodyTruncateBytes'] as int?;
   final maxBytes = (truncateRaw == null)
       ? 4096
@@ -115,6 +125,7 @@ FutureOr<CallToolResult> networkGet(CallToolRequest request) async {
       maxBytes: maxBytes,
       headerTruncateBytes: headerTruncateBytes,
       caps: caps,
+      redactNames: redactNames,
     );
   }
 
@@ -162,6 +173,7 @@ FutureOr<CallToolResult> networkGet(CallToolRequest request) async {
         maxBytes: maxBytes,
         headerTruncateBytes: headerTruncateBytes,
         caps: caps,
+        redactNames: redactNames,
         degradedFrom:
             'Live fetch failed (${lastError ?? "no isolate had id $id"}); '
             'returned the persisted DB copy instead.',
@@ -205,6 +217,7 @@ FutureOr<CallToolResult> networkGet(CallToolRequest request) async {
     maxBytes: maxBytes,
     headerTruncateBytes: headerTruncateBytes,
     caps: caps,
+    redactNames: redactNames,
   );
 }
 
@@ -217,6 +230,7 @@ CallToolResult _buildLiveResponse({
   required int maxBytes,
   required int headerTruncateBytes,
   required CapabilityConfig caps,
+  Set<String> redactNames = const {},
 }) {
   final reqCt = (r.request?.hasError ?? false)
       ? null
@@ -249,7 +263,7 @@ CallToolResult _buildLiveResponse({
       : {
           if (r.request!.hasError) 'error': r.request!.error,
           if (!r.request!.hasError) ...{
-            'headers': truncateHeaders(r.request!.headers, maxValueBytes: headerTruncateBytes),
+            'headers': truncateHeaders(r.request!.headers, maxValueBytes: headerTruncateBytes, redactNames: redactNames),
             ...sizeFields(r.request!.contentLength),
             if ((r.request!.cookies ?? []).isNotEmpty) 'cookies': r.request!.cookies,
             ...liveBodyStatus('request', r.requestBody, r.request!.contentLength),
@@ -266,7 +280,7 @@ CallToolResult _buildLiveResponse({
             // D7/F22: the redirect chain the request followed.
             if (r.response!.redirects.isNotEmpty)
               'redirects': r.response!.redirects,
-            'headers': truncateHeaders(r.response!.headers, maxValueBytes: headerTruncateBytes),
+            'headers': truncateHeaders(r.response!.headers, maxValueBytes: headerTruncateBytes, redactNames: redactNames),
             ...sizeFields(r.response!.contentLength),
             if (r.response!.compressionState != null) 'compressionState': r.response!.compressionState,
             ...liveBodyStatus('response', r.responseBody, r.response!.contentLength),
@@ -333,6 +347,7 @@ FutureOr<CallToolResult> _historyGet({
   required int maxBytes,
   required int headerTruncateBytes,
   required CapabilityConfig caps,
+  Set<String> redactNames = const {},
   String? degradedFrom,
 }) {
   final sid = scope.sessionId;
@@ -366,7 +381,7 @@ FutureOr<CallToolResult> _historyGet({
 
     final requestData = {
       if (reqHeaders != null)
-        'headers': truncateHeaders(reqHeaders, maxValueBytes: headerTruncateBytes),
+        'headers': truncateHeaders(reqHeaders, maxValueBytes: headerTruncateBytes, redactNames: redactNames),
       ...sizeFields(row['request_size'] as int?),
       ...bodyStatusFor(
           row: row, which: 'request', hasBytes: reqBlob != null && reqBlob.isNotEmpty),
@@ -379,7 +394,7 @@ FutureOr<CallToolResult> _historyGet({
       if (row['reason_phrase'] != null) 'reasonPhrase': row['reason_phrase'],
       if (redirects != null) 'redirects': redirects,
       if (respHeaders != null)
-        'headers': truncateHeaders(respHeaders, maxValueBytes: headerTruncateBytes),
+        'headers': truncateHeaders(respHeaders, maxValueBytes: headerTruncateBytes, redactNames: redactNames),
       ...sizeFields(row['response_size'] as int?),
       ...bodyStatusFor(
           row: row, which: 'response', hasBytes: respBlob != null && respBlob.isNotEmpty),

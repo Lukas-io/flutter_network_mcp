@@ -16,6 +16,7 @@ class HarExporter {
     required int sessionId,
     required String outPath,
     required String format,
+    Set<String> redactNames = const {},
   }) async {
     if (format != 'har' && format != 'ndjson') {
       throw ArgumentError('format must be "har" or "ndjson", got "$format".');
@@ -30,14 +31,14 @@ class HarExporter {
     file.parent.createSync(recursive: true);
 
     if (format == 'har') {
-      final har = _toHar(session, requests);
+      final har = _toHar(session, requests, redactNames);
       await file.writeAsString(const JsonEncoder.withIndent('  ').convert(har));
     } else {
       final sink = file.openWrite();
       try {
         sink.writeln(jsonEncode({'type': 'session', ...session}));
         for (final r in requests) {
-          sink.writeln(jsonEncode({'type': 'request', ...r}));
+          sink.writeln(jsonEncode({'type': 'request', ..._redactRow(r, redactNames)}));
         }
         await sink.flush();
       } finally {
@@ -50,6 +51,7 @@ class HarExporter {
   Map<String, Object?> _toHar(
     Map<String, Object?> session,
     List<Map<String, Object?>> requests,
+    Set<String> redactNames,
   ) {
     return {
       'log': {
@@ -61,13 +63,15 @@ class HarExporter {
         },
         'pages': const <dynamic>[],
         'entries': [
-          for (final r in requests) _entryFor(session['id'] as int, r),
+          for (final r in requests)
+            _entryFor(session['id'] as int, r, redactNames),
         ],
       },
     };
   }
 
-  Map<String, Object?> _entryFor(int sessionId, Map<String, Object?> r) {
+  Map<String, Object?> _entryFor(
+      int sessionId, Map<String, Object?> r, Set<String> redactNames) {
     final vmId = r['vm_id'] as String;
     final startUs = r['start_us'] as int?;
     final endUs = r['end_us'] as int?;
@@ -92,7 +96,7 @@ class HarExporter {
         'url': r['url'] ?? '',
         'httpVersion': 'HTTP/1.1',
         'cookies': const <dynamic>[],
-        'headers': _harHeaders(reqHeaders),
+        'headers': _harHeaders(reqHeaders, redactNames),
         'queryString': _queryFor(r['url'] as String?),
         'headersSize': -1,
         'bodySize': r['request_size'] ?? -1,
@@ -103,7 +107,7 @@ class HarExporter {
         'statusText': r['reason_phrase'] ?? '',
         'httpVersion': 'HTTP/1.1',
         'cookies': const <dynamic>[],
-        'headers': _harHeaders(respHeaders),
+        'headers': _harHeaders(respHeaders, redactNames),
         'content': _content(respBody, respContentType),
         // F22: fill redirectURL from the last hop's Location when the
         // request followed a chain (dart:io collapses it into one entry).
@@ -181,10 +185,15 @@ class HarExporter {
     return '';
   }
 
-  List<Map<String, Object?>> _harHeaders(Map<String, dynamic>? headers) {
+  List<Map<String, Object?>> _harHeaders(
+      Map<String, dynamic>? headers, Set<String> redactNames) {
     if (headers == null) return const [];
     final out = <Map<String, Object?>>[];
     for (final e in headers.entries) {
+      if (redactNames.contains(e.key.toLowerCase())) {
+        out.add({'name': e.key, 'value': '<redacted>'});
+        continue;
+      }
       final v = e.value;
       if (v is List) {
         for (final item in v) {
@@ -193,6 +202,25 @@ class HarExporter {
       } else {
         out.add({'name': e.key, 'value': v?.toString() ?? ''});
       }
+    }
+    return out;
+  }
+
+  /// Redacts auth header VALUES inside the raw *_headers_json columns for the
+  /// NDJSON export path (D5).
+  Map<String, Object?> _redactRow(
+      Map<String, Object?> r, Set<String> redactNames) {
+    if (redactNames.isEmpty) return r;
+    final out = Map<String, Object?>.of(r);
+    for (final col in ['request_headers_json', 'response_headers_json']) {
+      final raw = out[col];
+      final parsed = _parseHeaders(raw);
+      if (parsed == null) continue;
+      final masked = <String, dynamic>{};
+      parsed.forEach((k, v) {
+        masked[k] = redactNames.contains(k.toLowerCase()) ? '<redacted>' : v;
+      });
+      out[col] = jsonEncode(masked);
     }
     return out;
   }
@@ -238,11 +266,13 @@ Future<String> exportSession({
   required int sessionId,
   required String outPath,
   required String format,
+  bool redact = false,
 }) {
   CapturesDatabase.instance;
   return HarExporter(CapturesDao()).export(
     sessionId: sessionId,
     outPath: outPath,
     format: format,
+    redactNames: redact ? CapturesDao().redactedHeaderSet() : const {},
   );
 }

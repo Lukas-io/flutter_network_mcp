@@ -153,6 +153,7 @@ Map<String, Object?>? truncateHeaders(
   Map<String, dynamic>? headers, {
   int maxValueBytes = 256,
   int maxHeaders = 64,
+  Set<String>? redactNames,
 }) {
   if (headers == null) return null;
   final out = <String, Object?>{};
@@ -161,6 +162,14 @@ Map<String, Object?>? truncateHeaders(
     if (i++ >= maxHeaders) {
       out['_omitted'] = headers.length - maxHeaders;
       break;
+    }
+    // D5 (audit RC9/F7): redaction is a serialization-layer policy, applied
+    // BEFORE truncation, so a secret value never leaks (whole or partial)
+    // through any header display path. Redacted values render as the plain
+    // "<redacted>" string, never the {value,truncated,totalLength} object.
+    if (redactNames != null && redactNames.contains(e.key.toLowerCase())) {
+      out[e.key] = '<redacted>';
+      continue;
     }
     final v = e.value;
     final flat = v is List ? v.join(', ') : (v?.toString() ?? '');
