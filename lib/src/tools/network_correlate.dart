@@ -226,6 +226,14 @@ FutureOr<CallToolResult> networkCorrelate(CallToolRequest request) async {
         'may be more matches not shown. Raise perSessionLimit or narrow '
         'the pattern.',
       );
+    } else if (n > 10) {
+      // D8: sessions[].matches is a compact preview of the first 10; the
+      // full set drives pair-finding but is not dumped.
+      warnings.add(
+        'Session $sid has $n matches; sessions[] previews the first 10 '
+        '(compact). The `pairs` array carries the correlated matches with '
+        'snippets.',
+      );
     }
   }
   if (pairs.length > limit) {
@@ -278,6 +286,12 @@ FutureOr<CallToolResult> networkCorrelate(CallToolRequest request) async {
     nextSteps.add('network_search — single-session FTS as a fallback');
   }
 
+  // D8 (audit RC/F24): the flood was `sessions[].matches` dumping every
+  // per-session match (up to perSessionLimit=100 each) with full snippets
+  // — thousands of tokens for a zero-pair answer. Snippets belong on the
+  // tight `pairs`; here emit a compact, capped preview and report the real
+  // count so the agent knows what was elided.
+  const displayCap = 10;
   return jsonResult({
     'scope': {'sessionIds': sessionIds},
     'pattern': pattern,
@@ -293,7 +307,19 @@ FutureOr<CallToolResult> networkCorrelate(CallToolRequest request) async {
         {
           'sessionId': sid,
           if (perSessionAppName[sid] != null) 'appName': perSessionAppName[sid],
-          'matches': perSessionMatches[sid],
+          'matchesTotal': perSessionMatches[sid]!.length,
+          'matchesShown':
+              perSessionMatches[sid]!.length.clamp(0, displayCap),
+          'matches': [
+            for (final m in perSessionMatches[sid]!.take(displayCap))
+              {
+                'id': m['id'],
+                if (m['method'] != null) 'method': m['method'],
+                if (m['url'] != null) 'url': m['url'],
+                if (m['statusCode'] != null) 'statusCode': m['statusCode'],
+                if (m['startTimeMs'] != null) 'startTimeMs': m['startTimeMs'],
+              },
+          ],
         },
     ],
     'pairs': cappedPairs,

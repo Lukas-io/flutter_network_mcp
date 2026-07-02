@@ -38,6 +38,12 @@ final networkListTool = Tool(
             'Microsecond cursor. Omit for incremental (new since last call), '
             '0 for all captured. Pass a prior nextCursor to page.',
       ),
+      'before': Schema.int(
+        description:
+            'History-mode cursor: only requests STARTED BEFORE this µs '
+            'timestamp (newest-first, so this pages OLDER — pass a prior '
+            'nextCursor). Ignored on live incremental reads.',
+      ),
       'method': Schema.list(
         description: 'Filter by HTTP method(s), e.g. ["GET","POST"].',
         items: Schema.string(),
@@ -78,6 +84,7 @@ FutureOr<CallToolResult> networkList(CallToolRequest request) async {
 
   final sf = SessionFilters.instance;
   final sinceArg = args['since'] as int?;
+  final beforeArg = args['before'] as int?;
   final methods =
       args.containsKey('method') ? readStringList(args['method']) : sf.method;
   final hostContains = args.containsKey('hostContains')
@@ -91,11 +98,14 @@ FutureOr<CallToolResult> networkList(CallToolRequest request) async {
   final limit = clampLimit(args['limit'] as int?, fallback: 50, hardMax: 200);
   final maxTokens = args['maxTokens'] as int? ?? sf.maxResponseTokens;
 
-  if (!scope.isLive) {
+  if (!scope.isLive || beforeArg != null) {
+    // D4: `before:` pages OLDER, which only the DB has — serve it from the
+    // history path even for a live session.
     return _historyList(
       scope,
       caps,
       sinceArg,
+      beforeArg,
       methods,
       hostContains,
       statusMin,
@@ -311,17 +321,20 @@ CallToolResult _liveDbFallback(
     );
   }
 
-  int? maxStart;
+  int? minStart;
   final out = <Map<String, Object?>>[];
   for (final r in rows) {
     final start = r['start_us'] as int?;
-    if (start != null && (maxStart == null || start > maxStart)) maxStart = start;
+    if (start != null && (minStart == null || start < minStart)) minStart = start;
     out.add(_historySummary(r));
   }
+  final mayHaveOlder = rows.length >= limit && minStart != null;
 
   final nextSteps = <String>[
     if (out.isNotEmpty)
       'network_get id:"${out.first['id']}" — full detail for the top match',
+    if (mayHaveOlder)
+      'network_list before:$minStart — page OLDER than this batch',
     if (caps.isEnabled(Category.search))
       'network_search query:"..." — DB-backed full-text search (works when the live path is down)',
     'network_query sql:"SELECT * FROM http_requests WHERE session_id=$sid ORDER BY start_us DESC" — raw SELECT over captures.db',
@@ -337,7 +350,8 @@ CallToolResult _liveDbFallback(
         : 'Live read failed; returning ${out.length} request(s) from the DB '
             'snapshot instead.',
     'count': out.length,
-    if (maxStart != null) 'nextCursor': maxStart,
+    // D4: newest-first snapshot — the productive page is OLDER.
+    if (mayHaveOlder) 'nextCursor': minStart,
     'warnings': [
       'Live profile fetch failed: $liveError',
       'These rows are the persisted DB snapshot, not a live read. A single '
@@ -353,6 +367,7 @@ FutureOr<CallToolResult> _historyList(
   Scope scope,
   CapabilityConfig caps,
   int? sinceArg,
+  int? beforeArg,
   List<String>? methods,
   String? hostContains,
   int? statusMin,
@@ -366,6 +381,7 @@ FutureOr<CallToolResult> _historyList(
     final rows = CapturesDao().queryHttpRequests(
       sessionId: sid,
       sinceUs: sinceArg,
+      beforeUs: beforeArg,
       methods: methods,
       hostContains: hostContains,
       statusMin: statusMin,
@@ -374,12 +390,16 @@ FutureOr<CallToolResult> _historyList(
       limit: limit,
     );
     int? maxStart;
+    int? minStart;
     final out = <Map<String, Object?>>[];
     for (final r in rows) {
       final start = r['start_us'] as int?;
       if (start != null && (maxStart == null || start > maxStart)) maxStart = start;
+      if (start != null && (minStart == null || start < minStart)) minStart = start;
       out.add(_historySummary(r));
     }
+    // A full page means older rows likely exist below the window.
+    final mayHaveOlder = rows.length >= limit && minStart != null;
 
     final budgetTrim = trimToTokenBudget(out, maxTokens);
     final budgetDropped = budgetTrim.dropped;
@@ -400,7 +420,7 @@ FutureOr<CallToolResult> _historyList(
     if (budgetDropped > 0) {
       warnings.add(
         'Trimmed $budgetDropped request(s) to fit the $maxTokens-token budget; '
-        'raise maxTokens or filter for the rest.',
+        'raise maxTokens, or page OLDER with before:$minStart.',
       );
     }
 
@@ -412,11 +432,29 @@ FutureOr<CallToolResult> _historyList(
       if (caps.isEnabled(Category.search)) {
         nextSteps.add('network_search sessionId:$sid query:"..." — full-text search this session');
       }
-      if (maxStart != null) {
-        nextSteps.add('network_list since:$maxStart — page beyond the newest in this batch');
+      // D4 (RC7/F6): history is newest-first, so the useful page is OLDER.
+      // The old hint ("since:<newest> — page beyond the newest") was a
+      // guaranteed-empty dead end.
+      if (mayHaveOlder) {
+        nextSteps.add(
+            'network_list before:$minStart — page OLDER than this batch');
+      }
+      if (maxStart != null && (beforeArg != null || sinceArg != null)) {
+        nextSteps.add(
+            'network_list since:$maxStart — page NEWER than this batch');
       }
     } else {
-      nextSteps.add('Widen filters (drop hostContains / lower statusMin)');
+      // Cursor-aware empty hints: blaming filters when a cursor bound
+      // excluded everything misdiagnoses the situation.
+      if (beforeArg != null) {
+        nextSteps.add(
+            'Nothing older than before:$beforeArg — drop `before` to return to the newest page');
+      } else if (sinceArg != null && sinceArg > 0) {
+        nextSteps.add(
+            'Nothing newer than since:$sinceArg — this session is history; new rows will not appear');
+      } else {
+        nextSteps.add('Widen filters (drop hostContains / lower statusMin)');
+      }
       nextSteps.add('session_close — return to live (currently viewing session $sid)');
     }
 
@@ -426,7 +464,10 @@ FutureOr<CallToolResult> _historyList(
       'sessionId': sid,
       'summary': summary,
       'count': out.length,
-      'nextCursor': maxStart,
+      // D4: in history the productive direction is older; nextCursor feeds
+      // `before:` (newestInBatch retained for since-paging).
+      'nextCursor': mayHaveOlder ? minStart : null,
+      if (maxStart != null) 'newestInBatch': maxStart,
       if (maxTokens != null && maxTokens > 0)
         'budget': {'maxTokens': maxTokens, 'dropped': budgetDropped},
       if (warnings.isNotEmpty) 'warnings': warnings,

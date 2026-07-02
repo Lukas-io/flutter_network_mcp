@@ -156,18 +156,32 @@ FutureOr<CallToolResult> networkGet(CallToolRequest request) async {
             'returned the persisted DB copy instead.',
       );
     }
+    // D3 (audit RC5/F26): classify before blaming the VM. A healthy VM
+    // answering "no such id" — with no persisted row either — is a
+    // not_found, not an unresponsive_vm. Misfiling it poisoned the
+    // usage_stats error telemetry and sent agents down VM-recovery paths
+    // for what was a typo'd id.
+    final idMiss = looksLikeVmIdMiss(lastError);
     return errorResult(
-      'getHttpProfileRequest failed: ${lastError ?? "no isolate had id $id"}',
-      kind: ErrorKind.unresponsiveVm,
+      idMiss
+          ? 'No request with id "$id" in session ${scope.sessionId} — not in '
+              'the live VM profile and not in the persisted DB.'
+          : 'getHttpProfileRequest failed: ${lastError ?? "no isolate had id $id"}',
+      kind: idMiss ? ErrorKind.notFound : ErrorKind.unresponsiveVm,
       extra: {
         'id': id,
         'triedIsolates': candidateIsolates,
-        'nextSteps': const [
-          'network_search query:"..." — DB-backed search; works when the live path is down (in-flight/collected request)',
-          'network_query sql:"SELECT * FROM http_requests WHERE vm_id=?" — read the persisted row for this id',
-          'Verify the id exists via network_list',
-          'network_status — check VM service / zombie-DTD state',
-        ],
+        'nextSteps': idMiss
+            ? const [
+                'network_list — list captured requests and copy a valid id',
+                'network_search query:"..." — find the request by content instead',
+              ]
+            : const [
+                'network_search query:"..." — DB-backed search; works when the live path is down (in-flight/collected request)',
+                'network_query sql:"SELECT * FROM http_requests WHERE vm_id=?" — read the persisted row for this id',
+                'Verify the id exists via network_list',
+                'network_status — check VM service / zombie-DTD state',
+              ],
       },
     );
   }
@@ -471,14 +485,19 @@ List<String> _nextStepsFor({
   final steps = <String>[];
   final reqTrunc = requestBody?['truncated'] == true;
   final respTrunc = responseBody?['truncated'] == true;
+  // D8/F15: after SEMANTIC truncation the returned bytes are a transformed
+  // preview, so a byte offset into them corresponds to nothing the agent
+  // saw. Point network_body at offset:0 (raw body from the start) instead.
+  final respOffset = responseBody?['truncationMode'] == 'semantic' ? 0 : 4096;
+  final reqOffset = requestBody?['truncationMode'] == 'semantic' ? 0 : 4096;
   if (caps.isEnabled(Category.http)) {
     if (respTrunc) {
       final total = responseBody!['totalSize'];
       steps.add('network_body_outline id:"$id" — structure of the full body (keys/types/sizes, no values) so you drill the right branch');
-      steps.add('network_body id:"$id" which:response offset:4096 length:16384 — page beyond the cap (totalSize $total)');
+      steps.add('network_body id:"$id" which:response offset:$respOffset length:16384 — the raw body (totalSize $total)');
     } else if (reqTrunc) {
       final total = requestBody!['totalSize'];
-      steps.add('network_body id:"$id" which:request offset:4096 length:16384 — page beyond the cap (totalSize $total)');
+      steps.add('network_body id:"$id" which:request offset:$reqOffset length:16384 — the raw body (totalSize $total)');
     }
     steps.add('network_replay id:"$id" — runnable curl reproduction (auth headers redacted)');
     steps.add('network_diff idA:"$id" idB:"<other id>" — compare with another captured request');

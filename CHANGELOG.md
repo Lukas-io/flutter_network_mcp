@@ -8,6 +8,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 Design-sprint release: every remaining audit finding fixed at the system-design level (docs/agent-ux-audit-2026-07-02.md, D1–D10). Landed across four PRs; sections below grow per PR.
 
+### PR B — read policy (D3 taxonomy, D4 history cursors, D8 size discipline)
+
+- **Honest error taxonomy (RC5/F26).** A healthy VM answering "no such id" now returns `errorKind: not_found` (with list/search recovery), not `unresponsive_vm` — across network_get and body_fetch via a shared `looksLikeVmIdMiss` classifier. Stops poisoning usage_stats and misrouting agents to VM-recovery for a typo'd id.
+- **History-aware cursors (RC7/F6).** `network_list` gains a `before:<µs>` cursor that pages OLDER (the productive direction in a newest-first history read); `nextCursor` now feeds it, and the dead "since:<newest> — page beyond the newest" hint is gone. Empty-result hints are cursor-aware (nothing-older / nothing-newer) instead of always blaming filters. The `_liveDbFallback` path got the same fix; the budget-trim warning points at `before:`.
+- **Whole-session windows for history (RC7/F5).** `network_summarize` defaults to the entire session (not a 1h window) when the session is ended/interrupted — no more "No HTTP over 1h" on a session whose traffic was days ago.
+- **Bounded correlate (F24).** `network_correlate`'s `sessions[]` now previews the first 10 matches per session in compact form (`matchesShown`/`matchesTotal`), snippets reserved for the tight `pairs` — a zero-pair answer no longer costs thousands of tokens.
+- **Semantic-truncation paging (F15).** After semantic body truncation, `network_get`'s follow-up hint points at `offset:0` (raw from the start) instead of a transformed-byte offset that mapped to nothing.
+- +4 read-policy tests + 2 taxonomy tests. 348 green.
+
 ### PR A — honest state (D1 guidance, D2 scope, D9 tri-state)
 
 - **Guidance is now a function of session state (RC8/F5/F12).** New `util/guidance.dart` (`SessionStateView`, `emptyCaptureHint`, `sessionStatusLabel`); "Drive the app…" only appears for a healthy live attach — ended/interrupted/app-died sessions get "this is its complete capture" across summarize/report/logs_tail/alerts_drain, and network_get's history warning distinguishes "never captured before the session ended" from "writer may still be backfilling" (F12).

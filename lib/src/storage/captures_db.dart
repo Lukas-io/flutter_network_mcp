@@ -265,6 +265,7 @@ class CapturesDao {
   List<Map<String, Object?>> queryHttpRequests({
     required int sessionId,
     int? sinceUs,
+    int? beforeUs,
     List<String>? methods,
     String? hostContains,
     int? statusMin,
@@ -277,6 +278,13 @@ class CapturesDao {
     if (sinceUs != null) {
       clauses.add('start_us > ?');
       params.add(sinceUs);
+    }
+    // D4 (audit RC7/F6): descending page bound. History reads are
+    // newest-first, so paging DEEPER means going OLDER — `since` alone
+    // could never reach past row `limit`.
+    if (beforeUs != null) {
+      clauses.add('start_us < ?');
+      params.add(beforeUs);
     }
     if (methods != null && methods.isNotEmpty) {
       final placeholders = List.filled(methods.length, '?').join(',');
