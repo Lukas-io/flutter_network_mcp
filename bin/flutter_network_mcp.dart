@@ -262,7 +262,8 @@ Future<void> _runMain(List<String> args) async {
     alert_patterns.loadCustomPatternsFromDb();
   } catch (_) {/* table may be empty / freshly migrated */}
 
-  FlutterNetworkMcpServer.stdio(defaultDtdUri: dtdUri);
+  final server = FlutterNetworkMcpServer.stdio(defaultDtdUri: dtdUri);
+  _installLifecycleGuard(server);
 
   // Background "is there a newer version?" probe. Daily-cached, opt-out
   // via FLUTTER_NETWORK_MCP_NO_UPDATE_CHECK=true. Fire-and-forget — never
@@ -327,6 +328,49 @@ Future<void> _runMain(List<String> args) async {
   // early-returns). Opt out with FLUTTER_NETWORK_MCP_NO_AUTO_MIGRATE=true.
   if (env['FLUTTER_NETWORK_MCP_NO_AUTO_MIGRATE']?.toLowerCase() != 'true') {
     SessionMigrator(defaultDtdUri: dtdUri).start();
+  }
+}
+
+/// 0.9.17: exit when the MCP host goes away, instead of living forever.
+///
+/// The VM stays alive on its own after the stdio channel dies: the
+/// auto-attach / session-migrator timers, the sqlite handle, and any DTD /
+/// VM-service WebSockets all hold the event loop open. Before this guard,
+/// killing or reconnecting the MCP host (a `/mcp` reconnect, a crashed IDE,
+/// a closed terminal) orphaned the server — observed in the wild as
+/// multi-day `flutter_network_mcp` processes re-parented to PID 1. The pub
+/// `sh` shim compounds it: it neither execs nor forwards signals, so a
+/// SIGTERM aimed at the wrapper never reaches the Dart VM.
+///
+/// Two triggers, one exit path:
+///  - [MCPServer.done]: dart_mcp completes it when the stdio channel closes
+///    (host exited or reconnected → stdin EOF). The reliable signal.
+///  - SIGTERM / SIGINT: direct kills of the VM process itself.
+///
+/// The WAL checkpoint via [CapturesDatabase.close] is best-effort;
+/// [io.exit] is the point — lingering timers and sockets do not get a vote.
+void _installLifecycleGuard(FlutterNetworkMcpServer server) {
+  var exiting = false;
+  Never shutdown(String reason) {
+    if (!exiting) {
+      exiting = true;
+      io.stderr.writeln('flutter_network_mcp: $reason — shutting down.');
+      try {
+        CapturesDatabase.instance.close();
+      } catch (_) {/* already closed or never opened */}
+    }
+    io.exit(0);
+  }
+
+  unawaited(
+    server.done.then((_) => shutdown('MCP host closed the stdio channel')),
+  );
+  for (final signal in [io.ProcessSignal.sigterm, io.ProcessSignal.sigint]) {
+    try {
+      signal.watch().listen((s) => shutdown('received $s'));
+    } on UnsupportedError {
+      // sigterm cannot be watched on Windows; stdin EOF still covers it.
+    }
   }
 }
 
