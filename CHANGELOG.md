@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.9.18] — 2026-07-02
+
+### Fixed — mid-session filter changes reach every attached session (audit RC3)
+
+`ignored_hosts` / `capture_allow` add/remove refreshed `Session.instance.captureWriter`, which resolves to `soleAttached ?? stub` — with 2+ sessions attached the "refresh" hit a stub writer, so the tool reported "Capture writer refreshed" while no live capture changed at all (the phase-3 audit repro). New `SessionRegistry.refreshCaptureFilters()` pushes the tables to EVERY attached writer; all four tool call sites now use it, and `CaptureWriter.activeCaptureFilter` is exposed so the behavior is testable. 334 tests green (+1: two registered sessions, one add → both writers filter).
+
 ## [0.9.17] — 2026-07-02
 
 ### Fixed — durations measure the exchange, not the upload (audit RC1)
