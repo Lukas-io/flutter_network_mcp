@@ -6,14 +6,9 @@ import '../alerts/alert_rules.dart';
 import 'error_kind.dart';
 import 'result.dart';
 
-const _ruleKeys = [
-  'http_5xx',
-  'http_4xx',
-  'http_error',
-  'http_slow',
-  'log_keyword',
-  'flutter_error',
-];
+// F13: sourced from the rule engine itself so schema/toggles/count cannot
+// diverge from the real rule set.
+const _ruleKeys = AlertRules.ruleKeys;
 
 final alertsConfigTool = Tool(
   name: 'alerts_config',
@@ -33,12 +28,7 @@ final alertsConfigTool = Tool(
           'rules': Schema.object(
             description: 'Per-rule enable flags. Omitted rules keep their current state.',
             properties: {
-              'http_5xx': Schema.bool(),
-              'http_4xx': Schema.bool(),
-              'http_error': Schema.bool(),
-              'http_slow': Schema.bool(),
-              'log_keyword': Schema.bool(),
-              'flutter_error': Schema.bool(),
+              for (final key in AlertRules.ruleKeys) key: Schema.bool(),
             },
           ),
         },

@@ -161,7 +161,7 @@ FutureOr<CallToolResult> networkSearch(CallToolRequest request) async {
         'availableHosts': availableHosts,
       if (warnings.isNotEmpty) 'warnings': warnings,
       'nextSteps': nextSteps,
-    }, scopeSessionId: scope.sessionId);
+    }, scopeSessionId: scope.sessionId, scopeNote: scope.note);
   } catch (e) {
     return errorResult('network_search failed: $e',
         kind: ErrorKind.badQuery,

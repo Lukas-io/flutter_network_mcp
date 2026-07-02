@@ -248,7 +248,7 @@ FutureOr<CallToolResult> networkList(CallToolRequest request) async {
       if (warnings.isNotEmpty) 'warnings': warnings,
       'nextSteps': nextSteps,
       'requests': filtered,
-    }, scopeSessionId: scope.sessionId);
+    }, scopeSessionId: scope.sessionId, scopeNote: scope.note);
   } catch (e) {
     return _liveDbFallback(
       scope,
@@ -432,7 +432,7 @@ FutureOr<CallToolResult> _historyList(
       if (warnings.isNotEmpty) 'warnings': warnings,
       'nextSteps': nextSteps,
       'requests': out,
-    }, scopeSessionId: scope.sessionId);
+    }, scopeSessionId: scope.sessionId, scopeNote: scope.note);
   } catch (e) {
     return errorResult('history query failed: $e',
         kind: ErrorKind.internal,

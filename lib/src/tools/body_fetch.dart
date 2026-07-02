@@ -186,5 +186,5 @@ CallToolResult noBodyResult(
     'nextSteps': const [
       'network_get id:<id> — confirm the request exists and check headers',
     ],
-  }, scopeSessionId: scope.sessionId);
+  }, scopeSessionId: scope.sessionId, scopeNote: scope.note);
 }

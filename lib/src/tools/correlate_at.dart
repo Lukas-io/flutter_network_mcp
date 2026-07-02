@@ -170,7 +170,7 @@ FutureOr<CallToolResult> correlateAt(CallToolRequest request) async {
     'logs': logs,
     'requests': requests,
     'nextSteps': nextSteps,
-  }, scopeSessionId: scope.sessionId);
+  }, scopeSessionId: scope.sessionId, scopeNote: scope.note);
 }
 
 Map<String, Object?> _logEntry(Map<String, Object?> r, int anchorMs) {
