@@ -8,6 +8,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 Design-sprint release: every remaining audit finding fixed at the system-design level (docs/agent-ux-audit-2026-07-02.md, D1–D10). Landed across four PRs; sections below grow per PR.
 
+### PR D — policy & docs (D5 redaction, D6 MCP resources)
+
+- **Redaction is a serialization-layer policy (D5/RC9/F7).** New `redactHeaders` behavior lives inside the one function every header display goes through (`truncateHeaders`). `network_get` redacts auth headers by default (opt out with `redact:false` to debug auth); `network_diff` always redacts (an auth-header change no longer prints both tokens); `network_replay` now defaults to `redact:true` (the emitted curl routinely lands in a transcript — a consciously re-decided #57); `session_export` gains an opt-in `redact:true` for a scrubbed HAR/NDJSON, with the loud unredacted-bodies warning kept. Three inline redaction loops collapsed to one shared policy.
+- **Docs are in-band as MCP resources (D6/RC10/F8).** The server now mixes in `ResourcesSupport` and serves every `docs/tools/**` guide + `RESPONSE_CONTRACT.md` as `flutter-network://docs/...` (resolved from the git-activated checkout, the same ladder `install` uses). A fresh agent with no repo can finally read the guides the tool descriptions reference. `network_query`'s description now embeds the compact table/column schema (times in µs) — killing the 53%-error-rate cause at the source — and still returns the live `schema` map on failure.
+- +7 tests (redaction matrix + doc discovery). 362 green.
+
 ### PR C — capture pipeline (D7 ingestion classification, D9 self-heal, D10 recovery)
 
 - **Events classified at ingestion (D7).** New `util/http_classify.dart`: a successful WebSocket upgrade (101 "Switching Protocols") no longer raises a phantom `http_error` when dart:io flags the adopted socket as "detached" (F21); alert titles use `displayUrl` which strips the meaningless `:0` port and default ports (F30).
