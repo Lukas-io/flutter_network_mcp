@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.9.17] — 2026-07-02
+
+### Fixed — server no longer outlives its MCP host (orphaned-process leak)
+
+The server had no shutdown path: once `_runMain` returned, the auto-attach / session-migrator timers, the sqlite handle, and any DTD/VM WebSockets kept the VM alive forever. Killing or reconnecting the MCP host (a `/mcp` reconnect, a crashed IDE, a closed terminal) therefore leaked a full server process — observed in the wild as six multi-day `flutter_network_mcp` processes re-parented to PID 1, one per host restart. The pub `sh` shim compounds it by neither exec-ing nor forwarding signals, so SIGTERM aimed at the wrapper never reaches the VM. New lifecycle guard in `bin/`: `server.done` (stdio channel closed → stdin EOF) and SIGTERM/SIGINT now share one exit path — best-effort WAL checkpoint via `CapturesDatabase.close()`, a stderr notice, then `exit(0)`; lingering timers and sockets do not get a vote. 322 tests green (+2: spawn the real bin, close stdin → exits 0 within 20 s; SIGTERM → exits 0).
+
 ## [0.9.16] — 2026-06-30
 
 ### Added — capture_allow tool: manage the allowlist mid-session (#64 follow-up)
