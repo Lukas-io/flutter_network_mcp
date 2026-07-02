@@ -124,16 +124,28 @@ Future<BodyFetch> fetchBodyBytes(
       mimeType: null,
       source: source,
       error: errorResult(
-        'body fetch failed: ${lastError ?? "no isolate had id $id"}',
-        kind: ErrorKind.unresponsiveVm,
+        looksLikeVmIdMiss(lastError)
+            ? 'No request with id "$id" is known to the live VM or the '
+                'persisted DB — the id is stale or mistyped.'
+            : 'body fetch failed: ${lastError ?? "no isolate had id $id"}',
+        // D3: a clean "no such id" answer from a healthy VM is not_found,
+        // not unresponsive_vm.
+        kind: looksLikeVmIdMiss(lastError)
+            ? ErrorKind.notFound
+            : ErrorKind.unresponsiveVm,
         extra: {
           'id': id,
           'triedIsolates': candidateIsolates,
-          'nextSteps': const [
-            'network_query sql:"SELECT which,size FROM http_bodies WHERE vm_id=\'<id>\'" — check whether the body is persisted',
-            'network_get id:<id> — confirm the request still exists',
-            'network_status — check whether the VM service is responsive (the app may be paused at a breakpoint)',
-          ],
+          'nextSteps': looksLikeVmIdMiss(lastError)
+              ? const [
+                  'network_list — copy a valid request id',
+                  'network_search query:"..." — find the request by content',
+                ]
+              : const [
+                  'network_query sql:"SELECT which,size FROM http_bodies WHERE vm_id=\'<id>\'" — check whether the body is persisted',
+                  'network_get id:<id> — confirm the request still exists',
+                  'network_status — check whether the VM service is responsive (the app may be paused at a breakpoint)',
+                ],
         },
       ),
     );
