@@ -8,6 +8,7 @@ import '../config/capabilities.dart';
 import '../state/session.dart';
 import '../storage/captures_db.dart';
 import '../util/body_decoder.dart';
+import '../util/http_timing.dart';
 import '../util/body_status.dart';
 import '../util/scope.dart';
 import 'error_kind.dart';
@@ -253,7 +254,9 @@ CallToolResult _buildLiveResponse({
     responseError: r.response?.hasError == true ? r.response!.error : null,
   );
 
-  final reqDurationMs = r.endTime?.difference(r.startTime).inMilliseconds;
+  // RC1: exchange end, not request-upload end — see util/http_timing.dart.
+  final exchangeEnd = exchangeEndTime(r);
+  final reqDurationMs = exchangeEnd?.difference(r.startTime).inMilliseconds;
   final summary = _summaryFor(
     method: r.method,
     uri: r.uri.toString(),
@@ -276,7 +279,7 @@ CallToolResult _buildLiveResponse({
     'method': r.method,
     'uri': r.uri.toString(),
     'startTimeMs': r.startTime.millisecondsSinceEpoch,
-    if (r.endTime != null) 'endTimeMs': r.endTime!.millisecondsSinceEpoch,
+    if (exchangeEnd != null) 'endTimeMs': exchangeEnd.millisecondsSinceEpoch,
     if (reqDurationMs != null) 'durationMs': reqDurationMs,
     'isComplete': r.isRequestComplete,
     'isResponseComplete': r.isResponseComplete,

@@ -1,6 +1,7 @@
 import 'package:vm_service/vm_service.dart';
 
 import '../storage/captures_db.dart';
+import '../util/http_timing.dart';
 import 'alert_rules.dart';
 import 'signature.dart';
 
@@ -64,8 +65,11 @@ class AlertDetector {
       }
     }
 
-    if (_rules.httpSlowEnabled && r.endTime != null) {
-      final ms = r.endTime!.difference(r.startTime).inMilliseconds;
+    // RC1: exchange duration, not request-upload duration — the old
+    // r.endTime maths made this rule unfireable (upload ends in µs).
+    final exchangeMs = exchangeDuration(r)?.inMilliseconds;
+    if (_rules.httpSlowEnabled && exchangeMs != null) {
+      final ms = exchangeMs;
       if (ms > _rules.slowThresholdMs) {
         final title = '${ms}ms on ${r.method} ${_compact(r.uri)}';
         _dao.insertAlert(

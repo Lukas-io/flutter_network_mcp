@@ -40,6 +40,26 @@ void main() {
     } catch (_) {/* best effort */}
   });
 
+  // Handshake instead of a fixed boot sleep: under a loaded suite the JIT
+  // boot can outlast any guess, and killing before the signal watcher is
+  // installed makes the test flaky. A served initialize response proves the
+  // event loop (and thus the guard) is fully up.
+  Future<void> awaitBooted(Process proc) async {
+    final firstByte = proc.stdout.first;
+    proc.stdin.writeln(jsonEncode({
+      'jsonrpc': '2.0',
+      'id': 1,
+      'method': 'initialize',
+      'params': {
+        'protocolVersion': '2024-11-05',
+        'capabilities': <String, Object?>{},
+        'clientInfo': {'name': 'lifecycle-test', 'version': '0'},
+      },
+    }));
+    await proc.stdin.flush();
+    await firstByte.timeout(const Duration(seconds: 60));
+  }
+
   test('exits promptly when the host closes stdin', () async {
     final proc = await spawnServer(tmp);
     final stderrLines = <String>[];
@@ -48,8 +68,7 @@ void main() {
         .transform(const LineSplitter())
         .listen(stderrLines.add);
 
-    // Give the JIT snapshot time to boot, then simulate host death.
-    await Future<void>.delayed(const Duration(seconds: 3));
+    await awaitBooted(proc);
     await proc.stdin.close();
 
     final exitCode = await proc.exitCode.timeout(
@@ -74,7 +93,7 @@ void main() {
 
   test('exits promptly on SIGTERM', () async {
     final proc = await spawnServer(tmp);
-    await Future<void>.delayed(const Duration(seconds: 3));
+    await awaitBooted(proc);
     proc.kill(ProcessSignal.sigterm);
 
     final exitCode = await proc.exitCode.timeout(

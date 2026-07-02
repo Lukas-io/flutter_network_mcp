@@ -103,21 +103,34 @@ FutureOr<CallToolResult> networkSearch(CallToolRequest request) async {
     final warnings = <String>[];
     List<String>? availableHosts;
     if (matches.isEmpty) {
+      // RC2: report index COVERAGE, never a blanket "the capture is
+      // indexed" — before the coverage check this asserted full indexing
+      // while ~14% of rows had no FTS entry at all.
       var indexed = -1;
+      var total = -1;
       try {
-        indexed = CapturesDao().searchIndexSize(sessionId);
-        if (indexed > 0) availableHosts = CapturesDao().distinctHosts(sessionId);
+        final dao = CapturesDao();
+        indexed = dao.searchIndexSize(sessionId);
+        total = dao.httpRequestCount(sessionId);
+        if (indexed > 0) availableHosts = dao.distinctHosts(sessionId);
       } catch (_) {/* best-effort */}
       if (indexed == 0) {
         warnings.add(
           'Nothing is indexed for search yet in session $sessionId — the '
-          'writer backfills bodies every ~2s. Retry shortly, or search '
-          'which:"url" which needs no backfill.',
+          'writer indexes URLs on first sight and backfills bodies every '
+          '~2s. Retry shortly.',
+        );
+      } else if (total > indexed) {
+        warnings.add(
+          'No match for "$query" — but only $indexed of $total captured '
+          'request(s) are indexed so far (bodies backfill every ~2s). The '
+          'term may live in a not-yet-indexed request; retry shortly.',
         );
       } else {
         warnings.add(
-          'No match for "$query". The capture is indexed, so the term is too '
-          'specific or absent. See availableHosts for what was captured.',
+          'No match for "$query". Every captured request is indexed, so the '
+          'term is absent from this session. See availableHosts for what '
+          'was captured.',
         );
       }
     }
