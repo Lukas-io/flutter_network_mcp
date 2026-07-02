@@ -277,6 +277,35 @@ Setup: sanga_driver (iPhone Air), starlog (iPhone 17e), sanga_mobile (iPhone 17 
 - **`network_drift`** across 44 real samples: clean stable-contract verdict.
 - **RC3 mechanism corrected** (see updated root-cause map): the live test initially looked like the mid-session ignore worked — but the polling had stopped 13 minutes earlier (a confound). Code reading found the true cause: the refresh goes through `Session.instance.captureWriter` = `soleAttached ?? stub`, so under multi-attach it refreshes a stub. Fixed in 0.9.18 with `SessionRegistry.refreshCaptureFilters()` + a regression test. Audit lesson recorded: a "worked once" live probe is not verification when the mechanism is scope-dependent.
 
+---
+
+# Phase 6 — live verification of the fixes on 0.9.18 (post-reconnect)
+
+All four fixed root causes verified against the running server + real/testbed apps:
+
+| Fix | Live evidence |
+|---|---|
+| **RC1 durations** | `/api/slow` captured with `duration_us: 1,604,086` (1604 ms for a 1.6 s response) via the repro harness (`tool/rc_repro.dart`) on identical code — previously 186 µs. |
+| **RC2 search** | The phase-2 failing query (`network_search sessionId:323 query:"slow"`) now returns the hit — the startup repair pass indexed the historical gap. DB coverage went from ~86% to **99.98%** (86,987 / 87,001; remainder = live in-flight rows). Coverage-aware no-match messaging confirmed. |
+| **RC3 filters** | With **3 sessions attached** (the stub-refresh trap), `ignored_hosts add 127.0.0.1/api/ok` stopped `/api/ok` capture within one tick (0 new rows over 4 heartbeat cycles) while `/api/flaky` kept flowing and other sessions were untouched. |
+| **RC4 app death** | Killed the attached testbed twice: within ~4 s `network_status` dropped the session and reported `recentlyEnded: [{sessionId, endedReason: "app exited", diedAtMs}]`. No more zombie attaches. |
+| **Lifecycle guard** | The pre-fix 0.9.16 server orphaned by this `/mcp` reconnect was the LAST of its kind (killed manually); 0.9.18 exits on stdin EOF. |
+| **F27 (auto-attach miss)** | Resolved on restart: the fresh server auto-attached BOTH allowlisted apps in seconds. Root was the long-lived server's stale DTD state — fold "re-discover DTD when the default URI dies" into the backlog. |
+
+## F17 mechanism corrected
+
+Phase 2 assumed the VM profile retains pre-attach traffic ("ingest the backlog"). Live `since:0` reads prove otherwise: **dart:io HTTP profiling records nothing until `httpEnableTimelineLogging(true)`, which attach performs** — the pre-attach requests were never recorded at all (two clean demonstrations: a session that attached mid-flow captured everything after the attach instant and nothing before). So the backlog is unrecoverable by design; the correct fix is honesty + earliness: (1) the attach response should state "HTTP profiling enabled now — traffic before this instant was not recorded"; (2) auto-attach from launch (the allowlist flow) is the real mitigation and it works.
+
+## New (0.9.18) observations
+
+- `updateAvailable: {latest: "0.9.16"}` shown while running 0.9.18 — the daily-cached "latest" is stale and the comparison doesn't suppress when current ≥ latest. Cosmetic but silly; suppress when not actually newer.
+- The writer advances its per-isolate cursor BEFORE processing the batch (capture_writer `_pollHttp`); any mid-batch exception permanently drops the remainder. No live occurrence observed, but it's a latent data-loss edge — advance the cursor after the loop (or per-request try/catch).
+
+## Scenario coverage matrix (what "real-life tested" now means)
+
+Verified live: DTD discovery + named attach + auto-attach allowlist; 4-way multi-attach + scope disambiguation + max-attach cap; app-death lifecycle; history mode + repair; alerts (4xx/5xx/error/log/custom patterns/slow-threshold config, cross-session priorOccurrences); search (URL + body + coverage); summarize/report/drift/diff/correlate on real traffic; body outline/query/paging on a real 26 KB payload; replay + replay-as-test; ignored_hosts/capture_allow mid-session; session lifecycle (open/close/note/export/delete dry-runs); db stats/vacuum/purge dry-runs; SQL guardrails; glint-drives-fnmcp-observes cross-tool flow.
+Deliberately NOT covered (needs environments this machine/session lacks): Android emulator + physical devices; hot-restart `reattach`/auto-migration under a real IDE restart; AOT-compiled server (`flutter_network_mcp install`); `--no-persist` mode; DB rolling-cap eviction under pressure; `network_drift` positive case (needs a backend contract change mid-session).
+
 ## 1.0.0 gate, final (root-cause order)
 
 1. **RC1** (durations) · 2. **RC4** (app-death lifecycle) · 3. **RC2** (search completeness + honest messaging) · 4. **RC3** (config propagation — or ship `capture_allow`/mid-session `ignored_hosts` as attach-time-only and say so) · 5. **RC6** (scope shadowing) · 6. **RC9** (redaction posture) · 7. **RC7 + RC8** (history ergonomics + validated guidance) · 8. **RC10** (in-band docs).
