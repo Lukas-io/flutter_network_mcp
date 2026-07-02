@@ -675,13 +675,21 @@ class CapturesDao {
     final ts = tsMs ?? DateTime.now().millisecondsSinceEpoch;
 
     final existing = _db.select(
-      'SELECT id, severity FROM alerts '
+      'SELECT id, severity, last_source_id FROM alerts '
       'WHERE session_id = ? AND signature = ? AND drained = 0 LIMIT 1',
       [sessionId, signature],
     );
 
     if (existing.isNotEmpty) {
       final row = existing.first;
+      // Idempotency: the capture writer re-evaluates the same source across
+      // ticks (a request re-delivered in-flight → complete). Counting a
+      // re-evaluation of the SAME source would inflate occurrence_count,
+      // contradicting the detector's "dedupe repeat evaluations of the same
+      // source" contract. Only bump for a genuinely NEW source; a repeat of
+      // the last source just refreshes last_seen_ms.
+      final isSameSource =
+          sourceId != null && sourceId == (row['last_source_id'] as String?);
       final existingSeverity = row['severity'] as String;
       final escalated =
           _severityRank(severity) > _severityRank(existingSeverity)
@@ -689,12 +697,12 @@ class CapturesDao {
               : existingSeverity;
       _db.execute(
         'UPDATE alerts SET '
-        '  occurrence_count = occurrence_count + 1, '
+        '  occurrence_count = occurrence_count + ?, '
         '  last_seen_ms = ?, '
         '  last_source_id = ?, '
         '  severity = ? '
         'WHERE id = ?',
-        [ts, sourceId, escalated, row['id']],
+        [isSameSource ? 0 : 1, ts, sourceId, escalated, row['id']],
       );
       return false;
     }

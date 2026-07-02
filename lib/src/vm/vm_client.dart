@@ -282,6 +282,21 @@ class VmClient {
     return clearSocketProfileForIsolate(_requireIsolate());
   }
 
+  /// The target VM's start time (ms since epoch), best-effort. Used at
+  /// attach to tell the agent how long the app was running BEFORE capture
+  /// began — dart:io HTTP/socket profiling records nothing before it is
+  /// enabled, so pre-attach traffic is simply absent (audit F17). Returns
+  /// null if the VM doesn't report it or the call fails.
+  Future<int?> vmStartTimeMs() async {
+    try {
+      final vm = await _bounded('getVM', service.getVM());
+      final t = vm.startTime;
+      return (t == null || t <= 0) ? null : t;
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<void> disconnect() async {
     _deliberateDisconnect = true;
     final svc = _service;
