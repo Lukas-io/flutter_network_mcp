@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.10.0] — 2026-07-02
+
+Design-sprint release: every remaining audit finding fixed at the system-design level (docs/agent-ux-audit-2026-07-02.md, D1–D10). Landed across four PRs; sections below grow per PR.
+
+### PR A — honest state (D1 guidance, D2 scope, D9 tri-state)
+
+- **Guidance is now a function of session state (RC8/F5/F12).** New `util/guidance.dart` (`SessionStateView`, `emptyCaptureHint`, `sessionStatusLabel`); "Drive the app…" only appears for a healthy live attach — ended/interrupted/app-died sessions get "this is its complete capture" across summarize/report/logs_tail/alerts_drain, and network_get's history warning distinguishes "never captured before the session ended" from "writer may still be backfilling" (F12).
+- **Scope shadowing is loud (RC6/F4).** An agent-initiated attach (network_attach tool, network_status attachIfOne) closes an open session_open view with a warning; background attaches never touch it. When a view shadows live sessions, every scoped read now carries a "Reading HISTORY session N…" warning (`Scope.note`, promoted by `jsonResult`). `pendingAlerts` gains a `scope: session|all-sessions` label (F9); `network_query` echoes `scope: all-sessions` (F14).
+- **Session liveness is a tri-state (F11).** live / ended / **interrupted** (no clean end recorded) in session_open + session_list — crashed captures no longer read "still live".
+- **alerts_config can no longer drift from the rule engine (F13).** Schema, toggles, and the enabled-count derive from `AlertRules.ruleKeys` (7 rules incl. `http_anomaly`, now toggleable).
+- **updateAvailable re-verified at read time.** The pre-upgrade status file no longer advertises an "update" to an older version than the one running.
+- **Reattach misses are explicit (F25).** `reattach:true` that matched no prior session reports `reattachRequested/reattachMatched/reattachMissReason` instead of silently starting fresh.
+- +8 contract tests (`test/tools/guidance_contract_test.dart`) pinning (tool × state) guidance. 342 green.
+
 ## [0.9.18] — 2026-07-02
 
 ### Fixed — mid-session filter changes reach every attached session (audit RC3)

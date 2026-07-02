@@ -225,7 +225,7 @@ CallToolResult _grep({
       if (matches.isNotEmpty)
         'network_body id:"$id" which:$which offset:${matches.first['offset']} length:16384 — read full bytes around the first match',
     ],
-  }, scopeSessionId: scope.sessionId);
+  }, scopeSessionId: scope.sessionId, scopeNote: scope.note);
 }
 
 CallToolResult _jsonPath({
@@ -299,7 +299,7 @@ CallToolResult _jsonPath({
     'nextSteps': const [
       'network_body_outline id:<id> — see the full structure if the path missed',
     ],
-  }, scopeSessionId: scope.sessionId);
+  }, scopeSessionId: scope.sessionId, scopeNote: scope.note);
 }
 
 String _cap(String s, int max) =>

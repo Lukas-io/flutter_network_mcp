@@ -112,7 +112,30 @@ FutureOr<CallToolResult> networkAttach(
     reattach: (args['reattach'] as bool?) ?? false,
     defaultDtdUri: defaultDtdUri,
   );
+  if (result['error'] == null) {
+    closeStaleViewAfterAttach(result);
+  }
   return jsonResult(result, isError: result['error'] != null);
+}
+
+/// D2/F4: an open session_open view silently outranks a fresh live attach
+/// in scope resolution, so the very next bare read returns stale history
+/// while the agent believes it is reading the app it just attached. On the
+/// AGENT-INITIATED attach paths (this tool + network_status attachIfOne) we
+/// close the view and say so. Background attaches (auto-attach watcher,
+/// hot-restart migrator) must never yank a deliberately opened view — they
+/// rely on the resolveScope shadow note instead.
+void closeStaleViewAfterAttach(Map<String, Object?> result) {
+  final viewed = Session.instance.viewedSessionId;
+  if (viewed == null) return;
+  Session.instance.viewedSessionId = null;
+  final warnings =
+      (result['warnings'] as List?)?.cast<String>().toList() ?? <String>[];
+  warnings.add(
+    'Closed the open history view of session $viewed — reads now target '
+    'the live session; session_open id:$viewed to reopen it.',
+  );
+  result['warnings'] = warnings;
 }
 
 /// Shared attach implementation. Returns a Map suitable for [jsonResult].
@@ -544,6 +567,19 @@ Future<Map<String, Object?>> performAttach({
       'isolateId': isolateId,
       'liveSessionId': sid,
       if (reattachPrior != null) 'reattached': true,
+      // F25: a reattach request that matched nothing must not degrade
+      // silently into a fresh session — say it and say why.
+      if (reattach && reattachPrior == null) ...{
+        'reattachRequested': true,
+        'reattachMatched': false,
+        'reattachMissReason': appName == null
+            ? 'the attach target has no DTD app name (raw vmServiceUri '
+                'attach), so there is no identity to match a prior session '
+                'against — a NEW session was started'
+            : 'no attached session shares this app\'s identity '
+                '(package + device) under a stale VM URI — a NEW session '
+                'was started',
+      },
       if (previousVmServiceUri != null)
         'previousVmServiceUri': previousVmServiceUri,
       'socketProfilingEnabled': socketEnabled,

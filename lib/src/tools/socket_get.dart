@@ -172,7 +172,7 @@ FutureOr<CallToolResult> socketGet(CallToolRequest request) async {
     'writeBytes': s.writeBytes,
     'open': s.endTime == null,
     'nextSteps': _nextSteps(caps, isOpen: s.endTime == null, address: s.address as String?),
-  }, scopeSessionId: scope.sessionId);
+  }, scopeSessionId: scope.sessionId, scopeNote: scope.note);
 }
 
 CallToolResult _historySuccess(
@@ -211,7 +211,7 @@ CallToolResult _historySuccess(
     'open': isOpen,
     if (degradedReason != null) 'warnings': [degradedReason],
     'nextSteps': _nextSteps(caps, isOpen: isOpen, address: row['address'] as String?),
-  }, scopeSessionId: scope.sessionId);
+  }, scopeSessionId: scope.sessionId, scopeNote: scope.note);
 }
 
 String _summary({

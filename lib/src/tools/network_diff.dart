@@ -182,7 +182,7 @@ FutureOr<CallToolResult> networkDiff(CallToolRequest request) async {
           },
       if (warnings.isNotEmpty) 'warnings': warnings,
       'nextSteps': nextSteps,
-    }, scopeSessionId: scope.sessionId);
+    }, scopeSessionId: scope.sessionId, scopeNote: scope.note);
   } catch (e) {
     return errorResult('network_diff failed: $e',
         kind: ErrorKind.internal,

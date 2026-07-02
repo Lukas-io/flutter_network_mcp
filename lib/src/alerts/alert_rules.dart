@@ -61,6 +61,21 @@ class AlertRules {
     ),
   ];
 
+  /// The canonical rule-key list. alerts_config derives its input schema,
+  /// toggle handling, and enabled-count from THIS (via [toJson]) so the
+  /// schema can never drift from the real rule set again (audit F13: the
+  /// tool advertised 6 keys and reported "6/6" while 7 rules existed and
+  /// http_anomaly was untoggleable).
+  static const List<String> ruleKeys = [
+    'http_5xx',
+    'http_4xx',
+    'http_error',
+    'http_slow',
+    'log_keyword',
+    'flutter_error',
+    'http_anomaly',
+  ];
+
   Map<String, Object?> toJson() => {
         'slowThresholdMs': slowThresholdMs,
         'rules': {

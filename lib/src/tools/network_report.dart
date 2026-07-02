@@ -5,6 +5,7 @@ import 'package:dart_mcp/server.dart';
 import '../config/capabilities.dart';
 import '../storage/captures_db.dart';
 import '../util/scope.dart';
+import '../util/guidance.dart';
 import 'error_kind.dart';
 import 'network_summarize.dart' show summarizeRequests;
 import 'result.dart';
@@ -98,10 +99,14 @@ FutureOr<CallToolResult> networkReport(CallToolRequest request) async {
   final String headline;
   final List<String> nextSteps;
   if (endpoints.isEmpty) {
-    headline = 'No HTTP captured for session $sid yet.';
-    nextSteps = const [
-      'Drive the app to generate traffic, then re-run network_report',
-      'network_status — confirm the session is attached and capturing',
+    final state = SessionStateView.of(sid);
+    headline = state.canGenerateTraffic
+        ? 'No HTTP captured for session $sid yet.'
+        : 'No HTTP captured in session $sid (its capture is complete).';
+    nextSteps = [
+      emptyCaptureHint(state, reRun: 'network_report'),
+      if (state.canGenerateTraffic)
+        'network_status — confirm the session is attached and capturing',
     ];
   } else if (topErrors.isNotEmpty) {
     final worst = topErrors.first;
@@ -109,7 +114,9 @@ FutureOr<CallToolResult> networkReport(CallToolRequest request) async {
         '${((worst['errorRate'] as num) * 100).round()}% of '
         '${worst['count']} call(s).';
     nextSteps = [
-      'network_search query:"${_hostOf(worst)}" — find the failing request, then network_get it',
+      // D1: a host-wide search matches everything on the host; route to the
+      // error rows directly instead.
+      'network_list statusMin:400 hostContains:"${_hostOf(worst)}" — list the failing requests, then network_get one',
       if (caps.isEnabled(Category.alerts) && pendingAlerts > 0)
         'alerts_drain — $pendingAlerts pending alert(s)',
       'network_drift hostContains:"${_hostOf(worst)}" — check if the response shape changed',

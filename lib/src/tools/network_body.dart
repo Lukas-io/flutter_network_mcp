@@ -165,7 +165,7 @@ FutureOr<CallToolResult> networkBody(CallToolRequest request) async {
       },
       if (warnings.isNotEmpty) 'warnings': warnings,
       'nextSteps': nextSteps,
-    }, scopeSessionId: scope.sessionId);
+    }, scopeSessionId: scope.sessionId, scopeNote: scope.note);
   } catch (e) {
     return errorResult('body fetch failed: $e',
         kind: ErrorKind.internal,
