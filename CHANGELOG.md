@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added — alert retention (auto-expire old alerts)
+
+The pending-alerts banner grew unbounded over weeks of use (observed at 14k+). New `AlertRetention` service auto-expires alerts from **non-attached** sessions older than a configurable window, so the banner reflects recent state instead of accumulated noise. A currently-attached session keeps all its alerts regardless of age. Window via `FLUTTER_NETWORK_MCP_ALERT_RETENTION_DAYS` (default **14**, `0` = keep forever); runtime-tunable via `alerts_config set:{retentionDays:N}`; surfaced in `db_stats.alertRetention`. Runs a deferred first sweep on start + hourly, independent of attach. Delete-based (cross-session `priorOccurrences` still works within the window). +5 tests.
+
+### Fixed — pre-attach messaging (F17) + alert re-eval idempotency
+
+- `network_attach` now detects the VM's uptime and warns when the app was running before attach ("capture starts NOW; traffic before this moment was not recorded"), with a machine-readable `preAttachUptimeMs` — dart:io profiling records nothing pre-attach, and a near-empty capture was being misread as a broken tool.
+- `insertAlert` re-selected only `(id, severity)`, so re-evaluating the SAME source across writer ticks inflated `occurrence_count`. Now reads `last_source_id` and bumps by 0 on a repeat. Verified 0 duplicate rows across 14,222 real alerts.
+
 ## [0.10.0] — 2026-07-02
 
 Design-sprint release: every remaining audit finding fixed at the system-design level (docs/agent-ux-audit-2026-07-02.md, D1–D10). Landed across four PRs; sections below grow per PR.

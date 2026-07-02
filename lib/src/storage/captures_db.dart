@@ -1130,6 +1130,35 @@ class CapturesDao {
 
   /// Deletes a session and (via CASCADE) all its requests, bodies, sockets,
   /// logs, alerts, and FTS index rows.
+  /// Alert retention: deletes alerts older than [cutoffMs] (ts_ms) EXCEPT
+  /// those belonging to a currently-attached session (protected — a
+  /// long-lived live session keeps all its alerts regardless of age).
+  /// Returns the number of rows deleted. Used by [AlertRetention] to keep
+  /// the pending banner reflecting recent state instead of months of
+  /// accumulated noise. No-op contract: cutoff in the past + empty protect
+  /// set is fine.
+  int expireOldAlerts({
+    required int cutoffMs,
+    required Set<int> protectedSessionIds,
+  }) {
+    final where = StringBuffer('ts_ms < ?');
+    final params = <Object?>[cutoffMs];
+    if (protectedSessionIds.isNotEmpty) {
+      final placeholders = List.filled(protectedSessionIds.length, '?').join(',');
+      where.write(' AND session_id NOT IN ($placeholders)');
+      params.addAll(protectedSessionIds);
+    }
+    // Count first (DELETE doesn't report affected rows through this driver
+    // uniformly), then delete in one statement.
+    final n = _db.select(
+      'SELECT COUNT(*) AS c FROM alerts WHERE $where',
+      params,
+    ).first['c'] as int;
+    if (n == 0) return 0;
+    _db.execute('DELETE FROM alerts WHERE $where', params);
+    return n;
+  }
+
   bool deleteSession(int sessionId) {
     final exists = _db.select('SELECT 1 FROM sessions WHERE id=?', [sessionId]);
     if (exists.isEmpty) return false;
