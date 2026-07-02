@@ -8,6 +8,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 Design-sprint release: every remaining audit finding fixed at the system-design level (docs/agent-ux-audit-2026-07-02.md, D1–D10). Landed across four PRs; sections below grow per PR.
 
+### PR C — capture pipeline (D7 ingestion classification, D9 self-heal, D10 recovery)
+
+- **Events classified at ingestion (D7).** New `util/http_classify.dart`: a successful WebSocket upgrade (101 "Switching Protocols") no longer raises a phantom `http_error` when dart:io flags the adopted socket as "detached" (F21); alert titles use `displayUrl` which strips the meaningless `:0` port and default ports (F30).
+- **Redirect chains captured (F22).** Schema **v11** adds `redirects_json`; `network_get` surfaces `response.redirects` (the `{location, method, statusCode}` hops), and HAR export fills `redirectURL` from the last hop.
+- **i18n-safe search (F23).** URLs are indexed with their percent-DECODED form alongside the raw one at the single `indexForSearch` choke point, so a search for `ÜMLAUT` matches `%C3%9CMLAUT`.
+- **Degraded attaches self-heal (D9/F28).** Capability flags are now mutable; the capture writer's rescan retries a failed HTTP/socket enable across all isolates and flips the flag on success — a session that attached mid-boot recovers within ~20s instead of staying degraded forever.
+- **Crash-safe capture batches (D10).** `_pollHttp` advances its per-isolate cursor only AFTER the batch is processed, with per-request try/catch — one poisoned request can no longer drop the rest of a tick's requests.
+- **DTD default no longer pins a dead URI (D10/F10/F27).** When the startup DTD URI is stale, `network_status` rediscovers a live DTD and retries once; a failed connect now routes to `network_discover_dtd`.
+- +10 tests. 355 green.
+
 ### PR B — read policy (D3 taxonomy, D4 history cursors, D8 size discipline)
 
 - **Honest error taxonomy (RC5/F26).** A healthy VM answering "no such id" now returns `errorKind: not_found` (with list/search recovery), not `unresponsive_vm` — across network_get and body_fetch via a shared `looksLikeVmIdMiss` classifier. Stops poisoning usage_stats and misrouting agents to VM-recovery for a typo'd id.

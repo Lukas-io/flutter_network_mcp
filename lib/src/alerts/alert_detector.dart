@@ -1,6 +1,7 @@
 import 'package:vm_service/vm_service.dart';
 
 import '../storage/captures_db.dart';
+import '../util/http_classify.dart';
 import '../util/http_timing.dart';
 import 'alert_rules.dart';
 import 'signature.dart';
@@ -22,9 +23,12 @@ class AlertDetector {
     final hasError =
         (r.request?.hasError ?? false) || (r.response?.hasError ?? false);
 
-    if (hasError && _rules.httpErrorEnabled) {
+    // D7/F21: a successful WebSocket upgrade (101) leaves dart:io's error
+    // flag set ("Socket has been detached") because the socket was adopted
+    // by the WebSocket layer — that is NOT a request failure. Don't alarm.
+    if (hasError && _rules.httpErrorEnabled && !isBenignUpgradeError(r)) {
       final msg = r.response?.error ?? r.request?.error ?? 'dart:io error';
-      final title = '${r.method} ${r.uri} — request failed';
+      final title = '${r.method} ${displayUrl(r.uri)} — request failed';
       _dao.insertAlert(
         sessionId: sessionId,
         severity: 'error',
@@ -39,7 +43,7 @@ class AlertDetector {
 
     if (status != null) {
       if (status >= 500 && status <= 599 && _rules.http5xxEnabled) {
-        final title = '$status on ${r.method} ${_compact(r.uri)}';
+        final title = '$status on ${r.method} ${_compact(Uri.parse(displayUrl(r.uri)))}';
         _dao.insertAlert(
           sessionId: sessionId,
           severity: 'error',
@@ -51,7 +55,7 @@ class AlertDetector {
           sourceId: id,
         );
       } else if (status >= 400 && status <= 499 && _rules.http4xxEnabled) {
-        final title = '$status on ${r.method} ${_compact(r.uri)}';
+        final title = '$status on ${r.method} ${_compact(Uri.parse(displayUrl(r.uri)))}';
         _dao.insertAlert(
           sessionId: sessionId,
           severity: 'warning',
@@ -71,7 +75,7 @@ class AlertDetector {
     if (_rules.httpSlowEnabled && exchangeMs != null) {
       final ms = exchangeMs;
       if (ms > _rules.slowThresholdMs) {
-        final title = '${ms}ms on ${r.method} ${_compact(r.uri)}';
+        final title = '${ms}ms on ${r.method} ${_compact(Uri.parse(displayUrl(r.uri)))}';
         _dao.insertAlert(
           sessionId: sessionId,
           severity: 'warning',
