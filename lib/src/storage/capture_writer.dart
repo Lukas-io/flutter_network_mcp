@@ -160,24 +160,36 @@ class CaptureWriter {
           iso.id,
           updatedSince: _lastCursorPerIsolate[iso.id],
         );
-        _lastCursorPerIsolate[iso.id] = profile.timestamp;
         for (final req in profile.requests) {
-          if (!_captureFilter.shouldCapture(req.uri)) continue;
-          final isNew = _dao.upsertHttpRequest(sid, req, isolateId: iso.id);
-          // RC2: URL searchable from first sight, not only after the body
-          // backfill (which never ran for empty-body / given-up requests).
-          // Only on isNew — the backfill's later full index (url + body
-          // text) must not be clobbered by re-delivered updates.
-          if (searchOn && isNew) {
-            _dao.indexForSearch(
-              sessionId: sid,
-              vmId: req.id,
-              isolateId: iso.id,
-              url: req.uri.toString(),
+          // D10 (audit phase-6): per-request try/catch so a single poisoned
+          // request cannot drop the rest of the batch — and, crucially, the
+          // cursor is advanced only AFTER the loop, so a mid-batch throw
+          // re-delivers the unprocessed tail next tick instead of skipping
+          // it forever.
+          try {
+            if (!_captureFilter.shouldCapture(req.uri)) continue;
+            final isNew = _dao.upsertHttpRequest(sid, req, isolateId: iso.id);
+            // RC2: URL searchable from first sight, not only after the body
+            // backfill (which never ran for empty-body / given-up requests).
+            // Only on isNew — the backfill's later full index (url + body
+            // text) must not be clobbered by re-delivered updates.
+            if (searchOn && isNew) {
+              _dao.indexForSearch(
+                sessionId: sid,
+                vmId: req.id,
+                isolateId: iso.id,
+                url: req.uri.toString(),
+              );
+            }
+            if (alertsOn) _detector.forHttpRequest(sid, req);
+          } catch (e) {
+            io.stderr.writeln(
+              'CaptureWriter: skipped request ${req.id} on ${iso.id}: $e',
             );
           }
-          if (alertsOn) _detector.forHttpRequest(sid, req);
         }
+        // Cursor advances only after the batch is durably processed.
+        _lastCursorPerIsolate[iso.id] = profile.timestamp;
       } catch (e, st) {
         io.stderr.writeln(
           'CaptureWriter _pollHttp(${iso.id}) failed: $e\n$st',
@@ -271,8 +283,55 @@ class CaptureWriter {
       }
       final freshIds = {for (final i in fresh) i.id};
       _lastCursorPerIsolate.removeWhere((id, _) => !freshIds.contains(id));
+      await _healDegradedCapabilities(vm, fresh);
     } catch (e) {
       io.stderr.writeln('CaptureWriter isolate re-scan failed: $e');
+    }
+  }
+
+  /// D9 (audit F28): a stream that lost the attach-time race (attach ran
+  /// while the app was still booting) left the session permanently degraded
+  /// — `http/socket: unavailable` in network_status, forever, with no path
+  /// back. On each rescan, retry the enable across ALL isolates for any
+  /// capability still marked off; on success flip the AttachedSession flag
+  /// (read live by network_status) so the degradation clears within ~20s.
+  Future<void> _healDegradedCapabilities(
+    VmClient vm,
+    List<IsolateInfo> isolates,
+  ) async {
+    final sid = _sessionId;
+    if (sid == null) return;
+    // The writer starts before registry.register on attach, so the first
+    // tick can see no session — null-safe by design.
+    final session = SessionRegistry.instance.attachedById(sid);
+    if (session == null) return;
+    if (session.httpProfilingEnabled && session.socketProfilingEnabled) return;
+
+    final socketsOn = CapabilityConfig.instance.isEnabled(Category.sockets);
+    for (final iso in isolates) {
+      if (!session.httpProfilingEnabled) {
+        try {
+          final state = await vm.enableHttpLoggingForIsolate(iso.id);
+          if (state.enabled) {
+            session.httpProfilingEnabled = true;
+            io.stderr.writeln(
+              'CaptureWriter: HTTP capture healed for session $sid on '
+              '${iso.id} (attach-time race recovered).',
+            );
+          }
+        } catch (_) {/* still unavailable; retry next rescan */}
+      }
+      if (socketsOn && !session.socketProfilingEnabled) {
+        try {
+          if (await vm.enableSocketProfilingForIsolate(iso.id)) {
+            session.socketProfilingEnabled = true;
+            io.stderr.writeln(
+              'CaptureWriter: socket capture healed for session $sid on '
+              '${iso.id}.',
+            );
+          }
+        } catch (_) {/* still unavailable */}
+      }
     }
   }
 

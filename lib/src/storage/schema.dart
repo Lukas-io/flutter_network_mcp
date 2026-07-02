@@ -1,6 +1,6 @@
 /// Captures-DB schema version. Bump this AND add a migration block in the
 /// `_migrationFor` switch in `database.dart` whenever a table here changes.
-const int currentVersion = 10;
+const int currentVersion = 11;
 
 const List<String> initialSchema = [
   '''
@@ -34,6 +34,7 @@ const List<String> initialSchema = [
     content_type          TEXT,
     request_headers_json  TEXT,
     response_headers_json TEXT,
+    redirects_json        TEXT,
     has_error             INTEGER NOT NULL DEFAULT 0,
     bodies_fetched        INTEGER NOT NULL DEFAULT 0,
     body_fetch_attempts   INTEGER NOT NULL DEFAULT 0,
@@ -348,4 +349,12 @@ const List<String> migrationV9toV10 = [
     reason    TEXT
   )
   ''',
+];
+
+/// v10 -> v11: redirect chain (audit F22). dart:io collapses a followed
+/// redirect chain into ONE profile entry with a `redirects` list of
+/// {location, method, statusCode} hops; we persist it as JSON so
+/// network_get can surface the chain and HAR export can fill redirectURL.
+const List<String> migrationV10toV11 = [
+  'ALTER TABLE http_requests ADD COLUMN redirects_json TEXT',
 ];

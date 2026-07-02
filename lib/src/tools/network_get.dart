@@ -62,6 +62,17 @@ final networkGetTool = Tool(
   ),
 );
 
+/// D7/F22: decode the persisted redirect-chain JSON for history responses.
+List<Object?>? _decodeRedirects(String? json) {
+  if (json == null || json.isEmpty) return null;
+  try {
+    final decoded = jsonDecode(json);
+    return decoded is List ? decoded : null;
+  } catch (_) {
+    return null;
+  }
+}
+
 const _kBodyHardCap = 262144;
 const _kHeaderHardCap = 4096;
 const _kMaxEvents = 50;
@@ -252,6 +263,9 @@ CallToolResult _buildLiveResponse({
           if (!r.response!.hasError) ...{
             if (r.response!.statusCode != null) 'statusCode': r.response!.statusCode,
             if (r.response!.reasonPhrase != null) 'reasonPhrase': r.response!.reasonPhrase,
+            // D7/F22: the redirect chain the request followed.
+            if (r.response!.redirects.isNotEmpty)
+              'redirects': r.response!.redirects,
             'headers': truncateHeaders(r.response!.headers, maxValueBytes: headerTruncateBytes),
             ...sizeFields(r.response!.contentLength),
             if (r.response!.compressionState != null) 'compressionState': r.response!.compressionState,
@@ -358,9 +372,12 @@ FutureOr<CallToolResult> _historyGet({
           row: row, which: 'request', hasBytes: reqBlob != null && reqBlob.isNotEmpty),
       if (reqBody != null) 'body': reqBody,
     };
+    // D7/F22: surface the persisted redirect chain.
+    final redirects = _decodeRedirects(row['redirects_json'] as String?);
     final responseData = {
       if (row['status_code'] != null) 'statusCode': row['status_code'],
       if (row['reason_phrase'] != null) 'reasonPhrase': row['reason_phrase'],
+      if (redirects != null) 'redirects': redirects,
       if (respHeaders != null)
         'headers': truncateHeaders(respHeaders, maxValueBytes: headerTruncateBytes),
       ...sizeFields(row['response_size'] as int?),
