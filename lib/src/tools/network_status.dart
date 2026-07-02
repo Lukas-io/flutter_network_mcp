@@ -126,19 +126,48 @@ FutureOr<CallToolResult> networkStatus(
   // Opportunistic DTD connect so knownApps lands on the first status call.
   String? connectError;
   if (connectDtd && !session.dtd.isConnected && defaultDtdUri != null) {
+    var target = defaultDtdUri;
     try {
       await session.dtd
-          .connect(Uri.parse(defaultDtdUri))
+          .connect(Uri.parse(target))
           .timeout(const Duration(seconds: 5));
       (out['dtd'] as Map<String, Object?>)['connected'] = true;
-      (out['dtd'] as Map<String, Object?>)['uri'] = defaultDtdUri;
+      (out['dtd'] as Map<String, Object?>)['uri'] = target;
     } catch (e) {
-      connectError = e.toString();
+      // D10/F10/F27: the startup default URI goes stale when the DTD that
+      // owned it exits (a common cause of "auto-attach saw the app but
+      // couldn't connect"). Rediscover a live DTD and retry ONCE before
+      // reporting failure, instead of pinning the dead URI forever.
+      final fresh = DtdDiscovery.discover();
+      final candidate = fresh.isEmpty ? null : fresh.first.wsUri;
+      if (candidate != null && candidate != target) {
+        try {
+          await session.dtd
+              .connect(Uri.parse(candidate))
+              .timeout(const Duration(seconds: 5));
+          target = candidate;
+          (out['dtd'] as Map<String, Object?>)['connected'] = true;
+          (out['dtd'] as Map<String, Object?>)['uri'] = candidate;
+          (out['dtd'] as Map<String, Object?>)['rediscovered'] = true;
+        } catch (e2) {
+          connectError = 'default URI ($defaultDtdUri) and rediscovered URI '
+              '($candidate) both failed: $e2';
+        }
+      } else {
+        connectError = e.toString();
+      }
     }
   }
 
   if (connectError != null) {
-    (out['dtd'] as Map<String, Object?>)['connectError'] = connectError;
+    final dtdBlock = out['dtd'] as Map<String, Object?>;
+    dtdBlock['connectError'] = connectError;
+    // F10: the failure used to leave the agent to guess; route it to the
+    // tool that exists for exactly this.
+    dtdBlock['nextSteps'] = const [
+      'network_discover_dtd — list live DTD instances and pick a fresh URI',
+      'network_discover_dtd includeStale:true — inspect dead-pid candidates',
+    ];
   }
 
   // DB-level context: path, session count, and alert totals across all

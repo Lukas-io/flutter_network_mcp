@@ -157,10 +157,12 @@ class AttachedSession {
 
   final DateTime attachedAt;
 
-  /// Capture state captured at attach-time. Immutable for the lifetime of
-  /// the session (the streams either enabled cleanly or they didn't).
-  final bool httpProfilingEnabled;
-  final bool socketProfilingEnabled;
+  /// Capture state, first set at attach. D9 (audit F28): mutable so the
+  /// capture writer's rescan can flip a `false` to `true` when a stream
+  /// that lost the attach-time race finally enables — a degraded attach
+  /// now self-heals instead of staying degraded for the whole session.
+  bool httpProfilingEnabled;
+  bool socketProfilingEnabled;
 
   /// Set when this session id was carried across a hot-restart reattach
   /// (issue #16): the wall-clock of the most recent migration, and the VM
