@@ -14,8 +14,17 @@ final networkQueryTool = Tool(
       'Read-only SELECT against the captures DB for what the typed tools '
       'cannot express (cross-session aggregates, percentile timings, joins, '
       'top error URLs). Single statement, 500-row cap; BLOB cells return '
-      '{type:"blob",size}. Schema in docs/tools/power/network_query.md. Prefer '
-      'the typed tools first.',
+      '{type:"blob",size}. Prefer the typed tools first.\n'
+      'Key columns (times are MICROSECONDS): '
+      'http_requests(session_id, vm_id, method, url, host, path, status_code, '
+      'start_us, end_us, duration_us, request_size, response_size, '
+      'content_type, has_error, isolate_id, redirects_json); '
+      'sessions(id, started_at, ended_at, app_name, vm_service_uri); '
+      'log_records(session_id, source, level, logger_name, message, ts_ms); '
+      'socket_events(session_id, id, address, port, read_bytes, write_bytes); '
+      'alerts(session_id, severity, kind, title, drained). A failed query '
+      'returns the live `schema` map; full guide at resource '
+      'flutter-network://docs/tools/power/network_query.md.',
   inputSchema: Schema.object(
     properties: {
       'sql': Schema.string(

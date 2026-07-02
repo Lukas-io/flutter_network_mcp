@@ -102,7 +102,10 @@ FutureOr<CallToolResult> networkDiff(CallToolRequest request) async {
 
     final headersA = _parseHeaders(a['response_headers_json']);
     final headersB = _parseHeaders(b['response_headers_json']);
-    final headerDiff = _diffHeaders(headersA, headersB);
+    // D5: auth headers are always redacted in the diff view (network_diff
+    // has no debug-auth use case — use network_get redact:false for that).
+    final headerDiff =
+        _diffHeaders(headersA, headersB, redactNames: dao.redactedHeaderSet());
 
     final ctA = a['content_type'] as String?;
     final ctB = b['content_type'] as String?;
@@ -244,9 +247,19 @@ Map<String, dynamic>? _parseHeaders(Object? raw) {
   }
 }
 
-Map<String, Object?> _diffHeaders(Map<String, dynamic>? a, Map<String, dynamic>? b) {
+Map<String, Object?> _diffHeaders(
+  Map<String, dynamic>? a,
+  Map<String, dynamic>? b, {
+  Set<String> redactNames = const {},
+}) {
   final ma = _flat(a);
   final mb = _flat(b);
+  // D5 (audit RC9): diffing two authenticated requests printed BOTH raw
+  // tokens in `changed`. Redact the value but still report that the header
+  // changed (`<redacted>` vs `<redacted>` collapses to "present in both,
+  // masked"), so the diff stays useful without leaking secrets.
+  String show(String key, String value) =>
+      redactNames.contains(key) ? '<redacted>' : value;
   final added = <String, String>{};
   final removed = <String, String>{};
   final changed = <String, Map<String, String?>>{};
@@ -254,11 +267,11 @@ Map<String, Object?> _diffHeaders(Map<String, dynamic>? a, Map<String, dynamic>?
     final va = ma[k];
     final vb = mb[k];
     if (va == null && vb != null) {
-      added[k] = vb;
+      added[k] = show(k, vb);
     } else if (va != null && vb == null) {
-      removed[k] = va;
+      removed[k] = show(k, va);
     } else if (va != vb) {
-      changed[k] = {'a': va, 'b': vb};
+      changed[k] = {'a': show(k, va!), 'b': show(k, vb!)};
     }
   }
   return {'added': added, 'removed': removed, 'changed': changed};

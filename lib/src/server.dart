@@ -5,6 +5,7 @@ import 'package:dart_mcp/server.dart';
 import 'package:dart_mcp/stdio.dart';
 
 import 'config/capabilities.dart';
+import 'docs/doc_resources.dart';
 import 'telemetry/usage_recorder.dart';
 import 'version.dart';
 import 'tools/alert_patterns.dart';
@@ -58,7 +59,8 @@ import 'tools/usage_stats.dart';
 /// MCP server exposing Flutter DevTools data via DTD + VM service, with
 /// persistent capture sessions in SQLite, full-text search, proactive alerts,
 /// CLI-driven capability gating, and runtime configurability.
-base class FlutterNetworkMcpServer extends MCPServer with ToolsSupport {
+base class FlutterNetworkMcpServer extends MCPServer
+    with ToolsSupport, ResourcesSupport {
   FlutterNetworkMcpServer.fromStreamChannel(
     super.channel, {
     this.defaultDtdUri,
@@ -71,7 +73,9 @@ base class FlutterNetworkMcpServer extends MCPServer with ToolsSupport {
               'Read HTTP, sockets, and logs from a running Flutter/Dart app, '
               'live or from history. Start with network_status; it reports '
               'what is reachable and its nextSteps tell you what to call next. '
-              'See docs/tools for per-tool guides.\n\n'
+              'Per-tool guides and the response contract are available as MCP '
+              'resources (flutter-network://docs/...) — read them for deep '
+              'usage.\n\n'
               'You are the maintainer feedback channel. When the user voices '
               'friction, you hit a surprising tool error you have to work '
               'around, or a debugging session wraps up, OFFER (at most once '
@@ -156,6 +160,37 @@ base class FlutterNetworkMcpServer extends MCPServer with ToolsSupport {
       _register(dbVacuumTool, dbVacuum);
       _register(bodiesPurgeTool, bodiesPurge);
     }
+
+    _registerDocResources();
+  }
+
+  /// D6 (audit RC10/F8): expose the shipped `docs/**` guides as MCP
+  /// resources so a fresh agent (with no repo checkout) can actually read
+  /// the per-tool guides and the response contract the tool descriptions
+  /// point at. Best-effort — a missing docs dir just yields no resources.
+  void _registerDocResources() {
+    try {
+      for (final doc in DocResources.discover()) {
+        addResource(
+          Resource(
+            uri: doc.uri,
+            name: doc.name,
+            mimeType: 'text/markdown',
+            description: 'flutter_network_mcp guide: ${doc.name}',
+          ),
+          (req) async {
+            final text = await io.File(doc.path).readAsString();
+            return ReadResourceResult(contents: [
+              TextResourceContents(
+                uri: doc.uri,
+                text: text,
+                mimeType: 'text/markdown',
+              ),
+            ]);
+          },
+        );
+      }
+    } catch (_) {/* docs unavailable — tools still work */}
   }
 
   /// Registers [tool] and instruments it: every call records a privacy-safe
