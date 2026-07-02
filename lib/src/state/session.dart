@@ -248,6 +248,18 @@ class SessionRegistry {
     session.vm.onUnexpectedDisconnect = () => _onAppDied(session);
   }
 
+  /// RC3: pushes the current ignored_hosts/capture_allow tables to EVERY
+  /// attached session's capture writer. The old path
+  /// (`Session.instance.captureWriter.refreshIgnoredHosts()`) resolved to
+  /// `soleAttached ?? stub`, so with 2+ sessions attached a mid-session
+  /// filter change refreshed a stub — a silent no-op while the tool
+  /// reported "Capture writer refreshed".
+  void refreshCaptureFilters() {
+    for (final s in _attached.values) {
+      s.captureWriter.refreshIgnoredHosts();
+    }
+  }
+
   /// RC4: sessions whose app died while attached, newest first (capped at
   /// 5). Read by network_status ("app exited") and by the scope resolver's
   /// not-attached error so agents get routed to the session's history

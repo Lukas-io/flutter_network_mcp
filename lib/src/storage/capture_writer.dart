@@ -90,6 +90,10 @@ class CaptureWriter {
   /// adds/removes entries so changes take effect before the next tick.
   void refreshIgnoredHosts() => _refreshIgnoredHosts();
 
+  /// The filter currently applied by [_tick] — visible so tests (and tools)
+  /// can verify a refresh actually reached this writer (RC3).
+  CaptureFilter get activeCaptureFilter => _captureFilter;
+
   void _refreshIgnoredHosts() {
     try {
       _captureFilter = CaptureFilter.build(
