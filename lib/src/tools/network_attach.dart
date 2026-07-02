@@ -377,6 +377,19 @@ Future<Map<String, Object?>> performAttach({
         'Is the target a Flutter/Dart app that uses HttpClient / package:http?',
       );
     }
+
+    // F17: how long was the app running BEFORE this attach? dart:io profiling
+    // records nothing before it is enabled, so any HTTP/socket traffic in
+    // that window is simply absent — an agent attaching to an already-running
+    // app must be told, or it will read an "empty" capture as a broken tool.
+    int? preAttachMs;
+    final vmStart = await vm.vmStartTimeMs();
+    if (vmStart != null) {
+      final up = DateTime.now().millisecondsSinceEpoch - vmStart;
+      // Only meaningful past a few seconds (below that, attach effectively
+      // coincides with app start and nothing was missed).
+      if (up > 5000) preAttachMs = up;
+    }
     final primaryIsolateId = allIsolates.first.id;
 
     final caps = CapabilityConfig.instance;
@@ -499,6 +512,16 @@ Future<Map<String, Object?>> performAttach({
 
     // Synthesize warnings for partial degradation.
     final warnings = <String>[];
+    if (preAttachMs != null && reattachPrior == null) {
+      warnings.add(
+        'This app was already running ~${_humanizeMs(preAttachMs)} before '
+        'attach. Capture starts NOW — any HTTP/socket traffic before this '
+        'moment was NOT recorded (dart:io profiling only captures from '
+        'attach onward). A near-empty capture here means the traffic '
+        'predated the attach, not that the app is idle; drive the app (or '
+        'hot-restart it) to generate fresh captured traffic.',
+      );
+    }
     if (!httpEnabled) {
       warnings.add(
         'HTTP timeline logging did not enable cleanly — captured requests may be incomplete.',
@@ -583,6 +606,9 @@ Future<Map<String, Object?>> performAttach({
       if (previousVmServiceUri != null)
         'previousVmServiceUri': previousVmServiceUri,
       'socketProfilingEnabled': socketEnabled,
+      // F17: machine-readable companion to the pre-attach warning above.
+      if (preAttachMs != null && reattachPrior == null)
+        'preAttachUptimeMs': preAttachMs,
       'capabilities': capState.capabilities,
       if (capState.degraded.isNotEmpty) 'degraded': capState.degraded,
       'attachedCount': registry.attachedCount,
@@ -696,4 +722,15 @@ String _extractPattern(String appName) {
   final idx = appName.indexOf(marker);
   if (idx == -1) return appName.trim();
   return appName.substring(idx + marker.length).trim();
+}
+
+/// Coarse human duration for the F17 pre-attach note ("3m", "2h", "1d").
+String _humanizeMs(int ms) {
+  final s = ms ~/ 1000;
+  if (s < 90) return '${s}s';
+  final m = s ~/ 60;
+  if (m < 90) return '${m}m';
+  final h = m ~/ 60;
+  if (h < 48) return '${h}h';
+  return '${h ~/ 24}d';
 }
