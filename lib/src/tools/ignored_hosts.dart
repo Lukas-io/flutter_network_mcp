@@ -82,7 +82,7 @@ FutureOr<CallToolResult> ignoredHosts(CallToolRequest request) async {
           });
         }
         final isNew = dao.addIgnoredHost(host, reason: reason);
-        Session.instance.captureWriter.refreshIgnoredHosts();
+        SessionRegistry.instance.refreshCaptureFilters();
 
         int existingCount = 0;
         try {
@@ -115,7 +115,7 @@ FutureOr<CallToolResult> ignoredHosts(CallToolRequest request) async {
           });
         }
         final removed = dao.removeIgnoredHost(host);
-        Session.instance.captureWriter.refreshIgnoredHosts();
+        SessionRegistry.instance.refreshCaptureFilters();
         return jsonResult({
           'action': 'remove',
           'summary': removed
