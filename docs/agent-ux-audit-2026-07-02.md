@@ -310,3 +310,26 @@ Deliberately NOT covered (needs environments this machine/session lacks): Androi
 
 1. **RC1** (durations) · 2. **RC4** (app-death lifecycle) · 3. **RC2** (search completeness + honest messaging) · 4. **RC3** (config propagation — or ship `capture_allow`/mid-session `ignored_hosts` as attach-time-only and say so) · 5. **RC6** (scope shadowing) · 6. **RC9** (redaction posture) · 7. **RC7 + RC8** (history ergonomics + validated guidance) · 8. **RC10** (in-band docs).
 Then re-run this audit protocol and watch `usage_stats`: search empty-rate (54%) and query error-rate (53%) are the regression metrics for the sprint.
+
+---
+
+# Phase 7 — the design sprint (RC5–RC10 + remaining findings), shipped as 0.10.0
+
+Every remaining finding was fixed at the **system-design level** (not patched) across four PRs (#79–#82), each with tests, analyzer-clean, merged. 362 tests green (from 334). The ten design flaws (D1–D10) and their fixes are in the release notes below and in CHANGELOG 0.10.0. Coverage of the audit:
+
+| Finding(s) | Design fix | Status |
+|---|---|---|
+| RC8: F5, F12, F13, F25, report hint, updateAvailable | D1 — `SessionStateView` + guidance from state; `alerts_config` derives from `AlertRules.ruleKeys`; guidance contract test | ✅ |
+| RC6: F4, F9, F14 | D2 — attach closes shadowing view; `Scope.note` → warning; labeled `pendingAlerts`; `network_query` scope echo | ✅ |
+| RC5: F26 | D3 — `looksLikeVmIdMiss`: healthy-VM id miss → `not_found` | ✅ |
+| RC7: F5, F6, budget hint | D4 — `before:` cursor pages older; whole-session summarize window; cursor-aware hints | ✅ |
+| RC9: F7 + diff leak | D5 — redaction in the shared `truncateHeaders`; get/diff redact by default; replay default flipped; export opt-in | ✅ |
+| RC10: F8 | D6 — `ResourcesSupport` serves `docs/**`; `network_query` schema embedded | ✅ |
+| F21, F22, F30, F23 | D7 — `http_classify` (WS upgrades, `displayUrl`); redirects_json (schema v11); decoded-URL FTS | ✅ |
+| F24, F15 | D8 — compact/capped correlate matches; semantic-truncation `offset:0` hint | ✅ |
+| F28, F11, F10 | D9 — capability self-heal in writer rescan; session tri-state; DTD-error rediscovery+routing | ✅ |
+| RC4-outward: F27 root, writer batch | D10 — DTD default rediscovery; cursor-after-batch + per-request try/catch | ✅ |
+
+Migration v10→v11 verified on the real 491 MB DB copy: 430 ms, 89,378 rows intact (additive `ALTER TABLE` is metadata-only).
+
+**Remaining to close 1.0.0:** (1) `/mcp` reconnect → live-verify the sprint against 0.10.0 with the testbed + real apps (the D2/D3/D4/D5/D6/D7/D9 checks in the plan's verification section); (2) fresh-agent re-audit protocol; (3) confirm `usage_stats` search empty-rate (54%) and query error-rate (53%) have dropped. If green → tag 1.0.0.
