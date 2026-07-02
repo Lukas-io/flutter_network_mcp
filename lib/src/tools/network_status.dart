@@ -258,6 +258,8 @@ FutureOr<CallToolResult> networkStatus(
         for (final a in registry.attached.values) {
           (out['attached'] as List).add(attachedStatusEntry(a));
         }
+        // D2/F4: agent-initiated attach — close a shadowing history view.
+        attach_helper.closeStaleViewAfterAttach(out);
       }
     }
   }
@@ -312,7 +314,16 @@ Map<String, Object?> _buildMcpBlock() {
   if (CapturesDatabase.isOpen) {
     final dataDir = p.dirname(CapturesDatabase.instance.path);
     final status = UpdateCheck.readStatusFile(dataDir);
-    if (status != null && status['isNewer'] == true) {
+    // Re-verify at read time: the status file is written pre-upgrade and
+    // the daily check cache blocks a rewrite, so after `update` it can
+    // still claim an "available" version that is now current or older
+    // (audit: 0.9.18 showing "updateAvailable: 0.9.16").
+    if (status != null &&
+        status['isNewer'] == true &&
+        UpdateCheck.isNewerVersion(
+          status['latest'] as String? ?? '',
+          packageVersion,
+        )) {
       block['updateAvailable'] = {
         'latest': status['latest'],
         if (status['checkedAtMs'] != null) 'checkedAtMs': status['checkedAtMs'],

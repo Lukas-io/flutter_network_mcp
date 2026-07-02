@@ -8,6 +8,7 @@ import '../state/session.dart';
 import '../storage/captures_db.dart';
 import '../util/filters.dart';
 import '../util/scope.dart';
+import '../util/guidance.dart';
 import 'error_kind.dart';
 import 'result.dart';
 
@@ -123,7 +124,7 @@ FutureOr<CallToolResult> logsTail(CallToolRequest request) async {
         messageContains: messageContains,
         sourceFilter: source,
         caps: caps,
-      ), scopeSessionId: scope.sessionId);
+      ), scopeSessionId: scope.sessionId, scopeNote: scope.note);
     } catch (e) {
       return errorResult('history query failed: $e', kind: ErrorKind.internal, extra: {
         'sessionId': sid,
@@ -167,7 +168,7 @@ FutureOr<CallToolResult> logsTail(CallToolRequest request) async {
     messageContains: messageContains,
     sourceFilter: source,
     caps: caps,
-  ), scopeSessionId: scope.sessionId);
+  ), scopeSessionId: scope.sessionId, scopeNote: scope.note);
 }
 
 Map<String, Object?> _historyEntry(Map<String, Object?> r) {
@@ -254,7 +255,10 @@ Map<String, Object?> _buildResponse({
 
   final nextSteps = <String>[];
   if (entries.isEmpty) {
-    nextSteps.add('Drive the app to generate logs');
+    final state = SessionStateView.of(scope.sessionId);
+    nextSteps.add(state.canGenerateTraffic
+        ? 'Drive the app to generate logs'
+        : emptyCaptureHint(state, reRun: 'logs_tail'));
     if (filters.isNotEmpty) {
       nextSteps.add('Drop filters to broaden the search');
     }

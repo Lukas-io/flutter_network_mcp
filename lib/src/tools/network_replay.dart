@@ -172,7 +172,7 @@ FutureOr<CallToolResult> networkReplay(CallToolRequest request) async {
       'curl': buf.toString(),
       if (warnings.isNotEmpty) 'warnings': warnings,
       'nextSteps': nextSteps,
-    }, scopeSessionId: scope.sessionId);
+    }, scopeSessionId: scope.sessionId, scopeNote: scope.note);
   } catch (e) {
     return errorResult('network_replay failed: $e',
         kind: ErrorKind.internal,

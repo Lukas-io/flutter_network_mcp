@@ -11,6 +11,7 @@ import '../util/body_decoder.dart';
 import '../util/http_timing.dart';
 import '../util/body_status.dart';
 import '../util/scope.dart';
+import '../util/guidance.dart';
 import 'error_kind.dart';
 import 'result.dart';
 
@@ -293,7 +294,7 @@ CallToolResult _buildLiveResponse({
       requestBody: reqBody,
       responseBody: respBody,
     ),
-  }, scopeSessionId: scope.sessionId);
+  }, scopeSessionId: scope.sessionId, scopeNote: scope.note);
 }
 
 FutureOr<CallToolResult> _historyGet({
@@ -365,11 +366,19 @@ FutureOr<CallToolResult> _historyGet({
     if (degradedFrom != null) {
       warnings.insert(0, degradedFrom);
     }
-    if (reqBlob == null && includeBodies) {
-      warnings.add('Request body not persisted yet (writer may still be backfilling).');
-    }
-    if (respBlob == null && includeBodies && row['response_size'] != null) {
-      warnings.add('Response body not persisted yet (writer may still be backfilling).');
+    if (reqBlob == null || (respBlob == null && row['response_size'] != null)) {
+      // D1/F12: "still backfilling" is only true while the capture runs; for
+      // an ended session the body is simply gone.
+      final bodyState = SessionStateView.of(scope.sessionId);
+      final why = bodyState.canGenerateTraffic
+          ? 'not persisted yet (writer may still be backfilling)'
+          : 'was never captured before the session ${bodyState.isEnded ? "ended" : "was interrupted"}';
+      if (reqBlob == null && includeBodies) {
+        warnings.add('Request body $why.');
+      }
+      if (respBlob == null && includeBodies && row['response_size'] != null) {
+        warnings.add('Response body $why.');
+      }
     }
 
     final durMs = durUs == null ? null : durUs ~/ 1000;
@@ -407,7 +416,7 @@ FutureOr<CallToolResult> _historyGet({
         requestBody: reqBody,
         responseBody: respBody,
       ),
-    }, scopeSessionId: scope.sessionId);
+    }, scopeSessionId: scope.sessionId, scopeNote: scope.note);
   } catch (e) {
     return errorResult('history query failed: $e',
         kind: ErrorKind.internal,

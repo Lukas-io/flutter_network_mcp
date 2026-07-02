@@ -90,5 +90,5 @@ FutureOr<CallToolResult> socketClear(CallToolRequest request) async {
       'socket_list — confirm the live profile is empty',
       'Drive the app, then socket_list — fresh isolated socket capture',
     ],
-  }, scopeSessionId: scope.sessionId);
+  }, scopeSessionId: scope.sessionId, scopeNote: scope.note);
 }

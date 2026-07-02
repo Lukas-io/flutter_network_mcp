@@ -10,6 +10,7 @@ class Scope {
     required this.sessionId,
     required this.appName,
     required this.isLive,
+    this.note,
   });
 
   /// DB row id in `sessions` table.
@@ -25,12 +26,19 @@ class Scope {
   /// via `session_open` or an explicit `sessionId:` arg.
   final bool isLive;
 
+  /// D2 (audit RC6/F4): set when this scope was resolved through invisible
+  /// process state that could surprise the agent — e.g. an open
+  /// session_open view shadowing live attached session(s). Tools surface
+  /// it as a warning via `jsonResult(scope: ...)`.
+  final String? note;
+
   /// Compact `scope: {…}` block tools include in successful responses so
   /// the agent can verify which session it just read from.
   Map<String, Object?> toBlock() => {
         'sessionId': sessionId,
         if (appName != null) 'appName': appName,
         'isLive': isLive,
+        if (note != null) 'note': note,
       };
 }
 
@@ -123,11 +131,21 @@ class Scope {
   final viewedId = Session.instance.viewedSessionId;
   if (viewedId != null) {
     final attached = reg.attachedById(viewedId);
+    // D2/F4: an open view silently outranks live sessions. When that is
+    // actually happening (view ≠ the live attach, and live sessions
+    // exist), say so on every read instead of letting the agent believe
+    // it is reading live data.
+    final shadowing = attached == null && reg.attachedCount > 0;
     return (
       Scope(
         sessionId: viewedId,
         appName: attached?.appName,
         isLive: attached != null,
+        note: shadowing
+            ? 'Reading HISTORY session $viewedId via session_open while '
+                '${reg.attachedCount} live session(s) are attached — '
+                'session_close to target live captures.'
+            : null,
       ),
       null,
     );

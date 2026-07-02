@@ -66,6 +66,9 @@ FutureOr<CallToolResult> networkQuery(CallToolRequest request) async {
 
     return jsonResult({
       'summary': summary,
+      // F14: every sibling read tool honors the session_open view; SQL
+      // deliberately does not — say so instead of leaving it implicit.
+      'scope': 'all-sessions',
       'rowCount': rowCount,
       if (warnings.isNotEmpty) 'warnings': warnings,
       'nextSteps': const [

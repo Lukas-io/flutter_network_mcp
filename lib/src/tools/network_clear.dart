@@ -94,5 +94,5 @@ FutureOr<CallToolResult> networkClear(CallToolRequest request) async {
       'network_list — confirm the live profile is empty',
       'Drive the app, then network_list — fresh isolated capture',
     ],
-  }, scopeSessionId: scope.sessionId);
+  }, scopeSessionId: scope.sessionId, scopeNote: scope.note);
 }

@@ -34,9 +34,20 @@ CallToolResult jsonResult(
   Map<String, Object?> data, {
   bool isError = false,
   int? scopeSessionId,
+  String? scopeNote,
 }) {
+  var enriched = data;
+  // D2: a scope resolved through surprising process state (session_open
+  // view shadowing live sessions) carries a note — promote it to a
+  // warning so the agent cannot miss it in any read tool's response.
+  if (!isError && scopeNote != null) {
+    final existing = (data['warnings'] as List?)?.cast<String>() ?? const [];
+    if (!existing.contains(scopeNote)) {
+      enriched = {...data, 'warnings': [scopeNote, ...existing]};
+    }
+  }
   final payload =
-      isError ? data : _maybeAnnotatePendingAlerts(data, scopeSessionId);
+      isError ? enriched : _maybeAnnotatePendingAlerts(enriched, scopeSessionId);
   final pretty = const JsonEncoder.withIndent('  ').convert(payload);
   return CallToolResult(
     content: [TextContent(text: pretty)],
@@ -107,6 +118,9 @@ Map<String, Object?> _maybeAnnotatePendingAlerts(
     return {
       ...data,
       'pendingAlerts': {
+        // F9: the same field used to flip between session-scoped and
+        // DB-wide counts with nothing marking which — label it.
+        'scope': sid != null ? 'session' : 'all-sessions',
         'count': pending,
         if (critical > 0) 'critical': critical,
       },
