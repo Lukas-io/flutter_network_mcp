@@ -25,6 +25,13 @@ final alertsConfigTool = Tool(
           'slowThresholdMs': Schema.int(
             description: 'http_slow trigger threshold in ms (>0).',
           ),
+          'retentionDays': Schema.int(
+            description:
+                'Auto-expire alerts from non-attached sessions older than '
+                'this many days (keeps the pending banner recent). 0 = keep '
+                'forever. Env default FLUTTER_NETWORK_MCP_ALERT_RETENTION_DAYS '
+                '(14). Applies to the next hourly sweep; per-process.',
+          ),
           'rules': Schema.object(
             description: 'Per-rule enable flags. Omitted rules keep their current state.',
             properties: {
@@ -45,6 +52,7 @@ FutureOr<CallToolResult> alertsConfig(CallToolRequest request) async {
     try {
       AlertRules.instance.applyConfig(
         slowThresholdMs: setArg['slowThresholdMs'] as int?,
+        retentionDays: setArg['retentionDays'] as int?,
         rules: setArg['rules'] as Map<String, dynamic>?,
       );
     } catch (e) {
@@ -62,11 +70,15 @@ FutureOr<CallToolResult> alertsConfig(CallToolRequest request) async {
   final enabledKeys = _ruleKeys.where((k) => rules[k] == true).toList();
   final disabledKeys = _ruleKeys.where((k) => rules[k] == false).toList();
   final slow = config['slowThresholdMs'];
+  final retention = config['retentionDays'] as int? ?? 0;
+  final retentionDesc = retention > 0 ? '${retention}d' : 'off';
 
   final summary = mutated
-      ? 'Updated alert config: slowThresholdMs=$slow, enabled=[${enabledKeys.join(", ")}]'
+      ? 'Updated alert config: slowThresholdMs=$slow, retention=$retentionDesc, '
+          'enabled=[${enabledKeys.join(", ")}]'
           '${disabledKeys.isNotEmpty ? ", disabled=[${disabledKeys.join(", ")}]" : ""}.'
-      : 'Alert config: slowThresholdMs=$slow, ${enabledKeys.length}/${_ruleKeys.length} rule(s) enabled.';
+      : 'Alert config: slowThresholdMs=$slow, retention=$retentionDesc, '
+          '${enabledKeys.length}/${_ruleKeys.length} rule(s) enabled.';
 
   final warnings = <String>[];
   if (enabledKeys.isEmpty) {
