@@ -5,6 +5,7 @@ import 'package:dart_mcp/server.dart';
 import '../config/capabilities.dart';
 import '../storage/captures_db.dart';
 import '../util/scope.dart';
+import '../util/guidance.dart';
 import 'error_kind.dart';
 import 'result.dart';
 
@@ -120,10 +121,17 @@ Map<String, Object?> buildAlertsResponse({
 
   final nextSteps = <String>[];
   if (rows.isEmpty) {
-    if (action == 'drain') {
+    final emptyState = SessionStateView.of(scope.sessionId);
+    if (!emptyState.canGenerateTraffic) {
+      nextSteps.add(
+          'Nothing pending — and this session\'s capture is complete, so no '
+          'new alerts will arrive.');
+    } else if (action == 'drain') {
       nextSteps.add('Nothing to handle right now. Re-check with alerts_peek to avoid disturbing the queue.');
     } else {
-      nextSteps.add('Nothing pending. Drive the app or wait for the detector to flag new events.');
+      nextSteps.add(SessionStateView.of(scope.sessionId).canGenerateTraffic
+          ? 'Nothing pending. Drive the app or wait for the detector to flag new events.'
+          : 'Nothing pending — and this session\'s capture is complete, so no new alerts will arrive.');
     }
   } else {
     if (firstHttp.isNotEmpty && caps.isEnabled(Category.http)) {

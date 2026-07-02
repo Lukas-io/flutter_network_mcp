@@ -5,6 +5,7 @@ import 'package:dart_mcp/server.dart';
 import '../storage/captures_db.dart';
 import '../util/path_template.dart';
 import '../util/scope.dart';
+import '../util/guidance.dart';
 import 'error_kind.dart';
 import 'result.dart';
 
@@ -103,9 +104,12 @@ FutureOr<CallToolResult> networkSummarize(CallToolRequest request) async {
 
   final nextSteps = <String>[];
   if (returned.isEmpty) {
-    nextSteps.add(
-      'Drive the app to generate traffic, then re-run network_summarize.',
-    );
+    // D1: state-correct guidance — never tell the agent to drive an app
+    // that is ended, interrupted, or dead.
+    nextSteps.add(emptyCaptureHint(
+      SessionStateView.of(scope.sessionId),
+      reRun: 'network_summarize',
+    ));
   } else {
     final top = returned.first;
     final topEndpoint = top['endpoint'] as String;

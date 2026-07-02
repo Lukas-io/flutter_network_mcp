@@ -146,7 +146,7 @@ FutureOr<CallToolResult> socketList(CallToolRequest request) async {
     if (warnings.isNotEmpty) 'warnings': warnings,
     'nextSteps': _nextSteps(caps, sockets: sockets, isLive: true),
     'sockets': sockets,
-  }, scopeSessionId: scope.sessionId);
+  }, scopeSessionId: scope.sessionId, scopeNote: scope.note);
 }
 
 CallToolResult _dbSockets(
@@ -183,7 +183,7 @@ CallToolResult _dbSockets(
       if (warnings.isNotEmpty) 'warnings': warnings,
       'nextSteps': _nextSteps(caps, sockets: sockets, isLive: false),
       'sockets': sockets,
-    }, scopeSessionId: scope.sessionId);
+    }, scopeSessionId: scope.sessionId, scopeNote: scope.note);
   } catch (e) {
     return errorResult(
       'socket query failed: $e',
