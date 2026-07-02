@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:sqlite3/sqlite3.dart' as sql;
 import 'package:vm_service/vm_service.dart';
 
+import '../util/http_timing.dart';
 import 'database.dart';
 
 /// Typed accessors for the captures database. Holds no state of its own —
@@ -40,8 +41,12 @@ class CapturesDao {
     required String? vmServiceUri,
     required String? isolateId,
   }) {
+    // ended_at=NULL: a full app relaunch closes the old VM socket, which
+    // the RC4 death handler records as session end — a successful repoint
+    // means the same logical session is live again.
     _db.execute(
-      'UPDATE sessions SET vm_service_uri=?, isolate_id=? WHERE id=?',
+      'UPDATE sessions SET vm_service_uri=?, isolate_id=?, ended_at=NULL '
+      'WHERE id=?',
       [vmServiceUri, isolateId, id],
     );
   }
@@ -121,7 +126,11 @@ class CapturesDao {
         : null;
     final contentType = _firstHeader(r.response?.headers, 'content-type') ??
         _firstHeader(r.request?.headers, 'content-type');
-    final endUs = r.endTime?.microsecondsSinceEpoch;
+    // RC1: exchange end, not request-upload end — see util/http_timing.dart.
+    // In-flight requests persist NULL end/duration; the poller's
+    // updatedSince cursor re-delivers them when the response completes and
+    // the upsert refreshes end_us/duration_us to the real values.
+    final endUs = exchangeEndTime(r)?.microsecondsSinceEpoch;
     final startUs = r.startTime.microsecondsSinceEpoch;
     final durationUs = endUs == null ? null : endUs - startUs;
 
@@ -1477,6 +1486,90 @@ class CapturesDao {
       [sessionId],
     );
     return (rows.first['n'] as int?) ?? 0;
+  }
+
+  /// Total captured requests in [sessionId]. Paired with [searchIndexSize]
+  /// so network_search can report index COVERAGE honestly instead of
+  /// asserting "the capture is indexed" while rows are missing (RC2).
+  int httpRequestCount(int sessionId) {
+    final rows = _db.select(
+      'SELECT COUNT(*) AS n FROM http_requests WHERE session_id=?',
+      [sessionId],
+    );
+    return (rows.first['n'] as int?) ?? 0;
+  }
+
+  /// RC2 repair pass: FTS rows used to be written only by the body
+  /// backfill's has-body branch, so requests that were in-flight at first
+  /// sight (slow, redirected, upgraded) or whose bodies were empty /
+  /// gave up were NEVER indexed — ~14% of historical rows. Indexes every
+  /// http_requests row missing from http_search_map: URL always, plus any
+  /// stored textish bodies. Idempotent; returns the number repaired.
+  int repairSearchIndex({int limit = 50000}) {
+    final missing = _db.select(
+      'SELECT r.session_id, r.vm_id, r.isolate_id, r.url, r.content_type '
+      'FROM http_requests r '
+      'LEFT JOIN http_search_map m '
+      '  ON m.session_id = r.session_id AND m.vm_id = r.vm_id '
+      'WHERE m.rowid IS NULL LIMIT ?',
+      [limit],
+    );
+    if (missing.isEmpty) return 0;
+    _db.execute('BEGIN');
+    try {
+      for (final row in missing) {
+        final sid = row['session_id'] as int;
+        final vmId = row['vm_id'] as String;
+        String? requestText;
+        String? responseText;
+        final bodies = _db.select(
+          'SELECT which, bytes FROM http_bodies WHERE session_id=? AND vm_id=?',
+          [sid, vmId],
+        );
+        for (final b in bodies) {
+          final text = _utf8IfTextish(
+            b['bytes'] as Uint8List?,
+            row['content_type'] as String?,
+          );
+          if (text == null) continue;
+          if (b['which'] == 'request') {
+            requestText = text;
+          } else {
+            responseText = text;
+          }
+        }
+        indexForSearch(
+          sessionId: sid,
+          vmId: vmId,
+          isolateId: row['isolate_id'] as String?,
+          url: (row['url'] as String?) ?? '',
+          requestText: requestText,
+          responseText: responseText,
+        );
+      }
+      _db.execute('COMMIT');
+    } catch (_) {
+      _db.execute('ROLLBACK');
+      rethrow;
+    }
+    return missing.length;
+  }
+
+  String? _utf8IfTextish(Uint8List? bytes, String? contentType) {
+    if (bytes == null || bytes.isEmpty) return null;
+    final ct = contentType?.toLowerCase() ?? '';
+    final textish = ct.contains('json') ||
+        ct.contains('xml') ||
+        ct.contains('text') ||
+        ct.contains('javascript') ||
+        ct.contains('graphql') ||
+        ct.contains('form-urlencoded');
+    if (!textish) return null;
+    try {
+      return utf8.decode(bytes, allowMalformed: true);
+    } catch (_) {
+      return null;
+    }
   }
 
   Map<String, Object?> _rowToMap(sql.Row r) {

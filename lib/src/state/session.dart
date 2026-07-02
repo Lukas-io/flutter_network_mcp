@@ -1,4 +1,8 @@
+import 'dart:async' show unawaited;
+import 'dart:io' as io;
+
 import '../storage/capture_writer.dart';
+import '../storage/captures_db.dart';
 import '../vm/dtd_client.dart';
 import '../vm/log_stream.dart';
 import '../vm/vm_client.dart';
@@ -100,6 +104,20 @@ class Session {
 /// **Phase 2 status:** the resources are now per-attach (constructed fresh
 /// by `network_attach`). Multiple AttachedSessions can coexist in the
 /// registry once Phase 5 lifts the single-attach guard.
+/// RC4: record of a session that ended because its app process died while
+/// attached (vs an explicit network_detach).
+class EndedByAppExit {
+  EndedByAppExit({
+    required this.sessionId,
+    required this.appName,
+    required this.diedAt,
+  });
+
+  final int sessionId;
+  final String? appName;
+  final DateTime diedAt;
+}
+
 class AttachedSession {
   AttachedSession({
     required this.id,
@@ -225,6 +243,40 @@ class SessionRegistry {
       );
     }
     _attached[session.vmServiceUri] = session;
+    // RC4: the app dying must end the session, not leave a zombie attach
+    // that reads report as healthy ("drive the app to generate traffic").
+    session.vm.onUnexpectedDisconnect = () => _onAppDied(session);
+  }
+
+  /// RC4: sessions whose app died while attached, newest first (capped at
+  /// 5). Read by network_status ("app exited") and by the scope resolver's
+  /// not-attached error so agents get routed to the session's history
+  /// instead of polling a corpse.
+  final List<EndedByAppExit> _recentlyDied = [];
+  List<EndedByAppExit> get recentlyDied => List.unmodifiable(_recentlyDied);
+
+  void _onAppDied(AttachedSession s) {
+    if (!_attached.containsKey(s.vmServiceUri)) return; // already detached
+    io.stderr.writeln(
+      'flutter_network_mcp: app for session ${s.id} '
+      '(${s.appName ?? s.vmServiceUri}) exited — session ended, capture '
+      'preserved as history.',
+    );
+    s.captureWriter.stop();
+    unawaited(s.logStream.stop().catchError((_) {}));
+    try {
+      CapturesDao().endSession(s.id);
+    } catch (_) {/* DB may be closing during shutdown */}
+    unregister(s.vmServiceUri);
+    _recentlyDied.insert(
+      0,
+      EndedByAppExit(
+        sessionId: s.id,
+        appName: s.appName,
+        diedAt: DateTime.now(),
+      ),
+    );
+    if (_recentlyDied.length > 5) _recentlyDied.removeLast();
   }
 
   /// Removes the session matching [vmServiceUri]. Caller tears down the

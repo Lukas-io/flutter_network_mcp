@@ -32,6 +32,13 @@ void main() {
           cookies: const [],
           contentLength: 42,
         ),
+        // RC1: durationMs measures the exchange, so the fixture needs a
+        // completed response (endTime), not just a finished upload.
+        response: HttpProfileResponseData(
+          redirects: const [],
+          statusCode: 200,
+          endTime: DateTime.fromMicrosecondsSinceEpoch(3000),
+        ),
       );
 
   test('errored in-flight request yields a row instead of throwing', () {
