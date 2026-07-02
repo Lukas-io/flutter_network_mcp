@@ -1,3 +1,5 @@
+import 'dart:io' as io;
+
 /// A single custom alert pattern loaded from the `alert_patterns` table.
 class CustomPattern {
   CustomPattern({
@@ -25,6 +27,29 @@ class AlertRules {
   List<CustomPattern> customPatterns = const [];
 
   int slowThresholdMs = 3000;
+
+  /// Alert retention window in DAYS. Alerts from non-attached (ended /
+  /// interrupted) sessions older than this are auto-expired by
+  /// [AlertRetention], so the pending banner reflects recent state instead
+  /// of months of accumulated noise. 0 disables retention (keep forever).
+  /// Initial value from FLUTTER_NETWORK_MCP_ALERT_RETENTION_DAYS (default
+  /// 14); runtime-tunable via `alerts_config set:{retentionDays:N}`.
+  int alertRetentionDays = _envRetentionDays();
+
+  static int _envRetentionDays() {
+    final raw = _env('FLUTTER_NETWORK_MCP_ALERT_RETENTION_DAYS');
+    final parsed = raw == null ? null : int.tryParse(raw.trim());
+    if (parsed == null || parsed < 0) return 14;
+    return parsed;
+  }
+
+  static String? _env(String key) {
+    try {
+      return io.Platform.environment[key];
+    } catch (_) {
+      return null;
+    }
+  }
 
   bool http5xxEnabled = true;
   bool http4xxEnabled = true;
@@ -78,6 +103,7 @@ class AlertRules {
 
   Map<String, Object?> toJson() => {
         'slowThresholdMs': slowThresholdMs,
+        'retentionDays': alertRetentionDays,
         'rules': {
           'http_5xx': http5xxEnabled,
           'http_4xx': http4xxEnabled,
@@ -91,10 +117,15 @@ class AlertRules {
 
   void applyConfig({
     int? slowThresholdMs,
+    int? retentionDays,
     Map<String, dynamic>? rules,
   }) {
     if (slowThresholdMs != null && slowThresholdMs > 0) {
       this.slowThresholdMs = slowThresholdMs;
+    }
+    // retentionDays: >=0 accepted (0 disables); negative ignored.
+    if (retentionDays != null && retentionDays >= 0) {
+      alertRetentionDays = retentionDays;
     }
     if (rules != null) {
       http5xxEnabled = (rules['http_5xx'] as bool?) ?? http5xxEnabled;
