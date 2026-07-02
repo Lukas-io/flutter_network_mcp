@@ -142,14 +142,25 @@ class Scope {
   }
 
   if (reg.attachedCount == 0) {
+    // RC4: if the last attach ended because the app died, say exactly that
+    // and route to its history instead of a generic "not attached".
+    final died = reg.recentlyDied.isEmpty ? null : reg.recentlyDied.first;
     return (
       null,
       errorResult(
-        'Not attached and no session opened for viewing. Call '
-        'network_attach to capture live, or session_open id:<N> to read '
-        'from a historical session, or pass sessionId:<N> directly.',
+        died != null
+            ? 'Not attached: the app for session ${died.sessionId} '
+                '(${died.appName ?? "unnamed"}) exited at '
+                '${died.diedAt.toIso8601String()} and its session was ended '
+                'automatically. Its capture is preserved — read it with '
+                'session_open id:${died.sessionId}.'
+            : 'Not attached and no session opened for viewing. Call '
+                'network_attach to capture live, or session_open id:<N> to read '
+                'from a historical session, or pass sessionId:<N> directly.',
         extra: {
           'nextSteps': [
+            if (died != null)
+              'session_open id:${died.sessionId} — read what the exited app captured',
             'network_status — see what apps are reachable',
             'network_attach — connect to a live app',
             'session_list — see historical sessions',

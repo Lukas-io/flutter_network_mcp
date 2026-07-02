@@ -10,6 +10,7 @@ import 'package:flutter_network_mcp/src/install/setup.dart';
 import 'package:flutter_network_mcp/src/install/update.dart';
 import 'package:flutter_network_mcp/src/server.dart';
 import 'package:flutter_network_mcp/src/session_migrator.dart';
+import 'package:flutter_network_mcp/src/storage/captures_db.dart';
 import 'package:flutter_network_mcp/src/storage/database.dart';
 import 'package:flutter_network_mcp/src/telemetry/audit_subcommand.dart';
 import 'package:flutter_network_mcp/src/telemetry/usage_reporter.dart';
@@ -261,6 +262,27 @@ Future<void> _runMain(List<String> args) async {
   try {
     alert_patterns.loadCustomPatternsFromDb();
   } catch (_) {/* table may be empty / freshly migrated */}
+
+  // RC2 repair pass: index any historical requests missing from the FTS
+  // map (the old writer only indexed inside the body-backfill's has-body
+  // branch, so in-flight-at-first-sight and empty-body requests were never
+  // searchable). One-shot, idempotent, deferred so it can never slow the
+  // MCP handshake.
+  if (!noPersist) {
+    unawaited(Future<void>.delayed(const Duration(seconds: 5), () {
+      try {
+        final repaired = CapturesDao().repairSearchIndex();
+        if (repaired > 0) {
+          io.stderr.writeln(
+            'flutter_network_mcp: search-index repair added $repaired '
+            'previously-unindexed request(s).',
+          );
+        }
+      } catch (e) {
+        io.stderr.writeln('flutter_network_mcp: search-index repair failed: $e');
+      }
+    }));
+  }
 
   final server = FlutterNetworkMcpServer.stdio(defaultDtdUri: dtdUri);
   _installLifecycleGuard(server);

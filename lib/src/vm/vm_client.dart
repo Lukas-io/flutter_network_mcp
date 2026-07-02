@@ -117,6 +117,13 @@ class VmClient {
     );
   }
 
+  /// RC4: invoked at most once when the VM WebSocket closes WITHOUT
+  /// [disconnect] having been called — i.e. the app process went away
+  /// (quit, crash, device disconnect, `flutter run` stopped). Deliberate
+  /// [disconnect] / reconnect never fires it.
+  void Function()? onUnexpectedDisconnect;
+  bool _deliberateDisconnect = false;
+
   Future<void> connect(Uri vmServiceUri) async {
     if (_service != null) await disconnect();
     final svc = await vmServiceConnectUri(_toWsUri(vmServiceUri));
@@ -132,6 +139,16 @@ class VmClient {
     }
     _service = svc;
     _connectedUri = vmServiceUri;
+    _deliberateDisconnect = false;
+    unawaited(svc.onDone.then((_) {
+      // Stale callback from a previous connection, or a disconnect() we
+      // initiated ourselves — not an app death.
+      if (_deliberateDisconnect || !identical(_service, svc)) return;
+      _service = null;
+      _isolates.clear();
+      _connectedUri = null;
+      onUnexpectedDisconnect?.call();
+    }));
   }
 
   /// Scans the connected VM and returns every isolate that exposes
@@ -266,6 +283,7 @@ class VmClient {
   }
 
   Future<void> disconnect() async {
+    _deliberateDisconnect = true;
     final svc = _service;
     _service = null;
     _isolates.clear();

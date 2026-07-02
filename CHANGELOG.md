@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [0.9.17] — 2026-07-02
 
+### Fixed — durations measure the exchange, not the upload (audit RC1)
+
+`HttpProfileRequest.endTime` marks the end of the REQUEST phase (dart:io's own getter is `isRequestComplete`), so every captured duration was µs-scale — a demonstrably 1.6 s request recorded as 186 µs, `http_slow` unfireable, p50/p95 garbage in summarize/report/diff_session. New `util/http_timing.dart` defines the single source of truth (`response.endTime`, falling back to the error time for failed requests, null while in flight) and is used by the DB writer, network_list, network_get, and the alert detector. In-flight requests now persist NULL durations and self-heal via the poller's updatedSince re-delivery. +5 unit tests.
+
+### Fixed — every request is searchable, and search reports coverage honestly (audit RC2)
+
+FTS rows were only written inside the body-backfill's has-body branch, so requests still in flight at first sight (slow, redirected, upgraded) or with empty bodies were NEVER indexed — ~14% of all historical rows — while the no-match warning asserted "the capture is indexed". Now: the writer indexes the URL at first upsert (body text upgrades the same row later), a deferred startup repair pass (`repairSearchIndex`) indexes every historical row missing from the map (bodies included when stored and textish), and the no-match warning reports actual coverage (indexed-of-total) instead of a blanket claim. +4 tests.
+
+### Fixed — app death ends the session instead of leaving a zombie attach (audit RC4 / F18)
+
+Nothing listened for the VM WebSocket closing, so a killed app left an attach that network_status reported healthy and reads answered with "drive the app to generate traffic" (observed live: a session whose app died 10 minutes earlier still claimed streamActive). `VmClient` now exposes `onUnexpectedDisconnect` (deliberate disconnects excluded); the registry ends the DB session, stops the writer, unregisters, and records the death — surfaced as `recentlyEnded` in network_status and in the scope resolver's not-attached error, which now routes to `session_open id:<n>`. Hot-restart migration still works: `repointSession` clears `ended_at`. +2 e2e tests (kill a real VM → handler fires; own disconnect → it doesn't).
+
 ### Fixed — server no longer outlives its MCP host (orphaned-process leak)
 
 The server had no shutdown path: once `_runMain` returned, the auto-attach / session-migrator timers, the sqlite handle, and any DTD/VM WebSockets kept the VM alive forever. Killing or reconnecting the MCP host (a `/mcp` reconnect, a crashed IDE, a closed terminal) therefore leaked a full server process — observed in the wild as six multi-day `flutter_network_mcp` processes re-parented to PID 1, one per host restart. The pub `sh` shim compounds it by neither exec-ing nor forwarding signals, so SIGTERM aimed at the wrapper never reaches the VM. New lifecycle guard in `bin/`: `server.done` (stdio channel closed → stdin EOF) and SIGTERM/SIGINT now share one exit path — best-effort WAL checkpoint via `CapturesDatabase.close()`, a stderr notice, then `exit(0)`; lingering timers and sockets do not get a vote. 322 tests green (+2: spawn the real bin, close stdin → exits 0 within 20 s; SIGTERM → exits 0).

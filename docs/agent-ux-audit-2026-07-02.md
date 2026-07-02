@@ -244,6 +244,30 @@ DTD-name discovery + `attachIfOne` + `auto_attach_config`; hot-restart reattach 
 
 Standalone smaller fixes outside the map: F10 (DTD error ports + route to `network_discover_dtd`), F15 (semantic truncation vs byte-offset advice), F21 (suppress `http_error` for 101 upgrades), F22 (record redirect chain + final body), F23 (index decoded URLs), F24 (dedupe correlate payload), F25 (acknowledge failed reattach), F17 (ingest or announce pre-attach backlog), name raw-VM sessions by host:port so multi-attach labels aren't "(no name)".
 
+---
+
+# Phase 4 — live 4-app test (real apps, DTD path, 0.9.16 installed server)
+
+Setup: sanga_driver (iPhone Air), starlog (iPhone 17e), sanga_mobile (iPhone 17 Pro), aetrust (iPhone 17), all `flutter run` debug. Server launched with `--auto-attach=sanga_mobile,sanga_driver`.
+
+## Tool findings (new or upgraded)
+
+- **F18 confirmed in the wild**: a sanga_driver session whose app had died ~10 min earlier still reported `isLive`, `streamActive: true`, and "Drive the app to generate traffic". RC4 fix (this branch) addresses exactly this.
+- **F27 (new, 🟠): auto-attach missed a matching app.** `sanga_mobile` was on the allowlist and visible in knownApps but never auto-attached (the two sanga_driver instances did). Likely tied to the stale default-DTD connect error (`dtd.connected: false` against a dead port while per-app dtdUris were live). Needs a look at AutoAttacher's DTD source.
+- **F28 (new, 🟠): degraded attach never self-heals.** Session 332 attached with `http/socket: unavailable` (attach raced app startup), app lived ≥3 more minutes, capabilities never recovered and nothing suggested re-attaching.
+- **F24 upgraded**: `network_correlate` with `limit:3` still dumped all 40 per-session matches (~8k tokens) for a zero-pair answer. Cap `matches` too, or add a compact mode.
+- **F29 (new, 🟡): DTD app names are unwieldy**: `"Kind: Flutter - Device: iPhone Air - Package: sanga_driver"` — verbose for appNameContains, collides across devices for the same package. Parse into `{package, device}` fields and key display on package.
+- **F30 (new, 🟢): wss URLs render with `:0` port** in alert titles (`https://nexus.sangaeats.com:0/socket.io/...`).
+- **F21 confirmed live**: every socket.io WebSocket upgrade raises a phantom `http_error` ("Socket has been detached") — one per app per connect, polluting alerts on real apps constantly.
+- **F26 confirmed live**; max-attach cap of 4 surfaced with a clean, well-routed error (good), though the cap consumed a slot on a dead session until manually detached (RC4 fixes).
+- **Auto-attach suggestion block is excellent** (explicit agentAction + shell line + "don't edit rc without confirmation") — keep.
+
+## Real app bugs found during the blind test (for the user)
+
+1. **sanga_mobile: expired-refresh-token retry loop.** `POST /auth/refresh` → 401 "Invalid or expired refresh token"; the JWT's `exp` (1782847758) passed ~39 h before the test, and priorOccurrences shows the same 401 across sessions since June 24. The app keeps retrying the dead token instead of clearing it and routing to re-login.
+2. **aetrust: plain-HTTP raw-IP backend.** All traffic goes to `http://31.220.81.46:8086` with a full `Bearer` token — unencrypted; token issuer `http://aetrustintegmicro:3000`. Responses also never complete in the profiler (chunked/streamed consumption), so no status codes are captured.
+3. **sanga_driver: 15–30 s polling loop** on `/driver/deliveries/me?page=1&limit=20` plus long-poll socket.io — by design perhaps, but it's the app's dominant traffic.
+
 ## 1.0.0 gate, final (root-cause order)
 
 1. **RC1** (durations) · 2. **RC4** (app-death lifecycle) · 3. **RC2** (search completeness + honest messaging) · 4. **RC3** (config propagation — or ship `capture_allow`/mid-session `ignored_hosts` as attach-time-only and say so) · 5. **RC6** (scope shadowing) · 6. **RC9** (redaction posture) · 7. **RC7 + RC8** (history ergonomics + validated guidance) · 8. **RC10** (in-band docs).

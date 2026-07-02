@@ -100,6 +100,18 @@ FutureOr<CallToolResult> networkStatus(
     'mcp': _buildMcpBlock(),
     'attachedCount': registry.attachedCount,
     'attached': attachedList,
+    // RC4: apps that died while attached — their sessions auto-ended, so
+    // the agent reads history instead of polling a corpse.
+    if (registry.recentlyDied.isNotEmpty)
+      'recentlyEnded': [
+        for (final d in registry.recentlyDied)
+          {
+            'sessionId': d.sessionId,
+            if (d.appName != null) 'appName': d.appName,
+            'endedReason': 'app exited',
+            'diedAtMs': d.diedAt.millisecondsSinceEpoch,
+          },
+      ],
     // Compact: emit "all" instead of the 8-element list in the common case.
     'capabilities': allEnabled ? 'all' : [for (final c in caps.enabled) c.key],
     'dtd': <String, Object?>{
