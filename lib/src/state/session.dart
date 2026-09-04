@@ -164,6 +164,7 @@ class AttachedSession {
     this.previousVmServiceUri,
     this.reattachCount = 0,
     this.projectPath,
+    this.preAttachUptimeMs,
   }) : lastActivityMs = DateTime.now().millisecondsSinceEpoch;
 
   /// DB row id in `sessions` table — the canonical anchor for routing.
@@ -215,6 +216,14 @@ class AttachedSession {
 
   /// Last read or capture write, for "most recently active" scope picking.
   int lastActivityMs;
+
+  /// How long the app had been running before this attach, when known and
+  /// over 5s — what the capture cannot contain.
+  final int? preAttachUptimeMs;
+
+  /// `logBuffer.droppedTotal` at the last logs_tail read, so the next read
+  /// can say how many records rotated out in between.
+  int lastReportedDropped = 0;
 
   void touch() => lastActivityMs = DateTime.now().millisecondsSinceEpoch;
 

@@ -350,6 +350,8 @@ Future<void> _runMain(List<String> args) async {
   AutoAttachConfig.set(
     allowed: autoAttachAllowlist,
     denied: autoAttachDenylist,
+    logBufferSize: fileConfig.logBufferSize,
+    nativeLogs: fileConfig.nativeLogs,
   );
 
   if (autoAttachAllowlist.isNotEmpty) {
