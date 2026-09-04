@@ -33,6 +33,25 @@ class CapturesDao {
     );
   }
 
+  /// Ends every session row left open by an earlier process (crash, kill,
+  /// or a failed attach that never registered), except [keepOpen]. Returns
+  /// how many were closed. Run once at startup, before anything attaches.
+  int endOrphanedSessions({Set<int> keepOpen = const {}}) {
+    final placeholders = keepOpen.isEmpty ? '' : ' AND id NOT IN (${List.filled(keepOpen.length, '?').join(',')})';
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final n = _db.select(
+      'SELECT COUNT(*) AS n FROM sessions WHERE ended_at IS NULL$placeholders',
+      keepOpen.toList(),
+    ).first['n'] as int;
+    if (n == 0) return 0;
+    _db.execute(
+      "UPDATE sessions SET ended_at=?, note=COALESCE(note || ' ', '') || '[orphaned]' "
+      'WHERE ended_at IS NULL$placeholders',
+      [now, ...keepOpen],
+    );
+    return n;
+  }
+
   /// Repoints an existing session row at a new VM service URI / isolate after
   /// a hot-restart reattach (issue #16), so captures keep flowing into the
   /// same session id instead of starting a new row each restart.

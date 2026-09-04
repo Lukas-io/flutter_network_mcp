@@ -65,6 +65,19 @@ class VmClient {
   final Map<String, IsolateInfo> _isolates = {};
 
   bool get isConnected => _service != null;
+
+  /// True when the VM answers `getVersion` within [timeout]. False when not
+  /// connected, on any error, or on timeout — the heartbeat's whole question.
+  Future<bool> isResponsive({Duration timeout = const Duration(seconds: 3)}) async {
+    final svc = _service;
+    if (svc == null) return false;
+    try {
+      await svc.getVersion().timeout(timeout);
+      return true;
+    } on Object {
+      return false;
+    }
+  }
   Uri? get connectedUri => _connectedUri;
 
   /// Back-compat: first known HTTP-profiling isolate id, or null if no
