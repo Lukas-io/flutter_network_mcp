@@ -7,6 +7,7 @@ import '../storage/captures_db.dart';
 import '../util/filters.dart';
 import '../util/scope.dart';
 import 'error_kind.dart';
+import '../util/suggest.dart';
 import 'result.dart';
 
 final networkSearchTool = Tool(
@@ -102,6 +103,7 @@ FutureOr<CallToolResult> networkSearch(CallToolRequest request) async {
 
     final warnings = <String>[];
     List<String>? availableHosts;
+    var suggestedPaths = const <String>[];
     if (matches.isEmpty) {
       // RC2: report index COVERAGE, never a blanket "the capture is
       // indexed" — before the coverage check this asserted full indexing
@@ -113,6 +115,9 @@ FutureOr<CallToolResult> networkSearch(CallToolRequest request) async {
         indexed = dao.searchIndexSize(sessionId);
         total = dao.httpRequestCount(sessionId);
         if (indexed > 0) availableHosts = dao.distinctHosts(sessionId);
+        if (indexed > 0) {
+          suggestedPaths = closestPaths(dao.distinctPaths(sessionId), query);
+        }
       } catch (_) {/* best-effort */}
       if (indexed == 0) {
         warnings.add(
@@ -129,10 +134,11 @@ FutureOr<CallToolResult> networkSearch(CallToolRequest request) async {
       } else {
         warnings.add(
           'No match for "$query". Every captured request is indexed, so the '
-          'term is absent from this session. See availableHosts for what '
-          'was captured.',
+          'term is absent from this session. See availableHosts (hosts seen '
+          'from Dart) for what was captured.',
         );
       }
+      warnings.add(kCaptureBoundary);
     }
 
     final nextSteps = <String>[];
@@ -142,6 +148,9 @@ FutureOr<CallToolResult> networkSearch(CallToolRequest request) async {
         nextSteps.add('network_diff idA:"${matches.first['id']}" idB:"${matches[1]['id']}" — compare the top two');
       }
     } else {
+      if (suggestedPaths.isNotEmpty) {
+        nextSteps.add('did you mean: ${suggestedPaths.map((p) => '"$p"').join(', ')} — search one of these');
+      }
       if (availableHosts != null && availableHosts.isNotEmpty) {
         nextSteps.add('Search a term from availableHosts, e.g. query:"${availableHosts.first}"');
       }
@@ -159,6 +168,7 @@ FutureOr<CallToolResult> networkSearch(CallToolRequest request) async {
       'matches': matches,
       if (availableHosts != null && availableHosts.isNotEmpty)
         'availableHosts': availableHosts,
+      if (suggestedPaths.isNotEmpty) 'suggestedPaths': suggestedPaths,
       if (warnings.isNotEmpty) 'warnings': warnings,
       'nextSteps': nextSteps,
     }, scopeSessionId: scope.sessionId, scopeNote: scope.note);

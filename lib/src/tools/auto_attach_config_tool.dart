@@ -16,7 +16,19 @@ final autoAttachConfigTool = Tool(
   inputSchema: Schema.object(
     properties: {
       'action': Schema.string(
-        description: '"list" (default), "add", "remove", "clear".',
+        description:
+            '"list" (default), "add", "remove", "clear", "set" (persist '
+            'logBufferSize / nativeLogs for every attach, auto or manual).',
+      ),
+      'logBufferSize': Schema.int(
+        description:
+            'With action:"set": log ring capacity for every attach '
+            '(50–20000). Default 2000.',
+      ),
+      'nativeLogs': Schema.bool(
+        description:
+            'With action:"set": also stream the device\'s native log '
+            '(simctl log stream / adb logcat) into every attach.',
       ),
       'app': Schema.string(
         description:
@@ -45,6 +57,8 @@ FutureOr<CallToolResult> autoAttachConfig(CallToolRequest request) async {
       return _remove(app: app);
     case 'clear':
       return _clear();
+    case 'set':
+      return _set(args);
     default:
       return errorResult(
         'auto_attach_config: unknown action "$action". Expected '
@@ -54,11 +68,54 @@ FutureOr<CallToolResult> autoAttachConfig(CallToolRequest request) async {
   }
 }
 
+CallToolResult _set(Map<String, Object?> args) {
+  final size = args['logBufferSize'] as int?;
+  final native = args['nativeLogs'] as bool?;
+  if (size == null && native == null) {
+    return errorResult(
+      'auto_attach_config set: pass logBufferSize and/or nativeLogs.',
+      kind: ErrorKind.badArgument,
+      extra: const {
+        'nextSteps': ['auto_attach_config action:"set" logBufferSize:8000'],
+      },
+    );
+  }
+  if (size != null && (size < 50 || size > 20000)) {
+    return errorResult(
+      'logBufferSize must be between 50 and 20000.',
+      kind: ErrorKind.badArgument,
+    );
+  }
+  AutoAttachConfig.set(
+    allowed: AutoAttachConfig.allowedPatterns,
+    denied: AutoAttachConfig.deniedPatterns,
+    logBufferSize: size,
+    nativeLogs: native,
+  );
+  final wrote = AutoAttachConfig.writeToFile();
+  return jsonResult({
+    'action': 'set',
+    if (size != null) 'logBufferSize': size,
+    if (native != null) 'nativeLogs': native,
+    'persisted': wrote,
+    'filePath': AutoAttachConfig.filePath(),
+    'summary': 'Applies to the next attach (auto or manual); sessions already '
+        'attached keep their current buffer.',
+    'nextSteps': [
+      if (!wrote) 'persistence failed — in memory for this process only',
+      'network_status — logBufferCapacity per attached session',
+    ],
+  });
+}
+
 CallToolResult _list() {
   return jsonResult({
     'enabled': AutoAttachConfig.isEnabled,
     'allowed': AutoAttachConfig.allowedPatterns,
     'denied': AutoAttachConfig.deniedPatterns,
+    if (AutoAttachConfig.logBufferSize != null)
+      'logBufferSize': AutoAttachConfig.logBufferSize,
+    if (AutoAttachConfig.nativeLogs) 'nativeLogs': true,
     'filePath': AutoAttachConfig.filePath(),
     'nextSteps': const [
       'auto_attach_config action:"add" app:"<package>" — persist a new '

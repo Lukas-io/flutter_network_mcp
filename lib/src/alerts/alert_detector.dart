@@ -44,9 +44,18 @@ class AlertDetector {
     if (status != null) {
       if (status >= 500 && status <= 599 && _rules.http5xxEnabled) {
         final title = '$status on ${r.method} ${_compact(Uri.parse(displayUrl(r.uri)))}';
+        final host = Uri.tryParse(displayUrl(r.uri))?.host ?? '';
+        final storm = host.isNotEmpty &&
+            _dao.recentAlertOccurrences(
+                  sessionId: sessionId,
+                  kind: 'http_5xx',
+                  host: host,
+                  sinceMs: DateTime.now().millisecondsSinceEpoch - 60000,
+                ) >=
+                2;
         _dao.insertAlert(
           sessionId: sessionId,
-          severity: 'error',
+          severity: storm ? 'critical' : 'error',
           kind: 'http_5xx',
           title: title,
           signature: computeAlertSignature(kind: 'http_5xx', title: title),

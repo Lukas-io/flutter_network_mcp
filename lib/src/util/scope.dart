@@ -1,6 +1,9 @@
+import 'dart:io' as io;
+
 import 'package:dart_mcp/server.dart';
 
 import '../state/session.dart';
+import '../tools/network_attach.dart' show appSessionIdentity;
 import '../tools/result.dart';
 
 /// Resolved routing scope for a single tool call — which session the tool
@@ -11,6 +14,8 @@ class Scope {
     required this.appName,
     required this.isLive,
     this.note,
+    this.pickedBy,
+    this.others = const [],
   });
 
   /// DB row id in `sessions` table.
@@ -26,11 +31,17 @@ class Scope {
   /// via `session_open` or an explicit `sessionId:` arg.
   final bool isLive;
 
-  /// D2 (audit RC6/F4): set when this scope was resolved through invisible
-  /// process state that could surprise the agent — e.g. an open
-  /// session_open view shadowing live attached session(s). Tools surface
-  /// it as a warning via `jsonResult(scope: ...)`.
+  /// Set when this scope was resolved through state that could surprise the
+  /// agent (an open view shadowing live sessions, a dead session's history).
+  /// Tools surface it as a warning via `jsonResult(scope: ...)`.
   final String? note;
+
+  /// How a default scope was chosen when several sessions were live:
+  /// `project` (same working directory) or `recent` (last touched).
+  final String? pickedBy;
+
+  /// The other live sessions the call could have targeted.
+  final List<Map<String, Object?>> others;
 
   /// Compact `scope: {…}` block tools include in successful responses so
   /// the agent can verify which session it just read from.
@@ -39,7 +50,46 @@ class Scope {
         if (appName != null) 'appName': appName,
         'isLive': isLive,
         if (note != null) 'note': note,
+        if (pickedBy != null) 'pickedBy': pickedBy,
+        if (others.isNotEmpty) 'others': others,
       };
+}
+
+/// Where a dead session's app is now, when the last DTD probe saw the same
+/// app identity at another URI. Null when unknown.
+String? movedToFor(SessionRegistry reg, DeadSession d) {
+  final identity = appSessionIdentity(d.appName);
+  if (identity == null) return null;
+  for (final e in reg.lastLiveApps.entries) {
+    if (e.key != d.vmServiceUri && appSessionIdentity(e.value) == identity) {
+      return e.key;
+    }
+  }
+  return null;
+}
+
+/// The warning a read against a dead session carries.
+String deadSessionNote(SessionRegistry reg, DeadSession d) {
+  final moved = movedToFor(reg, d);
+  final when = d.diedAt.toIso8601String().substring(11, 19);
+  return 'session ${d.sessionId} is no longer reachable (${d.reason} at $when); '
+      'this reply is its preserved history, not live data'
+      '${moved != null ? ". The app is now at $moved — network_attach vmServiceUri:\"$moved\" to follow it" : ""}.';
+}
+
+/// The session a bare read targets when several are live: the one attached
+/// from [projectPath], else the most recently touched. Pure and testable.
+({AttachedSession session, String by})? pickDefaultSession(
+    SessionRegistry reg, String projectPath) {
+  final byProject = reg.liveForProject(projectPath);
+  // The project only counts as the reason when it actually narrowed the
+  // choice; every session this server attached shares its cwd.
+  if (byProject.isNotEmpty && byProject.length < reg.liveCount) {
+    return (session: byProject.first, by: 'project');
+  }
+  final recent = reg.mostRecentLive;
+  if (recent != null) return (session: recent, by: 'recent');
+  return null;
 }
 
 /// Resolves which session a tool should answer for. Priority:
@@ -68,6 +118,7 @@ class Scope {
   if (sessionIdArg != null) {
     final attached = reg.attachedById(sessionIdArg);
     if (attached != null) {
+      attached.touch();
       return (
         Scope(
           sessionId: sessionIdArg,
@@ -77,8 +128,14 @@ class Scope {
         null,
       );
     }
+    final dead = reg.deadById(sessionIdArg);
     return (
-      Scope(sessionId: sessionIdArg, appName: null, isLive: false),
+      Scope(
+        sessionId: sessionIdArg,
+        appName: dead?.appName,
+        isLive: false,
+        note: dead == null ? null : deadSessionNote(reg, dead),
+      ),
       null,
     );
   }
@@ -140,12 +197,16 @@ class Scope {
       Scope(
         sessionId: viewedId,
         appName: attached?.appName,
-        isLive: attached != null,
+        isLive: false,
         note: shadowing
             ? 'Reading HISTORY session $viewedId via session_open while '
                 '${reg.attachedCount} live session(s) are attached — '
                 'session_close to target live captures.'
-            : null,
+            : attached != null
+                ? 'Reading session $viewedId from history (everything persisted '
+                    'so far) although it is live — session_close to return to '
+                    'incremental live reads.'
+                : null,
       ),
       null,
     );
@@ -153,10 +214,32 @@ class Scope {
 
   final sole = reg.soleAttached;
   if (sole != null) {
+    sole.touch();
     return (
       Scope(sessionId: sole.id, appName: sole.appName, isLive: true),
       null,
     );
+  }
+
+  if (reg.attachedCount >= 2) {
+    final picked = pickDefaultSession(reg, io.Directory.current.path);
+    if (picked != null) {
+      picked.session.touch();
+      return (
+        Scope(
+          sessionId: picked.session.id,
+          appName: picked.session.appName,
+          isLive: true,
+          pickedBy: picked.by,
+          others: [
+            for (final a in reg.attached.values)
+              if (a.id != picked.session.id)
+                {'sessionId': a.id, if (a.appName != null) 'appName': a.appName},
+          ],
+        ),
+        null,
+      );
+    }
   }
 
   if (reg.attachedCount == 0) {

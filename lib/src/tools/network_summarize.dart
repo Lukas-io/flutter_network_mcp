@@ -7,6 +7,7 @@ import '../util/path_template.dart';
 import '../util/scope.dart';
 import '../util/guidance.dart';
 import 'error_kind.dart';
+import '../util/suggest.dart';
 import 'result.dart';
 
 final networkSummarizeTool = Tool(
@@ -103,7 +104,7 @@ FutureOr<CallToolResult> networkSummarize(CallToolRequest request) async {
   final hitRawCap = rows.length >= _kRawRowsCap;
 
   final summary = endpoints.isEmpty
-      ? 'No HTTP requests captured over $windowDesc$hostDesc.'
+      ? 'No HTTP requests captured over $windowDesc$hostDesc. $kCaptureBoundary'
       : '${endpoints.length} distinct endpoint(s) over $windowDesc$hostDesc, '
           '${rows.length} total request(s) considered'
           '${hitRawCap ? " (raw-row cap of $_kRawRowsCap hit — widen sinceMs or hostContains)" : ""}.';

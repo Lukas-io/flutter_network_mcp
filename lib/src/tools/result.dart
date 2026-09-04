@@ -108,6 +108,9 @@ Map<String, Object?> _maybeAnnotatePendingAlerts(
   if (!CapturesDatabase.isOpen) return data;
   try {
     final sid = scopeSessionId ?? Session.instance.effectiveSessionId;
+    // No session in scope → no count. A DB-wide number rode on every reply
+    // (17k in one report) and taught agents to ignore nextSteps.
+    if (sid == null) return data;
     final dao = CapturesDao();
     final pending = dao.pendingAlertCount(sessionId: sid);
     if (pending == 0) return data;
@@ -118,9 +121,8 @@ Map<String, Object?> _maybeAnnotatePendingAlerts(
     return {
       ...data,
       'pendingAlerts': {
-        // F9: the same field used to flip between session-scoped and
-        // DB-wide counts with nothing marking which — label it.
-        'scope': sid != null ? 'session' : 'all-sessions',
+        'scope': 'session',
+        'sessionId': sid,
         'count': pending,
         if (critical > 0) 'critical': critical,
       },

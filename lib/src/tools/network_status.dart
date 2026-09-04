@@ -11,8 +11,10 @@ import '../storage/database.dart';
 import '../update/update_check.dart';
 import '../version.dart';
 import '../vm/dtd_discovery.dart';
+import '../util/scope.dart' show movedToFor;
 import '../vm/dtd_probe.dart';
 import 'network_attach.dart' as attach_helper;
+import '../util/suggest.dart';
 import 'result.dart';
 
 /// Per-session entry for `network_status.attached[]`. Carries structured
@@ -38,6 +40,7 @@ Map<String, Object?> attachedStatusEntry(AttachedSession a) {
     if (capState.degraded.isNotEmpty) 'degraded': capState.degraded,
     // #21: surface the log ring-buffer fill so the agent can reason about
     // rotation proactively (and knows to read now / bump the buffer).
+    if (a.nativeLog?.isActive == true) 'nativeLogs': a.nativeLog!.detail,
     'logBufferUsed': a.logBuffer.length,
     'logBufferCapacity': a.logBuffer.capacity,
     // #16: hot-restart continuity. When this session id has survived one or
@@ -102,6 +105,14 @@ FutureOr<CallToolResult> networkStatus(
     'attached': attachedList,
     // RC4: apps that died while attached — their sessions auto-ended, so
     // the agent reads history instead of polling a corpse.
+    if (registry.dead.isNotEmpty)
+      'stale': [
+        for (final d in registry.dead)
+          {
+            ...d.toJson(),
+            if (movedToFor(registry, d) != null) 'movedTo': movedToFor(registry, d),
+          },
+      ],
     if (registry.recentlyDied.isNotEmpty)
       'recentlyEnded': [
         for (final d in registry.recentlyDied)
@@ -114,6 +125,7 @@ FutureOr<CallToolResult> networkStatus(
       ],
     // Compact: emit "all" instead of the 8-element list in the common case.
     'capabilities': allEnabled ? 'all' : [for (final c in caps.enabled) c.key],
+    'captureBoundary': kCaptureBoundary,
     'dtd': <String, Object?>{
       'connected': session.dtd.isConnected,
       'uri': session.dtd.connectedUri?.toString(),

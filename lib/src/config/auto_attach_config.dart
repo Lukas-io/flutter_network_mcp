@@ -34,6 +34,14 @@ class AutoAttachConfig {
 
   static List<String> _allowed = const [];
   static List<String> _denied = const [];
+  static int? _logBufferSize;
+  static bool _nativeLogs = false;
+
+  /// Log ring capacity every attach uses unless the call passes its own.
+  static int? get logBufferSize => _logBufferSize;
+
+  /// Whether attaches also stream the device's native log (simctl / logcat).
+  static bool get nativeLogs => _nativeLogs;
 
   /// Read-only view of the resolved allowlist patterns. Empty when
   /// auto-attach is disabled.
@@ -51,10 +59,17 @@ class AutoAttachConfig {
   static void set({
     required List<String> allowed,
     required List<String> denied,
+    int? logBufferSize,
+    bool? nativeLogs,
   }) {
     _allowed = List.unmodifiable(allowed);
     _denied = List.unmodifiable(denied);
+    if (logBufferSize != null) _logBufferSize = logBufferSize;
+    if (nativeLogs != null) _nativeLogs = nativeLogs;
   }
+
+  /// Clears the buffer-size override (back to the LogBuffer default).
+  static void clearLogBufferSize() => _logBufferSize = null;
 
   /// True when [appName] case-insensitive contains at least one allowlist
   /// pattern. Mirrors `AutoAttacher._matchesAllowlist` so the in-attach
@@ -74,25 +89,31 @@ class AutoAttachConfig {
   /// returns the (allowed, denied) tuple. Empty lists when the file
   /// doesn't exist OR is malformed. Used by `bin/` as the BASE before
   /// env-var / CLI overrides.
-  static ({List<String> allowed, List<String> denied}) loadFromFile() {
+  static ({List<String> allowed, List<String> denied, int? logBufferSize, bool nativeLogs}) loadFromFile() {
     try {
       final dataDir = resolveCandidateDataDir();
       if (dataDir == null) {
-        return (allowed: const [], denied: const []);
+        return (allowed: const [], denied: const [], logBufferSize: null, nativeLogs: false);
       }
       final file = io.File(p.join(dataDir, fileName));
       if (!file.existsSync()) {
-        return (allowed: const [], denied: const []);
+        return (allowed: const [], denied: const [], logBufferSize: null, nativeLogs: false);
       }
       final decoded = jsonDecode(file.readAsStringSync());
       if (decoded is! Map) {
-        return (allowed: const [], denied: const []);
+        return (allowed: const [], denied: const [], logBufferSize: null, nativeLogs: false);
       }
       final allowed = _readStringList(decoded['allowed']);
       final denied = _readStringList(decoded['denied']);
-      return (allowed: allowed, denied: denied);
+      final size = decoded['logBufferSize'];
+      return (
+        allowed: allowed,
+        denied: denied,
+        logBufferSize: size is int ? size : null,
+        nativeLogs: decoded['nativeLogs'] == true,
+      );
     } catch (_) {
-      return (allowed: const [], denied: const []);
+      return (allowed: const [], denied: const [], logBufferSize: null, nativeLogs: false);
     }
   }
 
@@ -109,6 +130,8 @@ class AutoAttachConfig {
       final payload = <String, Object?>{
         'allowed': _allowed,
         'denied': _denied,
+        if (_logBufferSize != null) 'logBufferSize': _logBufferSize,
+        if (_nativeLogs) 'nativeLogs': true,
         'writtenAtMs': DateTime.now().millisecondsSinceEpoch,
       };
       io.File(p.join(dataDir, fileName)).writeAsStringSync(

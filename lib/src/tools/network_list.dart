@@ -35,8 +35,9 @@ final networkListTool = Tool(
       ),
       'since': Schema.int(
         description:
-            'Microsecond cursor. Omit for incremental (new since last call), '
-            '0 for all captured. Pass a prior nextCursor to page.',
+            'Microsecond cursor. Omit for incremental (new since last call); '
+            '0 for everything this session captured (served from the DB, '
+            'including live sessions). Pass a prior nextCursor to page.',
       ),
       'before': Schema.int(
         description:
@@ -98,7 +99,11 @@ FutureOr<CallToolResult> networkList(CallToolRequest request) async {
   final limit = clampLimit(args['limit'] as int?, fallback: 50, hardMax: 200);
   final maxTokens = args['maxTokens'] as int? ?? sf.maxResponseTokens;
 
-  if (!scope.isLive || beforeArg != null) {
+  // since:0 means everything this session captured, which only the DB holds
+  // (the live profile is what the VM still retains). Serve it from history so
+  // "no HTTP captured yet" can never contradict a search that finds rows (#87).
+  final wantsEverything = sinceArg != null && sinceArg <= 0;
+  if (!scope.isLive || beforeArg != null || wantsEverything) {
     // D4: `before:` pages OLDER, which only the DB has — serve it from the
     // history path even for a live session.
     return _historyList(
@@ -226,9 +231,6 @@ FutureOr<CallToolResult> networkList(CallToolRequest request) async {
       );
       if (caps.isEnabled(Category.search)) {
         nextSteps.add('network_search query:"..." — find requests by body/url content');
-      }
-      if (caps.isEnabled(Category.alerts)) {
-        nextSteps.add('alerts_drain — surface anything the detector flagged');
       }
     } else {
       if (cursor != null) {

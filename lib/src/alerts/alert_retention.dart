@@ -50,9 +50,20 @@ class AlertRetention {
   /// Runs one retention pass. Public + returns the deleted count so tests
   /// (and a future manual-trigger tool) can drive it directly.
   int sweep() {
+    if (!CapturesDatabase.isOpen) return 0;
+    try {
+      final capped = _dao.capPendingAlerts();
+      if (capped > 0) {
+        io.stderr.writeln(
+          'flutter_network_mcp: dropped $capped oldest pending alert(s) beyond '
+          '200 per session.',
+        );
+      }
+    } catch (e) {
+      io.stderr.writeln('flutter_network_mcp: alert cap sweep failed: $e');
+    }
     final days = AlertRules.instance.alertRetentionDays;
     if (days <= 0) return 0; // disabled
-    if (!CapturesDatabase.isOpen) return 0;
     final nowMs = (now ?? _wallMs)();
     final cutoff = nowMs - days * 86400000;
     final protected =

@@ -50,11 +50,18 @@ class LogBuffer {
     final raw = env['FLUTTER_NETWORK_MCP_LOG_BUFFER'] ??
         env['FLUTTER_NETWORK_MCP_LOG_BUFFER_SIZE'];
     final parsed = raw == null ? null : int.tryParse(raw);
-    if (parsed == null) return 500;
+    if (parsed == null) return defaultCapacity;
     if (parsed < 50) return 50;
-    if (parsed > 10000) return 10000;
+    if (parsed > maxCapacity) return maxCapacity;
     return parsed;
   }
+
+  /// 500 rotated away in seconds on a chatty app (#89).
+  static const int defaultCapacity = 2000;
+  static const int maxCapacity = 20000;
+
+  /// Records pushed out by capacity since this buffer was created.
+  int droppedTotal = 0;
 
   final int capacity;
   final Queue<LogEntry> _entries = Queue<LogEntry>();
@@ -86,6 +93,7 @@ class LogBuffer {
     _entries.addLast(entry);
     while (_entries.length > capacity) {
       _entries.removeFirst();
+      droppedTotal++;
     }
     return entry;
   }
