@@ -82,7 +82,11 @@ String deadSessionNote(SessionRegistry reg, DeadSession d) {
 ({AttachedSession session, String by})? pickDefaultSession(
     SessionRegistry reg, String projectPath) {
   final byProject = reg.liveForProject(projectPath);
-  if (byProject.isNotEmpty) return (session: byProject.first, by: 'project');
+  // The project only counts as the reason when it actually narrowed the
+  // choice; every session this server attached shares its cwd.
+  if (byProject.isNotEmpty && byProject.length < reg.liveCount) {
+    return (session: byProject.first, by: 'project');
+  }
   final recent = reg.mostRecentLive;
   if (recent != null) return (session: recent, by: 'recent');
   return null;

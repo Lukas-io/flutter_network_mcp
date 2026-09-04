@@ -196,7 +196,7 @@ FutureOr<CallToolResult> networkDetach(CallToolRequest request) async {
   final remaining = registry.attachedCount;
   final summary = targets.length == 1
       ? 'Detached from ${targets.single.appName ?? "app"}. '
-          'Session ${targets.single.id} ended — captured $totalHttp http, '
+          'Session ${targets.single.id} ${keep ? "kept open (slot freed)" : "ended"} — captured $totalHttp http, '
           '$totalLogs log(s), $totalAlerts alert(s). Queryable via '
           'session_open id:${targets.single.id}. '
           '${remaining == 0 ? "DTD disconnected." : "$remaining session(s) still attached."}'
