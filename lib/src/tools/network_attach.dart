@@ -89,14 +89,30 @@ final networkAttachTool = Tool(
   ),
 );
 
-/// Reads `FLUTTER_NETWORK_MCP_MAX_ATTACH` env var (1–32). Default 4.
+/// Reads `FLUTTER_NETWORK_MCP_MAX_ATTACH` env var (1–32). Default 8; only
+/// live sessions count, dead ones are evicted by the heartbeat.
 int _maxAttachFromEnv() {
   final raw = io.Platform.environment['FLUTTER_NETWORK_MCP_MAX_ATTACH'];
   final parsed = raw == null ? null : int.tryParse(raw);
-  if (parsed == null) return 4;
+  if (parsed == null) return 8;
   if (parsed < 1) return 1;
   if (parsed > 32) return 32;
   return parsed;
+}
+
+/// Attach targets currently being connected. Auto-attach, the migration
+/// watcher and a manual call can all race for the same app; the first one
+/// in owns it, the rest are told to wait instead of creating a twin session.
+class AttachInFlight {
+  AttachInFlight._();
+  static final AttachInFlight instance = AttachInFlight._();
+  final Set<String> _keys = {};
+
+  /// True when [key] was free and is now held.
+  bool claim(String key) => _keys.add(key);
+  void release(String key) => _keys.remove(key);
+  bool holds(String key) => _keys.contains(key);
+  Set<String> get keys => Set.unmodifiable(_keys);
 }
 
 FutureOr<CallToolResult> networkAttach(
@@ -158,13 +174,19 @@ Future<Map<String, Object?>> performAttach({
   final session = Session.instance;
   final registry = SessionRegistry.instance;
 
-  // Cap check first — cheap and rejects without any IO.
+  // Cap check first — cheap and rejects without any IO. Dead sessions never
+  // count: a silent VM is evicted by the heartbeat, and a suspect one is
+  // checked right here before we refuse.
   final maxAttach = _maxAttachFromEnv();
-  if (registry.attachedCount >= maxAttach) {
+  if (registry.liveCount >= maxAttach) {
+    await registry.heartbeatOnce();
+  }
+  if (registry.liveCount >= maxAttach) {
     return {
       'error':
-          'Reached max attached sessions ($maxAttach). Detach one first or '
-          'raise FLUTTER_NETWORK_MCP_MAX_ATTACH.',
+          'Reached max attached sessions ($maxAttach live). Detach one first '
+          '(network_detach keep:true frees the slot without ending the '
+          'session) or raise FLUTTER_NETWORK_MCP_MAX_ATTACH.',
       'attached': [
         for (final a in registry.attached.values)
           {'sessionId': a.id, 'appName': a.appName},
@@ -172,11 +194,68 @@ Future<Map<String, Object?>> performAttach({
       'maxAttach': maxAttach,
       'nextSteps': [
         for (final a in registry.attached.values)
-          'network_detach sessionId:${a.id}  // ${a.appName ?? "(no name)"}',
+          'network_detach sessionId:${a.id} keep:true  // ${a.appName ?? "(no name)"}',
         'network_detach all:true — drop everything',
       ],
     };
   }
+
+  final requestKey = vmServiceUri ??
+      (appNameContains != null ? 'app:$appNameContains' : 'dtd:${dtdUri ?? defaultDtdUri ?? ""}');
+  final inFlight = AttachInFlight.instance;
+  if (!inFlight.claim(requestKey)) {
+    return {
+      'error': 'An attach to "$requestKey" is already in progress.',
+      'nextSteps': const [
+        'Wait a moment, then network_status — the session will be listed under attached',
+      ],
+    };
+  }
+  String? resolvedKey;
+  int? createdSid;
+  try {
+    return await _performAttachLocked(
+      session: session,
+      registry: registry,
+      inFlight: inFlight,
+      dtdUri: dtdUri,
+      vmServiceUri: vmServiceUri,
+      appNameContains: appNameContains,
+      logBufferSize: logBufferSize,
+      reattach: reattach,
+      defaultDtdUri: defaultDtdUri,
+      onResolved: (uri) {
+        if (uri != requestKey && !inFlight.claim(uri)) return false;
+        if (uri != requestKey) resolvedKey = uri;
+        return true;
+      },
+      onSessionCreated: (sid) => createdSid = sid,
+    );
+  } finally {
+    inFlight.release(requestKey);
+    if (resolvedKey != null) inFlight.release(resolvedKey!);
+    final sid = createdSid;
+    if (sid != null && registry.attachedById(sid) == null) {
+      try {
+        CapturesDao().endSession(sid);
+      } catch (_) {/* best effort */}
+    }
+  }
+}
+
+Future<Map<String, Object?>> _performAttachLocked({
+  required Session session,
+  required SessionRegistry registry,
+  required AttachInFlight inFlight,
+  required String? dtdUri,
+  required String? vmServiceUri,
+  required String? appNameContains,
+  required int? logBufferSize,
+  required bool reattach,
+  required String? defaultDtdUri,
+  required bool Function(String resolvedUri) onResolved,
+  required void Function(int sid) onSessionCreated,
+}) async {
 
   // Per-attach resources are constructed locally and only become visible
   // to other tools after the AttachedSession is registered. If anything
@@ -338,6 +417,14 @@ Future<Map<String, Object?>> performAttach({
 
     // Per-URI duplicate guard — replaces the old force:true gate. Same
     // app can't be attached twice; different apps can coexist.
+    if (!onResolved(resolvedVmServiceUri)) {
+      return {
+        'error': 'An attach to $resolvedVmServiceUri is already in progress.',
+        'nextSteps': const [
+          'Wait a moment, then network_status — the session will be listed under attached',
+        ],
+      };
+    }
     final existing = registry.attachedByUri(resolvedVmServiceUri);
     if (existing != null) {
       return {
@@ -466,7 +553,9 @@ Future<Map<String, Object?>> performAttach({
         isolateId: isolateId,
         projectPath: io.Directory.current.path,
       );
+      onSessionCreated(sid);
     }
+    registry.forgetDead(sid);
 
     if (caps.isEnabled(Category.logs)) {
       await logStream.start(
@@ -499,6 +588,7 @@ Future<Map<String, Object?>> performAttach({
         lastReattachAt: reattachPrior != null ? DateTime.now() : null,
         previousVmServiceUri: previousVmServiceUri,
         reattachCount: reattachCount,
+        projectPath: io.Directory.current.path,
       ),
     );
 
@@ -618,7 +708,9 @@ Future<Map<String, Object?>> performAttach({
       'nextSteps': [
         'Drive the app to generate traffic',
         if (registry.attachedCount > 1)
-          'Subsequent reads need sessionId:$sid (or appNameContains) to disambiguate'
+          'Bare reads target the session for this project, else the most '
+              'recently used one (the reply\'s scope.pickedBy says which); '
+              'pass sessionId:$sid to be explicit'
         else
           secondStep,
         if (autoAttachSuggestion != null)

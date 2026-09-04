@@ -11,6 +11,7 @@ import '../storage/database.dart';
 import '../update/update_check.dart';
 import '../version.dart';
 import '../vm/dtd_discovery.dart';
+import '../util/scope.dart' show movedToFor;
 import '../vm/dtd_probe.dart';
 import 'network_attach.dart' as attach_helper;
 import 'result.dart';
@@ -102,6 +103,14 @@ FutureOr<CallToolResult> networkStatus(
     'attached': attachedList,
     // RC4: apps that died while attached — their sessions auto-ended, so
     // the agent reads history instead of polling a corpse.
+    if (registry.dead.isNotEmpty)
+      'stale': [
+        for (final d in registry.dead)
+          {
+            ...d.toJson(),
+            if (movedToFor(registry, d) != null) 'movedTo': movedToFor(registry, d),
+          },
+      ],
     if (registry.recentlyDied.isNotEmpty)
       'recentlyEnded': [
         for (final d in registry.recentlyDied)

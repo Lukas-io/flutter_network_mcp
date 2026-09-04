@@ -180,6 +180,7 @@ class AutoAttacher {
       }
     }
     final currentUris = currentByUri.keys.toSet();
+    SessionRegistry.instance.recordLiveApps(currentByUri);
 
     final isFirstTick = !_seedComplete;
     _seedComplete = true;
