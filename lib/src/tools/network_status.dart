@@ -14,6 +14,7 @@ import '../vm/dtd_discovery.dart';
 import '../util/scope.dart' show movedToFor;
 import '../vm/dtd_probe.dart';
 import 'network_attach.dart' as attach_helper;
+import '../util/suggest.dart';
 import 'result.dart';
 
 /// Per-session entry for `network_status.attached[]`. Carries structured
@@ -123,6 +124,7 @@ FutureOr<CallToolResult> networkStatus(
       ],
     // Compact: emit "all" instead of the 8-element list in the common case.
     'capabilities': allEnabled ? 'all' : [for (final c in caps.enabled) c.key],
+    'captureBoundary': kCaptureBoundary,
     'dtd': <String, Object?>{
       'connected': session.dtd.isConnected,
       'uri': session.dtd.connectedUri?.toString(),
