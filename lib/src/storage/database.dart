@@ -56,6 +56,7 @@ class CapturesDatabase {
         final db = sql.sqlite3.open(dbPath);
         db.execute('PRAGMA foreign_keys = ON');
         db.execute('PRAGMA journal_mode = WAL');
+        db.execute('PRAGMA busy_timeout = 5000');
         _migrate(db);
 
         if (dataDir == null && dir != candidates.first) {

@@ -65,12 +65,13 @@ FutureOr<CallToolResult> sessionOpen(CallToolRequest request) async {
       _ => 'interrupted — no clean end recorded (killed process or pre-0.9.17)',
     };
     final summary =
-        'Viewing session $id (${appName ?? "unnamed"}, $statusDesc)'
-        '${isEnded ? " — read tools now query history." : "."}';
+        'Viewing session $id (${appName ?? "unnamed"}, $statusDesc) — read '
+        'tools now query its history (everything persisted so far).';
 
     final warnings = <String>[];
     if (isLive) {
-      warnings.add('You opened the live session — read tools work the same as without session_open.');
+      warnings.add('This session is live: reads now come from the DB, not the '
+          'incremental live profile. session_close to go back to live reads.');
     }
 
     final nextSteps = <String>[];

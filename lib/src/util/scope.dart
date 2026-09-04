@@ -193,12 +193,16 @@ String deadSessionNote(SessionRegistry reg, DeadSession d) {
       Scope(
         sessionId: viewedId,
         appName: attached?.appName,
-        isLive: attached != null,
+        isLive: false,
         note: shadowing
             ? 'Reading HISTORY session $viewedId via session_open while '
                 '${reg.attachedCount} live session(s) are attached — '
                 'session_close to target live captures.'
-            : null,
+            : attached != null
+                ? 'Reading session $viewedId from history (everything persisted '
+                    'so far) although it is live — session_close to return to '
+                    'incremental live reads.'
+                : null,
       ),
       null,
     );
