@@ -5,6 +5,7 @@ import '../storage/capture_writer.dart';
 import '../storage/captures_db.dart';
 import '../vm/dtd_client.dart';
 import '../vm/log_stream.dart';
+import '../vm/native_log_source.dart';
 import '../vm/vm_client.dart';
 import 'log_buffer.dart';
 
@@ -225,6 +226,9 @@ class AttachedSession {
   /// can say how many records rotated out in between.
   int lastReportedDropped = 0;
 
+  /// The device's native log stream, when nativeLogs was requested.
+  NativeLogSource? nativeLog;
+
   void touch() => lastActivityMs = DateTime.now().millisecondsSinceEpoch;
 
   /// Live snapshot of every HTTP-profiling isolate the capture writer is
@@ -330,6 +334,7 @@ class SessionRegistry {
     );
     s.captureWriter.stop();
     unawaited(s.logStream.stop().catchError((_) {}));
+    unawaited(s.nativeLog?.stop().catchError((_) {}) ?? Future<void>.value());
     unawaited(s.vm.disconnect().catchError((_) {}));
     try {
       CapturesDao().endSession(s.id);
@@ -435,6 +440,7 @@ class SessionRegistry {
   Future<void> detachOne(AttachedSession s) async {
     s.captureWriter.stop();
     await s.logStream.stop();
+    await s.nativeLog?.stop();
     await s.vm.disconnect();
     unregister(s.vmServiceUri);
   }

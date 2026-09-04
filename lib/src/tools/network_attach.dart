@@ -13,6 +13,7 @@ import '../storage/capture_writer.dart';
 import '../storage/captures_db.dart';
 import '../vm/dtd_probe.dart';
 import '../vm/log_stream.dart';
+import '../vm/native_log_source.dart';
 import '../vm/vm_client.dart';
 import 'result.dart';
 
@@ -86,6 +87,13 @@ final networkAttachTool = Tool(
             'package+device) instead of starting a new one. Pair with '
             'appNameContains.',
       ),
+      'nativeLogs': Schema.bool(
+        description:
+            'Also stream the device\'s native log for this app (simctl log '
+            'stream / adb logcat) into logs_tail as source:"native", so '
+            'native SDK output is readable. Default: auto_attach_config '
+            'nativeLogs (false).',
+      ),
     },
   ),
 );
@@ -126,6 +134,7 @@ FutureOr<CallToolResult> networkAttach(
     vmServiceUri: args['vmServiceUri'] as String?,
     appNameContains: args['appNameContains'] as String?,
     logBufferSize: args['logBufferSize'] as int?,
+    nativeLogs: args['nativeLogs'] as bool?,
     reattach: (args['reattach'] as bool?) ?? false,
     defaultDtdUri: defaultDtdUri,
   );
@@ -171,6 +180,7 @@ Future<Map<String, Object?>> performAttach({
   int? logBufferSize,
   bool reattach = false,
   String? defaultDtdUri,
+  bool? nativeLogs,
 }) async {
   final session = Session.instance;
   final registry = SessionRegistry.instance;
@@ -225,6 +235,7 @@ Future<Map<String, Object?>> performAttach({
       logBufferSize: logBufferSize,
       reattach: reattach,
       defaultDtdUri: defaultDtdUri,
+      nativeLogs: nativeLogs ?? AutoAttachConfig.nativeLogs,
       onResolved: (uri) {
         if (uri != requestKey && !inFlight.claim(uri)) return false;
         if (uri != requestKey) resolvedKey = uri;
@@ -254,6 +265,7 @@ Future<Map<String, Object?>> _performAttachLocked({
   required int? logBufferSize,
   required bool reattach,
   required String? defaultDtdUri,
+  required bool nativeLogs,
   required bool Function(String resolvedUri) onResolved,
   required void Function(int sid) onSessionCreated,
 }) async {
@@ -263,6 +275,7 @@ Future<Map<String, Object?>> _performAttachLocked({
   // fails mid-setup, the catch block tears them down directly so nothing
   // leaks into the registry.
   VmClient? localVm;
+  String? nativeFailure;
   CaptureWriter? localCaptureWriter;
   LogStreamSubscriber? localLogStream;
   bool dtdWasConnectedBefore = registry.dtd.isConnected;
@@ -574,6 +587,17 @@ Future<Map<String, Object?>> _performAttachLocked({
 
     // Publish the fully-built session to the registry. After this point,
     // Session.instance's delegated getters reflect this attach.
+    NativeLogSource? nativeSource;
+    if (nativeLogs && caps.isEnabled(Category.logs)) {
+      final candidate = NativeLogSource();
+      final ok = await candidate.start(
+        appName: appName,
+        buffer: logBuffer,
+        sessionIdProvider: () => sid,
+      );
+      nativeSource = ok ? candidate : null;
+      if (!ok) nativeFailure = candidate.detail;
+    }
     SessionRegistry.instance.register(
       AttachedSession(
         id: sid,
@@ -592,7 +616,7 @@ Future<Map<String, Object?>> _performAttachLocked({
         reattachCount: reattachCount,
         projectPath: io.Directory.current.path,
         preAttachUptimeMs: reattachPrior == null ? preAttachMs : null,
-      ),
+      )..nativeLog = nativeSource,
     );
 
     // 0.7.3: persist the current attachment set so a future Claude Code
@@ -628,6 +652,12 @@ Future<Map<String, Object?>> _performAttachLocked({
     if (caps.isEnabled(Category.logs) && !logStream.isActive) {
       warnings.add(
         'log stream subscription did not start — logs_tail will be empty.',
+      );
+    }
+    if (nativeLogs && nativeSource == null) {
+      warnings.add(
+        'native log stream not started — ${nativeFailure ?? "device or tool not found"}; '
+        'Dart logs are unaffected.',
       );
     }
 
@@ -701,6 +731,12 @@ Future<Map<String, Object?>> _performAttachLocked({
       // F17: machine-readable companion to the pre-attach warning above.
       if (preAttachMs != null && reattachPrior == null)
         'preAttachUptimeMs': preAttachMs,
+      if (nativeSource != null)
+        'nativeLogs': {
+          'active': true,
+          'platform': nativeSource.platform,
+          'detail': nativeSource.detail,
+        },
       'capabilities': capState.capabilities,
       if (capState.degraded.isNotEmpty) 'degraded': capState.degraded,
       'attachedCount': registry.attachedCount,
