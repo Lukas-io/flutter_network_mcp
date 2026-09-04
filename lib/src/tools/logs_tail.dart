@@ -156,6 +156,9 @@ FutureOr<CallToolResult> logsTail(CallToolRequest request) async {
   }
 
   final attached = SessionRegistry.instance.attachedById(scope.sessionId)!;
+  final droppedSinceLastRead =
+      attached.logBuffer.droppedTotal - attached.lastReportedDropped;
+  attached.lastReportedDropped = attached.logBuffer.droppedTotal;
   final entries = attached.logBuffer.tail(
     sinceId: sinceId,
     levelMin: levelMin,
@@ -173,7 +176,7 @@ FutureOr<CallToolResult> logsTail(CallToolRequest request) async {
     if ((e.level ?? 0) >= _kSevereLevel) severeCount++;
     out.add(_liveEntry(e, truncateAt));
   }
-  return jsonResult(_buildResponse(
+  final response = _buildResponse(
     scope: scope,
     source: 'live',
     entries: out,
@@ -187,7 +190,24 @@ FutureOr<CallToolResult> logsTail(CallToolRequest request) async {
     messageContains: messageContains,
     sourceFilter: source,
     caps: caps,
-  ), scopeSessionId: scope.sessionId, scopeNote: scope.note);
+  );
+  final extraWarnings = <String>[
+    if (droppedSinceLastRead > 0)
+      '$droppedSinceLastRead record(s) rotated out of the ${attached.logBuffer.capacity}-record buffer since your last read — what you see is a fragment; raise logBufferSize (network_attach) or auto_attach_config logBufferSize, or read history via session_open',
+    if (sinceId == null && attached.preAttachUptimeMs != null)
+      'The app had been running ~${(attached.preAttachUptimeMs! / 1000).round()}s before this session attached; records from before then were never captured (the VM keeps no log history). A hot restart re-runs startup inside the capture window.',
+  ];
+  if (extraWarnings.isNotEmpty) {
+    response['warnings'] = [
+      ...extraWarnings,
+      ...?(response['warnings'] as List?)?.cast<String>(),
+    ];
+  }
+  if (droppedSinceLastRead > 0) {
+    response['droppedSinceLastRead'] = droppedSinceLastRead;
+  }
+  return jsonResult(response,
+      scopeSessionId: scope.sessionId, scopeNote: scope.note);
 }
 
 Map<String, Object?> _historyEntry(Map<String, Object?> r, int max) {

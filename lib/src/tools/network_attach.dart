@@ -77,7 +77,8 @@ final networkAttachTool = Tool(
       'logBufferSize': Schema.int(
         description:
             'Per-session log ring capacity (50-10000). Overrides the env '
-            'default (500); raise it for chatty apps.',
+            'default (2000, or auto_attach_config logBufferSize); raise it '
+            'for chatty apps, up to 20000.',
       ),
       'reattach': Schema.bool(
         description:
@@ -445,7 +446,8 @@ Future<Map<String, Object?>> _performAttachLocked({
     final vm = localVm = VmClient();
     final captureWriter = localCaptureWriter = CaptureWriter();
     final logBuffer = LogBuffer(
-      capacity: logBufferSize?.clamp(50, 10000),
+      capacity: (logBufferSize ?? AutoAttachConfig.logBufferSize)
+          ?.clamp(50, LogBuffer.maxCapacity),
     );
     final logStream = localLogStream = LogStreamSubscriber();
 
@@ -589,6 +591,7 @@ Future<Map<String, Object?>> _performAttachLocked({
         previousVmServiceUri: previousVmServiceUri,
         reattachCount: reattachCount,
         projectPath: io.Directory.current.path,
+        preAttachUptimeMs: reattachPrior == null ? preAttachMs : null,
       ),
     );
 
