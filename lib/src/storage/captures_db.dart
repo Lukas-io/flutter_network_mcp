@@ -726,13 +726,25 @@ class CapturesDao {
       return false;
     }
 
+    // `critical` is for the first crash of a session; every later crash
+    // signature is an error. 280 "critical" rows in one report devalued
+    // the word for hours.
+    var effectiveSeverity = severity;
+    if (severity == 'critical' && kind == 'flutter_error') {
+      final prior = _db.select(
+        'SELECT 1 FROM alerts WHERE session_id = ? AND kind = ? LIMIT 1',
+        [sessionId, kind],
+      );
+      if (prior.isNotEmpty) effectiveSeverity = 'error';
+    }
+
     try {
       _db.execute(
         'INSERT INTO alerts(session_id, ts_ms, severity, kind, title, '
         'detail, source_kind, source_id, signature, occurrence_count, '
         'last_seen_ms, last_source_id) '
         'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)',
-        [sessionId, ts, severity, kind, title, detail, sourceKind,
+        [sessionId, ts, effectiveSeverity, kind, title, detail, sourceKind,
          sourceId, signature, ts, sourceId],
       );
       return true;
@@ -740,6 +752,45 @@ class CapturesDao {
       if (e.extendedResultCode == 2067) return false;
       rethrow;
     }
+  }
+
+  /// Occurrences of [kind] alerts in [sessionId] whose title mentions [host]
+  /// since [sinceMs] — the "5xx storm" test.
+  int recentAlertOccurrences({
+    required int sessionId,
+    required String kind,
+    required String host,
+    required int sinceMs,
+  }) {
+    final rows = _db.select(
+      'SELECT COALESCE(SUM(occurrence_count), 0) AS n FROM alerts '
+      'WHERE session_id = ? AND kind = ? AND last_seen_ms >= ? AND title LIKE ?',
+      [sessionId, kind, sinceMs, '%$host%'],
+    );
+    return rows.first['n'] as int;
+  }
+
+  /// Keeps at most [maxPerSession] pending alerts per session, dropping the
+  /// oldest-seen beyond that. Returns how many were deleted.
+  int capPendingAlerts({int maxPerSession = 200}) {
+    final over = _db.select(
+      'SELECT session_id, COUNT(*) AS n FROM alerts WHERE drained = 0 '
+      'GROUP BY session_id HAVING n > ?',
+      [maxPerSession],
+    );
+    var deleted = 0;
+    for (final row in over) {
+      final sid = row['session_id'] as int;
+      final excess = (row['n'] as int) - maxPerSession;
+      _db.execute(
+        'DELETE FROM alerts WHERE id IN ('
+        '  SELECT id FROM alerts WHERE session_id = ? AND drained = 0 '
+        '  ORDER BY last_seen_ms ASC, id ASC LIMIT ?)',
+        [sid, excess],
+      );
+      deleted += excess;
+    }
+    return deleted;
   }
 
   /// Sum of `occurrence_count` across pending alerts matching the filter.

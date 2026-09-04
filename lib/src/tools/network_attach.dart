@@ -634,7 +634,6 @@ Future<Map<String, Object?>> _performAttachLocked({
     if (caps.isEnabled(Category.logs) && logStream.isActive) {
       readTools.add('logs_tail');
     }
-    if (caps.isEnabled(Category.alerts)) readTools.add('alerts_drain');
     final secondStep = readTools.isEmpty
         ? 'Then read via the enabled tools (see network_status.capabilities)'
         : 'Then call ${readTools.join(' / ')}';

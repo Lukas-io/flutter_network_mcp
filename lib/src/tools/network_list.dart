@@ -227,9 +227,6 @@ FutureOr<CallToolResult> networkList(CallToolRequest request) async {
       if (caps.isEnabled(Category.search)) {
         nextSteps.add('network_search query:"..." — find requests by body/url content');
       }
-      if (caps.isEnabled(Category.alerts)) {
-        nextSteps.add('alerts_drain — surface anything the detector flagged');
-      }
     } else {
       if (cursor != null) {
         nextSteps.add(

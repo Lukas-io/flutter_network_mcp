@@ -264,7 +264,7 @@ Map<String, Object?> _buildResponse({
     }
   } else {
     if (severeCount > 0 && caps.isEnabled(Category.alerts)) {
-      nextSteps.add('alerts_drain — see what the detector flagged for these severe records');
+      nextSteps.add('alerts_drain — $severeCount severe record(s) in this page raised alerts');
     }
     if (nextCursor != null) {
       nextSteps.add('logs_tail since:$nextCursor — page incrementally on next call');
