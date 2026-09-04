@@ -8,6 +8,7 @@ import '../util/json_shape.dart';
 import '../util/scope.dart';
 import 'body_fetch.dart';
 import 'error_kind.dart';
+import '../util/suggest.dart';
 import 'result.dart';
 
 /// Above this decoded size, grep is refused (a pathological regex over a huge
@@ -181,7 +182,8 @@ CallToolResult _grep({
   final text = utf8.decode(bytes, allowMalformed: true);
   final RegExp re;
   try {
-    re = RegExp(pattern, caseSensitive: !ignoreCase, multiLine: true);
+    final norm = normalizeGrep(pattern, ignoreCase);
+    re = RegExp(norm.pattern, caseSensitive: !norm.ignoreCase, multiLine: true);
   } catch (e) {
     return errorResult('Invalid grep regex: $e',
         kind: ErrorKind.badArgument,

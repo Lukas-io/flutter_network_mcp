@@ -1617,6 +1617,17 @@ class CapturesDao {
     return [for (final r in rows) r['host'] as String];
   }
 
+  /// Distinct request paths in [sessionId], most frequent first.
+  List<String> distinctPaths(int sessionId, {int limit = 300}) {
+    final rows = _db.select(
+      'SELECT path, COUNT(*) AS n FROM http_requests '
+      'WHERE session_id=? AND path IS NOT NULL AND path != \'\' '
+      'GROUP BY path ORDER BY n DESC LIMIT ?',
+      [sessionId, limit],
+    );
+    return [for (final r in rows) r['path'] as String];
+  }
+
   /// Number of requests in [sessionId] whose bodies are indexed for full-text
   /// search. Lets network_search tell "nothing indexed yet" (writer still
   /// backfilling) apart from "your term did not match".
