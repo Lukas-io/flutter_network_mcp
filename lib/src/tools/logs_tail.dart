@@ -51,7 +51,8 @@ final logsTailTool = Tool(
         items: Schema.string(),
       ),
       'source': Schema.string(
-        description: '"logging" | "stdout" | "stderr". Omit for all.',
+        description: '"logging" | "stdout" | "stderr" | "native" (device log, '
+            'when the attach requested nativeLogs). Omit for all.',
       ),
       'isolateId': Schema.string(
         description:

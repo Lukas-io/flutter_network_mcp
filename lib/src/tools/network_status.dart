@@ -40,6 +40,7 @@ Map<String, Object?> attachedStatusEntry(AttachedSession a) {
     if (capState.degraded.isNotEmpty) 'degraded': capState.degraded,
     // #21: surface the log ring-buffer fill so the agent can reason about
     // rotation proactively (and knows to read now / bump the buffer).
+    if (a.nativeLog?.isActive == true) 'nativeLogs': a.nativeLog!.detail,
     'logBufferUsed': a.logBuffer.length,
     'logBufferCapacity': a.logBuffer.capacity,
     // #16: hot-restart continuity. When this session id has survived one or
