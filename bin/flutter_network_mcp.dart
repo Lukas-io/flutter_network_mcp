@@ -11,6 +11,7 @@ import 'package:flutter_network_mcp/src/install/update.dart';
 import 'package:flutter_network_mcp/src/server.dart';
 import 'package:flutter_network_mcp/src/session_migrator.dart';
 import 'package:flutter_network_mcp/src/alerts/alert_retention.dart';
+import 'package:flutter_network_mcp/src/state/session.dart';
 import 'package:flutter_network_mcp/src/storage/captures_db.dart';
 import 'package:flutter_network_mcp/src/storage/database.dart';
 import 'package:flutter_network_mcp/src/telemetry/audit_subcommand.dart';
@@ -263,6 +264,19 @@ Future<void> _runMain(List<String> args) async {
   try {
     alert_patterns.loadCustomPatternsFromDb();
   } catch (_) {/* table may be empty / freshly migrated */}
+  if (!noPersist) {
+    try {
+      final orphaned = CapturesDao().endOrphanedSessions();
+      if (orphaned > 0) {
+        io.stderr.writeln(
+          'flutter_network_mcp: ended $orphaned session(s) left open by an '
+          'earlier process; their captures stay readable as history.',
+        );
+      }
+    } catch (e) {
+      io.stderr.writeln('flutter_network_mcp: orphan sweep failed: $e');
+    }
+  }
 
   // RC2 repair pass: index any historical requests missing from the FTS
   // map (the old writer only indexed inside the body-backfill's has-body
@@ -287,6 +301,7 @@ Future<void> _runMain(List<String> args) async {
 
   final server = FlutterNetworkMcpServer.stdio(defaultDtdUri: dtdUri);
   _installLifecycleGuard(server);
+  SessionRegistry.instance.startHeartbeat();
 
   // Background "is there a newer version?" probe. Daily-cached, opt-out
   // via FLUTTER_NETWORK_MCP_NO_UPDATE_CHECK=true. Fire-and-forget — never
@@ -335,6 +350,8 @@ Future<void> _runMain(List<String> args) async {
   AutoAttachConfig.set(
     allowed: autoAttachAllowlist,
     denied: autoAttachDenylist,
+    logBufferSize: fileConfig.logBufferSize,
+    nativeLogs: fileConfig.nativeLogs,
   );
 
   if (autoAttachAllowlist.isNotEmpty) {

@@ -29,6 +29,13 @@ enum ErrorKind {
   /// another tool.
   capabilityDisabled('capability_disabled'),
 
+  /// The call ran past the per-tool deadline. Recovery: narrow it or retry.
+  timeout('timeout'),
+
+  /// captures.db stayed locked by another process past busy_timeout.
+  /// Recovery: close the other server or point this one at another data dir.
+  unresponsiveDb('unresponsive_db'),
+
   /// An unexpected failure with no more specific classification.
   internal('internal');
 

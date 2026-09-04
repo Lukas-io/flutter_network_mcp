@@ -152,6 +152,7 @@ class SessionMigrator {
       }
     }
 
+    registry.recordLiveApps(liveByUri);
     final attached = [
       for (final s in registry.attached.values)
         (id: s.id, uri: s.vmServiceUri, appName: s.appName),
