@@ -19,11 +19,36 @@ class CapturesDao {
     required String? isolateId,
     required String? projectPath,
   }) {
-    _db.execute(
-      'INSERT INTO sessions(started_at, app_name, vm_service_uri, isolate_id, project_path) VALUES (?,?,?,?,?)',
-      [DateTime.now().millisecondsSinceEpoch, appName, vmServiceUri, isolateId, projectPath],
-    );
-    return _db.lastInsertRowId;
+    // #97: reuse the open row for this VM URI when one exists, so several
+    // server processes attaching to the same app do not each create a
+    // duplicate session. A UNIQUE index on the live URI (schema v12) makes
+    // this race-safe across processes on the shared DB.
+    if (vmServiceUri != null) {
+      final existing = _db.select(
+        'SELECT id FROM sessions WHERE vm_service_uri=? AND ended_at IS NULL '
+        'ORDER BY id LIMIT 1',
+        [vmServiceUri],
+      );
+      if (existing.isNotEmpty) return existing.first['id'] as int;
+    }
+    try {
+      _db.execute(
+        'INSERT INTO sessions(started_at, app_name, vm_service_uri, isolate_id, project_path) VALUES (?,?,?,?,?)',
+        [DateTime.now().millisecondsSinceEpoch, appName, vmServiceUri, isolateId, projectPath],
+      );
+      return _db.lastInsertRowId;
+    } on sql.SqliteException {
+      // Lost a cross-process insert race on the unique index: reuse the winner.
+      if (vmServiceUri != null) {
+        final r = _db.select(
+          'SELECT id FROM sessions WHERE vm_service_uri=? AND ended_at IS NULL '
+          'ORDER BY id LIMIT 1',
+          [vmServiceUri],
+        );
+        if (r.isNotEmpty) return r.first['id'] as int;
+      }
+      rethrow;
+    }
   }
 
   void endSession(int sessionId) {
