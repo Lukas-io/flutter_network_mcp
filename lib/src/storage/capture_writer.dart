@@ -76,14 +76,53 @@ class CaptureWriter {
     unawaited(_tick());
   }
 
-  void stop() {
+  /// Stops the poll timer. With [flush], drains any still-pending bodies to
+  /// the DB first (bounded) so a session that ends mid-exchange does not strand
+  /// its payloads — the writer is otherwise the only thing that persists bodies.
+  Future<void> stop({bool flush = false}) async {
     _timer?.cancel();
     _timer = null;
+    if (flush) {
+      try {
+        await flushPendingBodies();
+      } catch (_) {
+        // best-effort: the VM may already be gone (app exited)
+      }
+    }
     _vm = null;
     _sessionId = null;
     _lastCursorPerIsolate.clear();
     _ticksSinceRescan = 0;
     _ticking = false;
+  }
+
+  /// Drains every pending body to the DB now, ignoring the backfill grace
+  /// window and row cap, until the queue empties or [deadline] passes. Called
+  /// on session teardown so bodies still in flight are not lost forever (#95).
+  Future<void> flushPendingBodies({
+    Duration deadline = const Duration(seconds: 3),
+  }) async {
+    final vm = _vm;
+    final sid = _sessionId;
+    if (vm == null || sid == null) return;
+    if (!CapabilityConfig.instance.isEnabled(Category.http)) return;
+    final searchOn = CapabilityConfig.instance.isEnabled(Category.search);
+    final nowUs = DateTime.now().microsecondsSinceEpoch;
+    final stopAt = DateTime.now().add(deadline);
+    while (DateTime.now().isBefore(stopAt)) {
+      // No grace window and a high attempt ceiling: on teardown we want every
+      // body the VM still holds, complete or not, in one last pass.
+      final pending = _dao.pendingBodyFetches(
+        sid,
+        limit: 100,
+        staleBeforeUs: nowUs,
+        maxAttempts: 1 << 30,
+      );
+      if (pending.isEmpty) return;
+      for (final entry in pending) {
+        await _fetchAndStoreBody(vm, sid, entry, searchOn: searchOn);
+      }
+    }
   }
 
   /// Forces a re-read of the ignored_hosts table — called by the tool that
@@ -229,26 +268,38 @@ class CaptureWriter {
     );
     final searchOn = CapabilityConfig.instance.isEnabled(Category.search);
     for (final entry in pending) {
-      final isolateId = entry.isolateId ?? vm.isolateId;
-      if (isolateId == null) continue;
-      try {
-        final detail = await vm.getHttpProfileRequestForIsolate(
-          isolateId,
-          entry.vmId,
-        );
-        final hasBody = (detail.requestBody?.isNotEmpty ?? false) ||
-            (detail.responseBody?.isNotEmpty ?? false);
-        if (hasBody) {
-          _dao.storeBodies(sid, detail);
-          if (searchOn) _indexForSearch(sid, detail, isolateId: isolateId);
-        } else if (entry.isComplete) {
-          _dao.markBodiesFetched(sid, entry.vmId);
-        } else {
-          _dao.bumpBodyFetchAttempt(sid, entry.vmId);
-        }
-      } catch (_) {
-        if (!entry.isComplete) _dao.bumpBodyFetchAttempt(sid, entry.vmId);
+      await _fetchAndStoreBody(vm, sid, entry, searchOn: searchOn);
+    }
+  }
+
+  /// Fetches one request's bodies from the VM and stores them, marking the row
+  /// terminally fetched when the request is complete but body-less. Never
+  /// throws. Shared by the periodic backfill and the teardown flush.
+  Future<void> _fetchAndStoreBody(
+    VmClient vm,
+    int sid,
+    ({String vmId, String? isolateId, bool isComplete}) entry, {
+    required bool searchOn,
+  }) async {
+    final isolateId = entry.isolateId ?? vm.isolateId;
+    if (isolateId == null) return;
+    try {
+      final detail = await vm.getHttpProfileRequestForIsolate(
+        isolateId,
+        entry.vmId,
+      );
+      final hasBody = (detail.requestBody?.isNotEmpty ?? false) ||
+          (detail.responseBody?.isNotEmpty ?? false);
+      if (hasBody) {
+        _dao.storeBodies(sid, detail);
+        if (searchOn) _indexForSearch(sid, detail, isolateId: isolateId);
+      } else if (entry.isComplete) {
+        _dao.markBodiesFetched(sid, entry.vmId);
+      } else {
+        _dao.bumpBodyFetchAttempt(sid, entry.vmId);
       }
+    } catch (_) {
+      if (!entry.isComplete) _dao.bumpBodyFetchAttempt(sid, entry.vmId);
     }
   }
 

@@ -175,8 +175,12 @@ CallToolResult noBodyResult(
   final warnings = <String>[];
   if (bodyStatus == 'pending') {
     warnings.add(
-      '$which body not captured yet — the writer backfills async. Retry '
-      'in ~2s, or fetch in live mode.',
+      scope.isLive
+          ? '$which body not captured yet — the writer backfills async. Retry '
+              'in ~2s, or fetch in live mode.'
+          : 'The session ended before this $which body was persisted; the '
+              'bytes are unrecoverable. Relaunch the app and reproduce the '
+              'request to capture it.',
     );
   } else if (bodyStatus == 'unavailable') {
     warnings.add(
