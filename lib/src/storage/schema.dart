@@ -1,6 +1,6 @@
 /// Captures-DB schema version. Bump this AND add a migration block in the
 /// `_migrationFor` switch in `database.dart` whenever a table here changes.
-const int currentVersion = 11;
+const int currentVersion = 12;
 
 const List<String> initialSchema = [
   '''
@@ -357,4 +357,23 @@ const List<String> migrationV9toV10 = [
 /// network_get can surface the chain and HAR export can fill redirectURL.
 const List<String> migrationV10toV11 = [
   'ALTER TABLE http_requests ADD COLUMN redirects_json TEXT',
+];
+
+/// v12 (#97): one open session row per live VM URI. Several server processes
+/// (one per MCP-client window) each attached to the same app and blind-inserted
+/// a row, so one run showed as 4-5 duplicate sessions differing only by cwd.
+/// Close pre-existing duplicate open rows (keep the lowest id per URI) so the
+/// index below can be built, then enforce uniqueness on the live URI going
+/// forward; createSession reuses the open row instead of inserting a second.
+const List<String> migrationV11toV12 = [
+  "UPDATE sessions "
+      "SET ended_at = CAST(strftime('%s','now') AS INTEGER) * 1000, "
+      "note = COALESCE(note || ' ', '') || '[deduped]' "
+      "WHERE ended_at IS NULL AND vm_service_uri IS NOT NULL AND id NOT IN ("
+      "  SELECT MIN(id) FROM sessions "
+      "  WHERE ended_at IS NULL AND vm_service_uri IS NOT NULL "
+      "  GROUP BY vm_service_uri)",
+  "CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_live_uri "
+      "ON sessions(vm_service_uri) "
+      "WHERE vm_service_uri IS NOT NULL AND ended_at IS NULL",
 ];
