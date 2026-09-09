@@ -332,10 +332,15 @@ class SessionRegistry {
       'flutter_network_mcp: session ${s.id} (${s.appName ?? s.vmServiceUri}) '
       'is dead — $reason. Slot freed; capture preserved as history.',
     );
-    s.captureWriter.stop();
+    // Flush pending bodies to the DB before the VM goes away (#95), then
+    // disconnect. Best-effort: on app death / heartbeat timeout the VM is
+    // usually already gone, so the flush no-ops behind its own timeout.
+    unawaited(() async {
+      await s.captureWriter.stop(flush: true);
+      await s.vm.disconnect().catchError((_) {});
+    }());
     unawaited(s.logStream.stop().catchError((_) {}));
     unawaited(s.nativeLog?.stop().catchError((_) {}) ?? Future<void>.value());
-    unawaited(s.vm.disconnect().catchError((_) {}));
     try {
       CapturesDao().endSession(s.id);
     } catch (_) {/* DB may be closing during shutdown */}
@@ -438,7 +443,7 @@ class SessionRegistry {
   /// whether to disconnect DTD (typically only when [attachedCount] is
   /// now zero).
   Future<void> detachOne(AttachedSession s) async {
-    s.captureWriter.stop();
+    await s.captureWriter.stop(flush: true);
     await s.logStream.stop();
     await s.nativeLog?.stop();
     await s.vm.disconnect();
