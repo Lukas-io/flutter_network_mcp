@@ -7,6 +7,7 @@ import 'package:sqlite3/sqlite3.dart' as sql;
 
 import 'config/capabilities.dart';
 import 'docs/doc_resources.dart';
+import 'tools/network_wait_for_app.dart';
 import 'telemetry/usage_recorder.dart';
 import 'version.dart';
 import 'tools/alert_patterns.dart';
@@ -92,6 +93,7 @@ base class FlutterNetworkMcpServer extends MCPServer
     final caps = CapabilityConfig.instance;
 
     _register(networkStatusTool, (req) => networkStatus(req, defaultDtdUri));
+    _register(networkWaitForAppTool, (req) => networkWaitForApp(req, defaultDtdUri));
     _register(networkAttachTool, (req) => networkAttach(req, defaultDtdUri));
     _register(networkDetachTool, networkDetach);
     _register(networkDiscoverDtdTool, networkDiscoverDtd);
@@ -253,6 +255,7 @@ const Set<String> kUnboundedTools = {
   'network_replay_as_test',
   'report_issue',
   'bodies_purge',
+  'network_wait_for_app',
 };
 
 /// `FLUTTER_NETWORK_MCP_TOOL_TIMEOUT_MS` (2000–120000). Default 20000.
