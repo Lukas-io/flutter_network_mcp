@@ -132,11 +132,29 @@ FutureOr<CallToolResult> networkSearch(CallToolRequest request) async {
           'term may live in a not-yet-indexed request; retry shortly.',
         );
       } else {
-        warnings.add(
-          'No match for "$query". Every captured request is indexed, so the '
-          'term is absent from this session. See availableHosts (hosts seen '
-          'from Dart) for what was captured.',
-        );
+        // Body text is only searchable once persisted; a response/any search
+        // cannot rule out a match when some bodies were never stored (#100),
+        // e.g. a session that ended before the writer backfilled them.
+        var unpersisted = 0;
+        if (whichArg != 'url') {
+          try {
+            unpersisted = CapturesDao().countUnpersistedBodies(sessionId);
+          } catch (_) {/* best-effort */}
+        }
+        if (unpersisted > 0) {
+          warnings.add(
+            'No URL match for "$query". URLs are fully indexed, but '
+            '$unpersisted request(s) in this session have no stored body '
+            '(never persisted, likely the session ended first), so a '
+            'response-content match cannot be ruled out.',
+          );
+        } else {
+          warnings.add(
+            'No match for "$query". Every captured request is indexed, so the '
+            'term is absent from this session. See availableHosts (hosts seen '
+            'from Dart) for what was captured.',
+          );
+        }
       }
       warnings.add(kCaptureBoundary);
     }
