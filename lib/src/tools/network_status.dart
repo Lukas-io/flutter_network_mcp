@@ -12,6 +12,7 @@ import '../update/update_check.dart';
 import '../version.dart';
 import '../vm/dtd_discovery.dart';
 import '../util/scope.dart' show movedToFor;
+import 'network_attach.dart' show appSessionIdentity;
 import '../vm/dtd_probe.dart';
 import 'network_attach.dart' as attach_helper;
 import '../util/suggest.dart';
@@ -377,6 +378,31 @@ Map<String, Object?> _buildMcpBlock() {
 
 /// Returns 1–2 short hints telling the agent what to do given the current
 /// state.
+/// The continuation reattach nextStep, or null. Suppresses a reattach to a VM
+/// no longer reachable (#99): when the app relaunched it points at the new URI,
+/// else it says the app exited instead of suggesting a dead socket. [dead] is
+/// true when the URI is known gone (this process saw it die, or a connected DTD
+/// no longer lists it); [relaunchUri] is a live URI for the same app, if any.
+String? continuationReattachStep({
+  required String? lastUri,
+  required String lastApp,
+  required String ageDesc,
+  required bool dead,
+  String? relaunchUri,
+}) {
+  if (lastUri == null) return null;
+  if (!dead) {
+    return 'network_attach vmServiceUri:"$lastUri" — reattach to $lastApp '
+        '$ageDesc; previous attachment recorded by 0.7.3 continuation';
+  }
+  if (relaunchUri != null) {
+    return 'network_attach vmServiceUri:"$relaunchUri" — $lastApp exited and '
+        'relaunched at a new URI';
+  }
+  return '$lastApp has exited$ageDesc; relaunch it and network_attach, or '
+      'network_wait_for_app to block until it is back';
+}
+
 List<String> _suggestNextSteps(
   SessionRegistry registry,
   Session session,
@@ -437,10 +463,36 @@ List<String> _suggestNextSteps(
         ? ''
         : ' (~${_formatAgo(attachedAtMs)} ago)';
     if (lastUri != null) {
-      steps.add(
-        'network_attach vmServiceUri:"$lastUri" — reattach to $lastApp '
-        '$ageDesc; previous attachment recorded by 0.7.3 continuation',
+      final knownUris = <String>{
+        for (final a in (knownApps ?? const []))
+          if ((a as Map)['uri'] is String) a['uri'] as String,
+      };
+      final inRegistryDead =
+          registry.dead.any((d) => d.vmServiceUri == lastUri);
+      // DTD discovery listing live apps but not this URI is authoritative that
+      // the app is gone; an empty discovery cannot tell, so we do not infer
+      // death from it.
+      final absentFromLiveDtd =
+          knownUris.isNotEmpty && !knownUris.contains(lastUri);
+      final lastIdentity = appSessionIdentity(lastApp);
+      String? relaunchUri;
+      for (final a in (knownApps ?? const [])) {
+        final m = a as Map;
+        final uri = m['uri'] as String?;
+        if (uri == null || uri == lastUri) continue;
+        if (appSessionIdentity(m['name'] as String?) == lastIdentity) {
+          relaunchUri = uri;
+          break;
+        }
+      }
+      final step = continuationReattachStep(
+        lastUri: lastUri,
+        lastApp: lastApp,
+        ageDesc: ageDesc,
+        dead: inRegistryDead || absentFromLiveDtd,
+        relaunchUri: relaunchUri,
       );
+      if (step != null) steps.add(step);
     }
   }
 
