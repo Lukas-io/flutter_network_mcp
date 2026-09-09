@@ -273,6 +273,19 @@ class CapturesDao {
   /// Marks a request's bodies as terminally fetched (success, or a complete
   /// request that genuinely has no body, e.g. 204 / HEAD) so it leaves the
   /// backfill queue.
+  /// How many requests in a session have no stored body yet (bodies_fetched=0).
+  /// Used to qualify search's "everything is indexed" claim (#100): body text
+  /// is only searchable once persisted, so unpersisted bodies mean a
+  /// response-content miss cannot be treated as a definite absence.
+  int countUnpersistedBodies(int sessionId) {
+    final r = _db.select(
+      'SELECT COUNT(*) AS n FROM http_requests '
+      'WHERE session_id=? AND bodies_fetched=0',
+      [sessionId],
+    );
+    return r.first['n'] as int;
+  }
+
   void markBodiesFetched(int sessionId, String vmId) {
     _db.execute(
       'UPDATE http_requests SET bodies_fetched=1 WHERE session_id=? AND vm_id=?',
