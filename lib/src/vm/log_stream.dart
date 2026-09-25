@@ -39,9 +39,12 @@ class LogStreamSubscriber {
     await _safeListen(service, EventStreams.kStderr);
 
     _subs.add(service.onLoggingEvent.listen((event) {
-      // Queued so records keep their order while long values are fetched.
+      final record = event.logRecord;
+      if (record == null) return;
+      // Values are fetched as the record arrives; only the append waits its turn, so order holds without serialising the VM round trips.
+      final values = _fetchValues(service, event.isolate?.id, record);
       _logQueue = _logQueue
-          .then((_) => _onLogRecord(service, buffer, event))
+          .then((_) async => _onLogRecord(buffer, event, record, await values))
           .catchError((Object e, StackTrace st) => _onStreamError(e, st));
     }, onError: _onStreamError));
 
@@ -57,20 +60,28 @@ class LogStreamSubscriber {
 
   Future<void> _logQueue = Future.value();
 
-  /// Stores one developer.log record with its message, error and stack whole; the VM only sends a 128-char preview of each.
-  Future<void> _onLogRecord(
-      VmService service, LogBuffer buffer, Event event) async {
-    final record = event.logRecord;
-    if (record == null) return;
+  final _occurrences = OccurrenceCounter();
+
+  /// A record's logger, message, error and stack in full; the VM only sends a 128-char preview of each.
+  Future<List<String?>> _fetchValues(
+      VmService service, String? isoId, LogRecord record) {
+    Future<String?> text(InstanceRef? ref) => instanceText(service, isoId, ref);
+    return Future.wait([
+      text(record.loggerName),
+      text(record.message),
+      text(record.error),
+      text(record.stackTrace),
+    ]);
+  }
+
+  void _onLogRecord(
+      LogBuffer buffer, Event event, LogRecord record, List<String?> values) {
     const source = 'logging';
     final ts = record.time ?? event.timestamp ?? 0;
     final level = record.level;
     final isoId = event.isolate?.id;
-    Future<String?> text(InstanceRef? ref) => instanceText(service, isoId, ref);
-    final logger = await text(record.loggerName);
-    final message = await text(record.message) ?? '';
-    final err = await text(record.error);
-    final stack = await text(record.stackTrace);
+    final [logger, rawMessage, err, stack] = values;
+    final message = rawMessage ?? '';
     buffer.push(
       source: source,
       timestampMs: ts,
@@ -145,7 +156,7 @@ class LogStreamSubscriber {
       timestampMs: ts,
       message: text,
       isolateId: isoId,
-      dedupKey: '$source:$isoId:$ts:${logDedupHash(text)}',
+      dedupKey: _occurrences.key('$source:$isoId:$ts:${logDedupHash(text)}'),
     );
   }
 
@@ -206,3 +217,14 @@ class LogStreamSubscriber {
 /// Short stable digest of [text] for log dedup keys (identical across server processes).
 String logDedupHash(String text) =>
     sha1.convert(utf8.encode(text)).toString().substring(0, 16);
+
+/// Numbers repeats of a dedup key: a line genuinely printed twice in one millisecond keeps both rows, while the copy another server process receives still collapses onto the same key.
+class OccurrenceCounter {
+  final _seen = <String, int>{};
+
+  String key(String base) {
+    if (_seen.length > 512) _seen.clear();
+    final n = _seen.update(base, (v) => v + 1, ifAbsent: () => 0);
+    return '$base:$n';
+  }
+}

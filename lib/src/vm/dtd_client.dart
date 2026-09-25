@@ -1,5 +1,7 @@
 import 'package:dtd/dtd.dart';
 
+import 'vm_uri.dart';
+
 /// Thin wrapper around `package:dtd`. Holds an active DTD connection and
 /// exposes the few calls Phase 1 needs.
 class DtdClient {
@@ -22,7 +24,15 @@ class DtdClient {
   Future<List<VmServiceInfo>> getConnectedApps() async {
     final dtd = _requireConnected();
     final response = await dtd.getVmServices();
-    return response.vmServicesInfos;
+    // One spelling per VM from the start, so every comparison against attached sessions matches.
+    return [
+      for (final i in response.vmServicesInfos)
+        VmServiceInfo(
+          uri: canonicalVmServiceUri(i.uri),
+          exposedUri: i.exposedUri,
+          name: i.name,
+        ),
+    ];
   }
 
   Future<void> disconnect() async {
