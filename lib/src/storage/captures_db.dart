@@ -8,6 +8,7 @@ import 'package:vm_service/vm_service.dart';
 
 import '../util/http_timing.dart';
 import 'database.dart';
+import '../util/searchable_text.dart';
 
 /// Typed accessors for the captures database. Holds no state of its own —
 /// all calls go directly through [CapturesDatabase.instance].
@@ -1755,6 +1756,48 @@ class CapturesDao {
     return (rows.first['n'] as int?) ?? 0;
   }
 
+  /// Rebuilds the search index of every request in [sessionId] from its stored bodies, so turning body decryption on makes already-captured bodies searchable. Returns how many requests were reindexed.
+  int reindexSessionBodies(int sessionId) {
+    final rows = _db.select(
+      'SELECT vm_id, isolate_id, url, content_type FROM http_requests '
+      'WHERE session_id=?',
+      [sessionId],
+    );
+    _db.execute('BEGIN');
+    try {
+      for (final row in rows) {
+        final vmId = row['vm_id'] as String;
+        String? requestText;
+        String? responseText;
+        for (final b in _db.select(
+          'SELECT which, bytes FROM http_bodies WHERE session_id=? AND vm_id=?',
+          [sessionId, vmId],
+        )) {
+          final text = searchableText(
+              b['bytes'] as Uint8List?, row['content_type'] as String?);
+          if (b['which'] == 'request') {
+            requestText = text;
+          } else {
+            responseText = text;
+          }
+        }
+        indexForSearch(
+          sessionId: sessionId,
+          vmId: vmId,
+          isolateId: row['isolate_id'] as String?,
+          url: (row['url'] as String?) ?? '',
+          requestText: requestText,
+          responseText: responseText,
+        );
+      }
+      _db.execute('COMMIT');
+    } catch (_) {
+      _db.execute('ROLLBACK');
+      rethrow;
+    }
+    return rows.length;
+  }
+
   /// RC2 repair pass: FTS rows used to be written only by the body
   /// backfill's has-body branch, so requests that were in-flight at first
   /// sight (slow, redirected, upgraded) or whose bodies were empty /
@@ -1783,7 +1826,7 @@ class CapturesDao {
           [sid, vmId],
         );
         for (final b in bodies) {
-          final text = _utf8IfTextish(
+          final text = searchableText(
             b['bytes'] as Uint8List?,
             row['content_type'] as String?,
           );
@@ -1811,22 +1854,6 @@ class CapturesDao {
     return missing.length;
   }
 
-  String? _utf8IfTextish(Uint8List? bytes, String? contentType) {
-    if (bytes == null || bytes.isEmpty) return null;
-    final ct = contentType?.toLowerCase() ?? '';
-    final textish = ct.contains('json') ||
-        ct.contains('xml') ||
-        ct.contains('text') ||
-        ct.contains('javascript') ||
-        ct.contains('graphql') ||
-        ct.contains('form-urlencoded');
-    if (!textish) return null;
-    try {
-      return utf8.decode(bytes, allowMalformed: true);
-    } catch (_) {
-      return null;
-    }
-  }
 
   Map<String, Object?> _rowToMap(sql.Row r) {
     return {for (final k in r.keys) k: r[k]};
