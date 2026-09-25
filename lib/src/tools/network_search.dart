@@ -5,6 +5,7 @@ import 'package:dart_mcp/server.dart';
 import '../config/body_decryption.dart';
 import '../config/capabilities.dart';
 import '../storage/captures_db.dart';
+import '../storage/plaintext_index.dart';
 import '../util/filters.dart';
 import '../util/scope.dart';
 import 'error_kind.dart';
@@ -76,24 +77,25 @@ FutureOr<CallToolResult> networkSearch(CallToolRequest request) async {
   final isolateId = args['isolateId'] as String?;
   final limit = clampLimit(args['limit'] as int?, fallback: 20, hardMax: 100);
 
-  // Bodies captured before decryption was turned on hold ciphertext in the index until reindexed.
-  if (BodyDecryptionConfig.active != null &&
-      BodyDecryptionConfig.reindexedSessions.add(sessionId)) {
-    try {
-      CapturesDao().reindexSessionBodies(sessionId);
-    } catch (_) {
-      BodyDecryptionConfig.reindexedSessions.remove(sessionId);
-    }
-  }
-
   try {
-    final rows = CapturesDao().searchRequests(
-      query: query,
-      sessionId: sessionId,
-      which: whichArg,
-      isolateId: isolateId,
-      limit: limit,
-    );
+    final scheme = BodyDecryptionConfig.active;
+    // With body decryption on, search runs over plaintext kept in memory; the capture DB only ever holds what was captured.
+    if (scheme != null) PlaintextIndex.instance.refresh(sessionId, scheme);
+    final rows = scheme != null
+        ? PlaintextIndex.instance.search(
+            query: query,
+            sessionId: sessionId,
+            which: whichArg,
+            isolateId: isolateId,
+            limit: limit,
+          )
+        : CapturesDao().searchRequests(
+            query: query,
+            sessionId: sessionId,
+            which: whichArg,
+            isolateId: isolateId,
+            limit: limit,
+          );
 
     final matches = <Map<String, Object?>>[];
     for (final r in rows) {

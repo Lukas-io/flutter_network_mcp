@@ -4,8 +4,7 @@ import 'package:dart_mcp/server.dart';
 
 import '../config/body_decryption.dart';
 import '../config/session_filters.dart';
-import '../state/session.dart';
-import '../storage/captures_db.dart';
+import '../storage/plaintext_index.dart';
 import '../util/filters.dart';
 import 'error_kind.dart';
 import 'result.dart';
@@ -46,11 +45,12 @@ final sessionConfigureTool = Tool(
       ),
       'clear': Schema.bool(description: 'Reset ALL sticky defaults to none.'),
       'bodyDecryption': Schema.object(
-        description: 'Decrypt app-encrypted HTTP bodies on read and index the '
-            'plaintext for search. Kept in this process\'s memory only, never '
-            'written to the capture DB; replies show a key fingerprint, never '
-            'the key. Replay and export keep the original bytes. '
-            '{off:true} turns it off.',
+        description: 'Decrypt app-encrypted HTTP bodies on read, and let '
+            'network_search / network_correlate match their plaintext. The key '
+            'and the plaintext stay in this process\'s memory; neither is '
+            'written to the capture DB. Replies show a key fingerprint, never '
+            'the key. Replay and export keep the original bytes. {off:true} '
+            'turns it off and drops the plaintext index.',
         properties: {
           'algorithm': Schema.string(
               description: 'aes-256-ctr (default) or aes-128-ctr.'),
@@ -103,12 +103,11 @@ FutureOr<CallToolResult> sessionConfigure(CallToolRequest request) async {
   if (args.containsKey('maxResponseTokens')) {
     sf.maxResponseTokens = args['maxResponseTokens'] as int?;
   }
-  if (args['clear'] == true) BodyDecryptionConfig.set(null);
+  if (args['clear'] == true) _setDecryption(null);
 
-  var reindexed = 0;
   final decryptionArg = args['bodyDecryption'];
   if (decryptionArg is Map && decryptionArg['off'] == true) {
-    BodyDecryptionConfig.set(null);
+    _setDecryption(null);
   } else if (decryptionArg != null) {
     final parsed = BodyDecryption.parse(decryptionArg);
     if (parsed.error != null) {
@@ -121,8 +120,7 @@ FutureOr<CallToolResult> sessionConfigure(CallToolRequest request) async {
             ],
           });
     }
-    BodyDecryptionConfig.set(parsed.config);
-    reindexed = _reindexOpenSessions();
+    _setDecryption(parsed.config);
   }
 
   final block = sf.toBlock();
@@ -138,8 +136,8 @@ FutureOr<CallToolResult> sessionConfigure(CallToolRequest request) async {
     'summary': decryption == null
         ? summary
         : '$summary Body decryption is on (${decryption.algorithm}, key '
-            '${decryption.keyFingerprint})'
-            '${reindexed > 0 ? '; $reindexed captured request(s) reindexed for search' : ''}.',
+            '${decryption.keyFingerprint}); network_search reads the '
+            'plaintext through an index kept in memory, never written to disk.',
     'defaults': block,
     'bodyDecryption': decryption?.toBlock() ?? const {'active': false},
     if (decryption != null)
@@ -159,18 +157,8 @@ FutureOr<CallToolResult> sessionConfigure(CallToolRequest request) async {
   });
 }
 
-/// Reindexes the attached and the viewed sessions right away; other sessions reindex on their first network_search.
-int _reindexOpenSessions() {
-  final ids = <int>{
-    for (final s in SessionRegistry.instance.attached.values) s.id,
-    if (Session.instance.viewedSessionId != null) Session.instance.viewedSessionId!,
-  };
-  var n = 0;
-  for (final id in ids) {
-    try {
-      n += CapturesDao().reindexSessionBodies(id);
-      BodyDecryptionConfig.reindexedSessions.add(id);
-    } catch (_) {/* network_search retries it */}
-  }
-  return n;
+/// A new scheme (or none) makes any plaintext already indexed in memory stale.
+void _setDecryption(BodyDecryption? config) {
+  BodyDecryptionConfig.active = config;
+  PlaintextIndex.instance.clear();
 }

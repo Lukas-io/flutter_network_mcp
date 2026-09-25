@@ -2,8 +2,10 @@ import 'dart:async';
 
 import 'package:dart_mcp/server.dart';
 
+import '../config/body_decryption.dart';
 import '../state/session.dart';
 import '../storage/captures_db.dart';
+import '../storage/plaintext_index.dart';
 import '../util/filters.dart';
 import 'error_kind.dart';
 import 'result.dart';
@@ -144,12 +146,23 @@ FutureOr<CallToolResult> networkCorrelate(CallToolRequest request) async {
 
   final List<Map<String, Object?>> allMatches;
   try {
-    allMatches = CapturesDao().correlateAcrossSessions(
-      sessionIds: sessionIds,
-      pattern: pattern,
-      which: whichArg,
-      perSessionLimit: perSessionLimit,
-    );
+    final scheme = BodyDecryptionConfig.active;
+    allMatches = scheme == null
+        ? CapturesDao().correlateAcrossSessions(
+            sessionIds: sessionIds,
+            pattern: pattern,
+            which: whichArg,
+            perSessionLimit: perSessionLimit,
+          )
+        : [
+            for (final sid in sessionIds)
+              ...(PlaintextIndex.instance..refresh(sid, scheme)).correlate(
+                pattern: pattern,
+                sessionId: sid,
+                which: whichArg,
+                limit: perSessionLimit,
+              ),
+          ];
   } catch (e) {
     return errorResult('network_correlate failed: $e', kind: ErrorKind.badQuery, extra: {
       'sessionIds': sessionIds,
