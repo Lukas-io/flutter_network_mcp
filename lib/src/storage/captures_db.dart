@@ -1130,7 +1130,8 @@ class CapturesDao {
   /// D7/F23: the FTS-indexable URL string. Appends the percent-decoded
   /// form when it differs so i18n query params (e.g. ÜMLAUT) match the
   /// human spelling as well as the wire encoding.
-  static String _urlForIndex(String url) {
+  /// The raw URL plus its percent-decoded form, so a search for decoded text still matches.
+  static String urlForIndex(String url) {
     try {
       final decoded = Uri.decodeFull(url);
       if (decoded != url) return '$url $decoded';
@@ -1150,7 +1151,7 @@ class CapturesDao {
     // this single choke point (covers all three callers: writer first-sight,
     // body-backfill re-index, and the repair pass). Before this, a search for
     // "ÜMLAUT" missed `%C3%9CMLAUT` in the stored URL — invisible i18n.
-    final indexedUrl = _urlForIndex(url);
+    final indexedUrl = urlForIndex(url);
     final existing = _db.select(
       'SELECT rowid FROM http_search_map WHERE session_id=? AND vm_id=?',
       [sessionId, vmId],
@@ -1180,6 +1181,31 @@ class CapturesDao {
     );
   }
 
+  /// The FTS5 MATCH expression for a phrase search of [query] in the [which] column (request / response / url / any).
+  static String ftsMatchExpr(String query, String which) {
+    final phrase = '"${query.replaceAll('"', '""')}"';
+    return switch (which) {
+      'request' => 'content_request:$phrase',
+      'response' => 'content_response:$phrase',
+      'url' => 'url:$phrase',
+      _ => phrase,
+    };
+  }
+
+  /// Method, URL, host, path, status and timing of [vmIds] in [sessionId], keyed by vm_id.
+  Map<String, Map<String, Object?>> requestSummaries(
+      int sessionId, Iterable<String> vmIds) {
+    final ids = vmIds.toSet().toList();
+    if (ids.isEmpty) return const {};
+    final rows = _db.select(
+      'SELECT vm_id, method, url, host, path, status_code, start_us, end_us '
+      'FROM http_requests WHERE session_id=? AND vm_id IN '
+      '(${List.filled(ids.length, '?').join(',')})',
+      [sessionId, ...ids],
+    );
+    return {for (final r in rows) r['vm_id'] as String: _rowToMap(r)};
+  }
+
   List<Map<String, Object?>> searchRequests({
     required String query,
     int? sessionId,
@@ -1187,22 +1213,7 @@ class CapturesDao {
     String? isolateId,
     int limit = 20,
   }) {
-    final phrase = '"${query.replaceAll('"', '""')}"';
-    final String matchExpr;
-    switch (which) {
-      case 'request':
-        matchExpr = 'content_request:$phrase';
-        break;
-      case 'response':
-        matchExpr = 'content_response:$phrase';
-        break;
-      case 'url':
-        matchExpr = 'url:$phrase';
-        break;
-      case 'any':
-      default:
-        matchExpr = phrase;
-    }
+    final matchExpr = ftsMatchExpr(query, which);
     const matchClause = 'http_search MATCH ?';
     final params = <Object?>[matchExpr];
     String sessionFilter = '';
@@ -1257,22 +1268,7 @@ class CapturesDao {
     int perSessionLimit = 100,
   }) {
     if (sessionIds.isEmpty) return const [];
-    final phrase = '"${pattern.replaceAll('"', '""')}"';
-    final String matchExpr;
-    switch (which) {
-      case 'request':
-        matchExpr = 'content_request:$phrase';
-        break;
-      case 'response':
-        matchExpr = 'content_response:$phrase';
-        break;
-      case 'url':
-        matchExpr = 'url:$phrase';
-        break;
-      case 'any':
-      default:
-        matchExpr = phrase;
-    }
+    final matchExpr = ftsMatchExpr(pattern, which);
     final out = <Map<String, Object?>>[];
     for (final sid in sessionIds) {
       final rows = _db.select(
@@ -1754,48 +1750,6 @@ class CapturesDao {
       [sessionId],
     );
     return (rows.first['n'] as int?) ?? 0;
-  }
-
-  /// Rebuilds the search index of every request in [sessionId] from its stored bodies, so turning body decryption on makes already-captured bodies searchable. Returns how many requests were reindexed.
-  int reindexSessionBodies(int sessionId) {
-    final rows = _db.select(
-      'SELECT vm_id, isolate_id, url, content_type FROM http_requests '
-      'WHERE session_id=?',
-      [sessionId],
-    );
-    _db.execute('BEGIN');
-    try {
-      for (final row in rows) {
-        final vmId = row['vm_id'] as String;
-        String? requestText;
-        String? responseText;
-        for (final b in _db.select(
-          'SELECT which, bytes FROM http_bodies WHERE session_id=? AND vm_id=?',
-          [sessionId, vmId],
-        )) {
-          final text = searchableText(
-              b['bytes'] as Uint8List?, row['content_type'] as String?);
-          if (b['which'] == 'request') {
-            requestText = text;
-          } else {
-            responseText = text;
-          }
-        }
-        indexForSearch(
-          sessionId: sessionId,
-          vmId: vmId,
-          isolateId: row['isolate_id'] as String?,
-          url: (row['url'] as String?) ?? '',
-          requestText: requestText,
-          responseText: responseText,
-        );
-      }
-      _db.execute('COMMIT');
-    } catch (_) {
-      _db.execute('ROLLBACK');
-      rethrow;
-    }
-    return rows.length;
   }
 
   /// RC2 repair pass: FTS rows used to be written only by the body
