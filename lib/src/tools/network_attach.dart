@@ -16,6 +16,7 @@ import '../vm/log_stream.dart';
 import '../vm/native_log_source.dart';
 import '../vm/vm_client.dart';
 import 'result.dart';
+import '../vm/vm_uri.dart';
 
 /// One connected app flattened out of a [DtdProbe] listing, tagged with the
 /// DTD that owns it. Used to resolve `appNameContains` across every DTD.
@@ -203,6 +204,7 @@ Future<Map<String, Object?>> performAttach({
           {'sessionId': a.id, 'appName': a.appName},
       ],
       'maxAttach': maxAttach,
+      'retryable': false,
       'nextSteps': [
         for (final a in registry.attached.values)
           'network_detach sessionId:${a.id} keep:true  // ${a.appName ?? "(no name)"}',
@@ -285,7 +287,7 @@ Future<Map<String, Object?>> _performAttachLocked({
     String? appName;
 
     if (vmServiceUri != null) {
-      resolvedVmServiceUri = vmServiceUri;
+      resolvedVmServiceUri = canonicalVmServiceUri(vmServiceUri);
       // Resolve the app name for this URI from DTD. Without it, attaching by
       // raw vmServiceUri leaves appName null, which (a) breaks identity-based
       // reattach (#16: the auto-migration watcher and auto-attach both attach
@@ -298,7 +300,7 @@ Future<Map<String, Object?>> _performAttachLocked({
         outer:
         for (final l in listings) {
           for (final a in l.apps) {
-            if (a.uri == resolvedVmServiceUri) {
+            if (canonicalVmServiceUri(a.uri) == resolvedVmServiceUri) {
               appName = a.name;
               break outer;
             }
@@ -344,6 +346,7 @@ Future<Map<String, Object?>> _performAttachLocked({
         return {
           'error': 'Multiple apps across DTDs match "$appNameContains"; pass a '
               'more specific substring or an explicit `vmServiceUri`.',
+          'retryable': false,
           'apps': [
             for (final m in matches)
               {'name': m.name, 'uri': m.uri, 'dtdUri': m.dtdUri.toString()},
@@ -355,7 +358,7 @@ Future<Map<String, Object?>> _performAttachLocked({
         };
       }
       final match = matches.single;
-      resolvedVmServiceUri = match.uri;
+      resolvedVmServiceUri = canonicalVmServiceUri(match.uri);
       appName = match.name;
       // Parity with the single-DTD path: point the session DTD at the DTD
       // that actually owns this app (best-effort; the VM attach below is
@@ -416,6 +419,7 @@ Future<Map<String, Object?>> _performAttachLocked({
         return {
           'error': 'DTD has multiple matching apps; pass `appNameContains` or '
               'an explicit `vmServiceUri`.',
+          'retryable': false,
           'apps': [
             for (final a in filtered) {'name': a.name, 'uri': a.uri},
           ],
@@ -425,7 +429,7 @@ Future<Map<String, Object?>> _performAttachLocked({
           ],
         };
       }
-      resolvedVmServiceUri = filtered.single.uri;
+      resolvedVmServiceUri = canonicalVmServiceUri(filtered.single.uri);
       appName = filtered.single.name;
     }
 
@@ -441,15 +445,24 @@ Future<Map<String, Object?>> _performAttachLocked({
     }
     final existing = registry.attachedByUri(resolvedVmServiceUri);
     if (existing != null) {
+      // The caller's goal (capture from this app) already holds: hand back the live session.
       return {
-        'error':
-            'Already attached to "${existing.appName ?? "(unknown app)"}" '
-            'at $resolvedVmServiceUri (session ${existing.id}).',
-        'attachedSessionId': existing.id,
-        'attachedAppName': existing.appName,
+        'attached': true,
+        'alreadyAttached': true,
+        'summary': 'Already attached to ${existing.appName ?? "this app"} in '
+            'session ${existing.id}; reusing it, nothing new was started.',
+        'scope': {
+          'sessionId': existing.id,
+          if (existing.appName != null) 'appName': existing.appName,
+          'isLive': true,
+        },
+        'appName': existing.appName,
+        'vmServiceUri': resolvedVmServiceUri,
+        'liveSessionId': existing.id,
+        'attachedCount': registry.attachedCount,
         'nextSteps': [
-          'network_detach sessionId:${existing.id} — drop this attachment first',
-          'Read from the existing session: network_list sessionId:${existing.id}',
+          'network_list sessionId:${existing.id} — read what it has captured',
+          'network_detach sessionId:${existing.id} then attach again for a fresh session',
         ],
       };
     }
