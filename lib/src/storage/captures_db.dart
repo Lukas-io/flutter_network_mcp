@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io' as io;
 // ignore: unused_import — Uint8List used in BLOB type check below.
 import 'dart:typed_data';
 
@@ -58,20 +59,70 @@ class CapturesDao {
     );
   }
 
-  /// Ends every session row left open by an earlier process (crash, kill,
-  /// or a failed attach that never registered), except [keepOpen]. Returns
-  /// how many were closed. Run once at startup, before anything attaches.
+  /// Records that this server process ([pid], default this one) captures into [sessionId].
+  void attachProcess(int sessionId, {int? pid}) {
+    _db.execute(
+      'INSERT OR REPLACE INTO session_attachments(session_id, pid, attached_at) '
+      'VALUES (?,?,?)',
+      [sessionId, pid ?? io.pid, DateTime.now().millisecondsSinceEpoch],
+    );
+  }
+
+  /// This process stops capturing into [sessionId]; the row ends only when no other live process still captures into it. Returns whether it ended.
+  bool leaveSession(int sessionId, {int? pid}) {
+    _db.execute(
+      'DELETE FROM session_attachments WHERE session_id=? AND pid=?',
+      [sessionId, pid ?? io.pid],
+    );
+    _pruneDeadAttachments(sessionId: sessionId);
+    final others = _db.select(
+      'SELECT COUNT(*) AS n FROM session_attachments WHERE session_id=?',
+      [sessionId],
+    ).first['n'] as int;
+    if (others > 0) return false;
+    endSession(sessionId);
+    return true;
+  }
+
+  /// Server processes other than this one still capturing into [sessionId].
+  int otherAttachedProcesses(int sessionId) {
+    _pruneDeadAttachments(sessionId: sessionId);
+    return _db.select(
+      'SELECT COUNT(*) AS n FROM session_attachments WHERE session_id=? AND pid<>?',
+      [sessionId, io.pid],
+    ).first['n'] as int;
+  }
+
+  void _pruneDeadAttachments({int? sessionId}) {
+    final rows = _db.select(
+      sessionId == null
+          ? 'SELECT DISTINCT pid FROM session_attachments'
+          : 'SELECT DISTINCT pid FROM session_attachments WHERE session_id=?',
+      [if (sessionId != null) sessionId],
+    );
+    for (final r in rows) {
+      final pid = r['pid'] as int;
+      if (!processAlive(pid)) {
+        _db.execute('DELETE FROM session_attachments WHERE pid=?', [pid]);
+      }
+    }
+  }
+
+  /// Ends session rows left open by processes that are gone (crash, kill, or a failed attach that never registered), except [keepOpen]; a row another live server process still captures into stays open. Returns how many were closed. Run once at startup, before anything attaches.
   int endOrphanedSessions({Set<int> keepOpen = const {}}) {
+    _pruneDeadAttachments();
     final placeholders = keepOpen.isEmpty ? '' : ' AND id NOT IN (${List.filled(keepOpen.length, '?').join(',')})';
+    const orphan = 'ended_at IS NULL AND id NOT IN '
+        '(SELECT session_id FROM session_attachments)';
     final now = DateTime.now().millisecondsSinceEpoch;
     final n = _db.select(
-      'SELECT COUNT(*) AS n FROM sessions WHERE ended_at IS NULL$placeholders',
+      'SELECT COUNT(*) AS n FROM sessions WHERE $orphan$placeholders',
       keepOpen.toList(),
     ).first['n'] as int;
     if (n == 0) return 0;
     _db.execute(
       "UPDATE sessions SET ended_at=?, note=COALESCE(note || ' ', '') || '[orphaned]' "
-      'WHERE ended_at IS NULL$placeholders',
+      'WHERE $orphan$placeholders',
       [now, ...keepOpen],
     );
     return n;
@@ -80,7 +131,8 @@ class CapturesDao {
   /// Repoints an existing session row at a new VM service URI / isolate after
   /// a hot-restart reattach (issue #16), so captures keep flowing into the
   /// same session id instead of starting a new row each restart.
-  void repointSession(
+  /// Returns the session id to keep capturing into: [id], or the open row another server process already created for [vmServiceUri], in which case this process leaves [id].
+  int repointSession(
     int id, {
     required String? vmServiceUri,
     required String? isolateId,
@@ -88,11 +140,23 @@ class CapturesDao {
     // ended_at=NULL: a full app relaunch closes the old VM socket, which
     // the RC4 death handler records as session end — a successful repoint
     // means the same logical session is live again.
-    _db.execute(
-      'UPDATE sessions SET vm_service_uri=?, isolate_id=?, ended_at=NULL '
-      'WHERE id=?',
-      [vmServiceUri, isolateId, id],
-    );
+    try {
+      _db.execute(
+        'UPDATE sessions SET vm_service_uri=?, isolate_id=?, ended_at=NULL '
+        'WHERE id=?',
+        [vmServiceUri, isolateId, id],
+      );
+      return id;
+    } on sql.SqliteException {
+      final other = _db.select(
+        'SELECT id FROM sessions WHERE vm_service_uri=? AND ended_at IS NULL '
+        'AND id<>? ORDER BY id LIMIT 1',
+        [vmServiceUri, id],
+      );
+      if (other.isEmpty) rethrow;
+      leaveSession(id);
+      return other.first['id'] as int;
+    }
   }
 
   List<Map<String, Object?>> listSessions({
@@ -457,7 +521,8 @@ class CapturesDao {
     return _rowToMap(rows.first);
   }
 
-  int insertLog({
+  /// The new row id, or null when another process already stored this record.
+  int? insertLog({
     required int sessionId,
     required int timestampMs,
     required String source,
@@ -467,12 +532,14 @@ class CapturesDao {
     String? error,
     String? stackTrace,
     String? isolateId,
+    String? dedupKey,
   }) {
+    // Every server process sharing the session receives the same record; the dedup key keeps one copy.
     _db.execute(
-      'INSERT INTO log_records(session_id, isolate_id, timestamp_ms, source, level, logger, message, error, stack_trace) VALUES (?,?,?,?,?,?,?,?,?)',
-      [sessionId, isolateId, timestampMs, source, level, logger, message, error, stackTrace],
+      'INSERT OR IGNORE INTO log_records(session_id, isolate_id, timestamp_ms, source, level, logger, message, error, stack_trace, dedup_key) VALUES (?,?,?,?,?,?,?,?,?,?)',
+      [sessionId, isolateId, timestampMs, source, level, logger, message, error, stackTrace, dedupKey],
     );
-    return _db.lastInsertRowId;
+    return _db.updatedRows == 0 ? null : _db.lastInsertRowId;
   }
 
   List<Map<String, Object?>> queryLogs({
@@ -1776,5 +1843,17 @@ class CapturesDao {
       }
     }
     return null;
+  }
+}
+
+/// Whether [pid] is running. True when that cannot be checked, so a session another process may still use is never ended on a guess.
+bool processAlive(int pid) {
+  if (pid == io.pid) return true;
+  try {
+    final r = io.Process.runSync('kill', ['-0', '$pid']);
+    if (r.exitCode == 0) return true;
+    return (r.stderr as String).contains('not permitted');
+  } on Object {
+    return true;
   }
 }

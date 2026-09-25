@@ -342,7 +342,7 @@ class SessionRegistry {
     unawaited(s.logStream.stop().catchError((_) {}));
     unawaited(s.nativeLog?.stop().catchError((_) {}) ?? Future<void>.value());
     try {
-      CapturesDao().endSession(s.id);
+      CapturesDao().leaveSession(s.id);
     } catch (_) {/* DB may be closing during shutdown */}
     unregister(s.vmServiceUri);
     _dead.insert(

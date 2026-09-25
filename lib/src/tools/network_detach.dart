@@ -141,6 +141,7 @@ FutureOr<CallToolResult> networkDetach(CallToolRequest request) async {
   }
 
   final detached = <Map<String, Object?>>[];
+  final stillShared = <int>{};
   int totalHttp = 0, totalLogs = 0, totalAlerts = 0;
   final dao = CapturesDao();
   for (final s in targets) {
@@ -157,13 +158,14 @@ FutureOr<CallToolResult> networkDetach(CallToolRequest request) async {
         logCount = (r.first['log_n'] as int?) ?? 0;
         alertCount = (r.first['alert_n'] as int?) ?? 0;
       }
-      if (!keep) dao.endSession(s.id);
+      if (!keep && !dao.leaveSession(s.id)) stillShared.add(s.id);
     } catch (_) {/* DB may be mid-state */}
     totalHttp += httpCount;
     totalLogs += logCount;
     totalAlerts += alertCount;
     detached.add({
       'sessionId': s.id,
+      if (stillShared.contains(s.id)) 'stillCapturedByOtherProcess': true,
       if (s.appName != null) 'appName': s.appName,
       'captured': {
         'http': httpCount,
@@ -196,7 +198,7 @@ FutureOr<CallToolResult> networkDetach(CallToolRequest request) async {
   final remaining = registry.attachedCount;
   final summary = targets.length == 1
       ? 'Detached from ${targets.single.appName ?? "app"}. '
-          'Session ${targets.single.id} ${keep ? "kept open (slot freed)" : "ended"} — captured $totalHttp http, '
+          'Session ${targets.single.id} ${keep ? "kept open (slot freed)" : stillShared.isNotEmpty ? "stays open: another server process is still capturing into it" : "ended"} — captured $totalHttp http, '
           '$totalLogs log(s), $totalAlerts alert(s). Queryable via '
           'session_open id:${targets.single.id}. '
           '${remaining == 0 ? "DTD disconnected." : "$remaining session(s) still attached."}'

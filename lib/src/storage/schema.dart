@@ -1,6 +1,6 @@
 /// Captures-DB schema version. Bump this AND add a migration block in the
 /// `_migrationFor` switch in `database.dart` whenever a table here changes.
-const int currentVersion = 12;
+const int currentVersion = 13;
 
 const List<String> initialSchema = [
   '''
@@ -84,6 +84,7 @@ const List<String> initialSchema = [
     message      TEXT,
     error        TEXT,
     stack_trace  TEXT,
+    dedup_key    TEXT,
     FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
   )
   ''',
@@ -149,6 +150,19 @@ const List<String> initialSchema = [
   'CREATE INDEX idx_logs_session_time ON log_records(session_id, timestamp_ms)',
   'CREATE INDEX idx_logs_level ON log_records(level)',
   'CREATE INDEX idx_logs_isolate ON log_records(session_id, isolate_id)',
+  'CREATE UNIQUE INDEX idx_logs_dedup ON log_records(session_id, dedup_key) '
+      'WHERE dedup_key IS NOT NULL',
+  '''
+  CREATE TABLE session_attachments (
+    session_id  INTEGER NOT NULL,
+    pid         INTEGER NOT NULL,
+    attached_at INTEGER NOT NULL,
+    PRIMARY KEY (session_id, pid),
+    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+  )
+  ''',
+  'CREATE UNIQUE INDEX idx_sessions_live_uri ON sessions(vm_service_uri) '
+      'WHERE vm_service_uri IS NOT NULL AND ended_at IS NULL',
   'CREATE INDEX idx_alerts_drained ON alerts(drained, severity, ts_ms)',
   '''
   CREATE TABLE redacted_headers (
@@ -376,4 +390,25 @@ const List<String> migrationV11toV12 = [
   "CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_live_uri "
       "ON sessions(vm_service_uri) "
       "WHERE vm_service_uri IS NOT NULL AND ended_at IS NULL",
+];
+
+/// v13 (#97 follow-up): several server processes share one session row, so a
+/// row ends only when its last live process leaves (session_attachments), and
+/// each log record is stored once however many processes receive it
+/// (dedup_key). Also builds the v12 live-URI index on databases that were
+/// created fresh at v12, whose initial schema lacked it.
+const List<String> migrationV12toV13 = [
+  '''
+  CREATE TABLE IF NOT EXISTS session_attachments (
+    session_id  INTEGER NOT NULL,
+    pid         INTEGER NOT NULL,
+    attached_at INTEGER NOT NULL,
+    PRIMARY KEY (session_id, pid),
+    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+  )
+  ''',
+  'ALTER TABLE log_records ADD COLUMN dedup_key TEXT',
+  'CREATE UNIQUE INDEX IF NOT EXISTS idx_logs_dedup '
+      'ON log_records(session_id, dedup_key) WHERE dedup_key IS NOT NULL',
+  ...migrationV11toV12,
 ];
