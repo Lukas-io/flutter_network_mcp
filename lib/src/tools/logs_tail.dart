@@ -64,8 +64,8 @@ final logsTailTool = Tool(
       ),
       'messageTruncateBytes': Schema.int(
         description:
-            'Cut each message at this many bytes (default 2048, cap 65536). '
-            'A cut record carries truncated:true and totalLength.',
+            'Cut each message at this many characters (default 2048, '
+            '64-65536). A cut record carries truncated:true and totalLength.',
       ),
     },
   ),
@@ -75,8 +75,11 @@ final logsTailTool = Tool(
 ({String message, bool truncated, int totalLength}) truncateMessage(
     String msg, int max) {
   final cut = msg.length > max;
+  var end = max;
+  // Never split an emoji or other astral character in half.
+  if (cut && end > 0 && msg.codeUnitAt(end - 1) & 0xFC00 == 0xD800) end--;
   return (
-    message: cut ? msg.substring(0, max) : msg,
+    message: cut ? msg.substring(0, end) : msg,
     truncated: cut,
     totalLength: msg.length,
   );
