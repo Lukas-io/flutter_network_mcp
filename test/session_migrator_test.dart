@@ -18,16 +18,16 @@ void main() {
 
   test('a session whose URI is still live is left alone', () {
     final plans = planMigrations(
-      attached: [sess(1, 'ws://a', app('sanga_mobile'))],
-      liveByUri: {'ws://a': app('sanga_mobile')},
+      attached: [sess(1, 'ws://a', app('eats_mobile'))],
+      liveByUri: {'ws://a': app('eats_mobile')},
     );
     expect(plans, isEmpty);
   });
 
   test('dead session with one same-identity live URI migrates', () {
     final plans = planMigrations(
-      attached: [sess(7, 'ws://old', app('sanga_mobile'))],
-      liveByUri: {'ws://new': app('sanga_mobile')},
+      attached: [sess(7, 'ws://old', app('eats_mobile'))],
+      liveByUri: {'ws://new': app('eats_mobile')},
     );
     expect(plans, hasLength(1));
     expect(plans.single.priorSessionId, 7);
@@ -37,18 +37,18 @@ void main() {
 
   test('dead session with no live replacement is not migrated', () {
     final plans = planMigrations(
-      attached: [sess(1, 'ws://old', app('sanga_mobile'))],
-      liveByUri: {'ws://other': app('aetrust')},
+      attached: [sess(1, 'ws://old', app('eats_mobile'))],
+      liveByUri: {'ws://other': app('acme_pay')},
     );
     expect(plans, isEmpty);
   });
 
   test('two same-identity candidates are ambiguous, so no migration', () {
     final plans = planMigrations(
-      attached: [sess(1, 'ws://old', app('sanga_mobile'))],
+      attached: [sess(1, 'ws://old', app('eats_mobile'))],
       liveByUri: {
-        'ws://new1': app('sanga_mobile'),
-        'ws://new2': app('sanga_mobile'),
+        'ws://new1': app('eats_mobile'),
+        'ws://new2': app('eats_mobile'),
       },
     );
     expect(plans, isEmpty);
@@ -58,10 +58,10 @@ void main() {
     final plans = planMigrations(
       // session 2 is alive at ws://new (same app on a second device-less run)
       attached: [
-        sess(1, 'ws://old', app('sanga_mobile')),
-        sess(2, 'ws://new', app('sanga_mobile')),
+        sess(1, 'ws://old', app('eats_mobile')),
+        sess(2, 'ws://new', app('eats_mobile')),
       ],
-      liveByUri: {'ws://new': app('sanga_mobile')},
+      liveByUri: {'ws://new': app('eats_mobile')},
     );
     // ws://new is the only same-identity live URI but it's already attached,
     // so session 1 has no free candidate.
@@ -70,8 +70,8 @@ void main() {
 
   test('different-identity live URIs never match', () {
     final plans = planMigrations(
-      attached: [sess(1, 'ws://old', app('sanga_mobile'))],
-      liveByUri: {'ws://new': app('sanga_mobile', device: 'Pixel 7')},
+      attached: [sess(1, 'ws://old', app('eats_mobile'))],
+      liveByUri: {'ws://new': app('eats_mobile', device: 'Pixel 7')},
     );
     expect(plans, isEmpty, reason: 'device differs, so identity differs');
   });
@@ -79,10 +79,10 @@ void main() {
   test('two dead sessions sharing one candidate: only the first claims it', () {
     final plans = planMigrations(
       attached: [
-        sess(1, 'ws://old1', app('sanga_mobile')),
-        sess(2, 'ws://old2', app('sanga_mobile')),
+        sess(1, 'ws://old1', app('eats_mobile')),
+        sess(2, 'ws://old2', app('eats_mobile')),
       ],
-      liveByUri: {'ws://new': app('sanga_mobile')},
+      liveByUri: {'ws://new': app('eats_mobile')},
     );
     expect(plans, hasLength(1));
     expect(plans.single.priorSessionId, 1);
@@ -92,7 +92,7 @@ void main() {
   test('null / unparseable identity is skipped', () {
     final plans = planMigrations(
       attached: [sess(1, 'ws://old', null), sess(2, 'ws://old2', '')],
-      liveByUri: {'ws://new': app('sanga_mobile')},
+      liveByUri: {'ws://new': app('eats_mobile')},
     );
     expect(plans, isEmpty);
   });
@@ -100,12 +100,12 @@ void main() {
   test('independent apps migrate independently in one pass', () {
     final plans = planMigrations(
       attached: [
-        sess(1, 'ws://a-old', app('sanga_mobile')),
-        sess(2, 'ws://b-old', app('aetrust')),
+        sess(1, 'ws://a-old', app('eats_mobile')),
+        sess(2, 'ws://b-old', app('acme_pay')),
       ],
       liveByUri: {
-        'ws://a-new': app('sanga_mobile'),
-        'ws://b-new': app('aetrust'),
+        'ws://a-new': app('eats_mobile'),
+        'ws://b-new': app('acme_pay'),
       },
     );
     expect(plans, hasLength(2));

@@ -310,7 +310,7 @@ FutureOr<CallToolResult> networkStatus(
   // 0.7.3: session continuation. When nothing is currently attached, look
   // at the last-session.json record from a prior MCP-host run and surface
   // it as a `continuation` block so the agent can offer "you were on
-  // sanga_mobile 47 min ago — reattach?" — zero user friction across
+  // eats_mobile 47 min ago — reattach?" — zero user friction across
   // Claude Code reloads / machine reboots.
   if (registry.attachedCount == 0) {
     final cont = SessionContinuation.read();

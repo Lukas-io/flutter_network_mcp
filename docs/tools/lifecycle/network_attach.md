@@ -54,7 +54,7 @@ Success:
 ```json
 {
   "attached": true,
-  "summary": "Attached to sanga_mobile, capturing HTTP+sockets+logs into session 14.",
+  "summary": "Attached to eats_mobile, capturing HTTP+sockets+logs into session 14.",
   "scope": {"sessionId": 14, "appName": "...", "isLive": true},
   "appName": "...",
   "vmServiceUri": "http://127.0.0.1:54450/abc=/",
@@ -79,9 +79,9 @@ Already attached (success, nothing new started):
 {
   "attached": true,
   "alreadyAttached": true,
-  "summary": "Already attached to sanga_mobile in session 14; reusing it, nothing new was started.",
-  "scope": {"sessionId": 14, "appName": "sanga_mobile", "isLive": true},
-  "appName": "sanga_mobile",
+  "summary": "Already attached to eats_mobile in session 14; reusing it, nothing new was started.",
+  "scope": {"sessionId": 14, "appName": "eats_mobile", "isLive": true},
+  "appName": "eats_mobile",
   "vmServiceUri": "http://127.0.0.1:54450/abc=/",
   "liveSessionId": 14,
   "attachedCount": 1,
@@ -103,7 +103,7 @@ Errors carry `error`, `errorKind` and `nextSteps`. Answers that retrying cannot 
 Error (several matching apps):
 ```json
 {
-  "error": "Multiple apps across DTDs match \"sanga\"; pass a more specific substring or an explicit `vmServiceUri`.",
+  "error": "Multiple apps across DTDs match \"eats\"; pass a more specific substring or an explicit `vmServiceUri`.",
   "errorKind": "bad_argument",
   "retryable": false,
   "apps": [{"name":"...", "uri":"ws://...", "dtdUri":"ws://..."}],
@@ -148,7 +148,7 @@ Other errors: no app name matches (`apps` lists what is visible), the DTD has no
 Single-app happy path:
 ```
 > network_status
-< {attachedCount:0, knownApps:[{name:"sanga_mobile", uri:"ws://..."}]}
+< {attachedCount:0, knownApps:[{name:"eats_mobile", uri:"ws://..."}]}
 > network_attach
 < {attached:true, liveSessionId:14}
 ```

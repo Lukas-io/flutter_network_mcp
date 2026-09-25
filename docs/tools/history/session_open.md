@@ -31,14 +31,14 @@ The summary labels the session `live` (this server process is attached), `live, 
 
 ```json
 {
-  "summary": "Viewing session 13 (sanga_mobile, ended) ...",
+  "summary": "Viewing session 13 (eats_mobile, ended) ...",
   "viewedSessionId": 13,
-  "appName": "sanga_mobile",
+  "appName": "eats_mobile",
   "startedMs": ...,
   "endedMs": ...,
   "isLive": false,
   "isEnded": true,
-  "projectPath": "/Users/me/sanga_mobile",
+  "projectPath": "/Users/me/eats_mobile",
   "note": "auth bug",
   "nextSteps": [
     "network_list — list the http requests in this session",

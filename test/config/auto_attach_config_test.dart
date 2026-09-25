@@ -69,14 +69,14 @@ void main() {
 
     test('round-trip allowed + denied via write + load', () {
       AutoAttachConfig.set(
-        allowed: ['sanga_mobile', 'sanga_driver'],
+        allowed: ['eats_mobile', 'eats_driver'],
         denied: ['iPhone 7'],
       );
       expect(AutoAttachConfig.writeToFile(), isTrue);
       // Reset in-memory state.
       AutoAttachConfig.set(allowed: const [], denied: const []);
       final loaded = AutoAttachConfig.loadFromFile();
-      expect(loaded.allowed, ['sanga_mobile', 'sanga_driver']);
+      expect(loaded.allowed, ['eats_mobile', 'eats_driver']);
       expect(loaded.denied, ['iPhone 7']);
     });
 

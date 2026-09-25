@@ -42,9 +42,9 @@ Resolves one session (explicit `sessionId`, then `appNameContains`, then the `se
 
 ```json
 {
-  "scope": {"sessionId": 14, "appName": "sanga_mobile", "isLive": true},
+  "scope": {"sessionId": 14, "appName": "eats_mobile", "isLive": true},
   "sessionId": 14,
-  "summary": "Drained 5 alert(s) session 14 (sanga_mobile): 1 critical, 2 error, 2 warning.",
+  "summary": "Drained 5 alert(s) session 14 (eats_mobile): 1 critical, 2 error, 2 warning.",
   "count": 5,
   "breakdown": {"critical":1, "error":2, "warning":2},
   "nextSteps": [
@@ -68,7 +68,7 @@ Resolves one session (explicit `sessionId`, then `appNameContains`, then the `se
         {
           "sessionId": 9,
           "startedAtMs": 1780200000000,
-          "appName": "sanga_mobile",
+          "appName": "eats_mobile",
           "note": "fixed by adding Expanded — lib/view/widgets/cart.dart"
         }
       ],

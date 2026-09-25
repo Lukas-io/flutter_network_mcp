@@ -15,7 +15,7 @@ when_to_use: When a single logical operation spans 2+ apps (mobile → webhook �
 ## Use this when
 
 - "Find the webhook flow for transaction abc-123": `network_correlate sessionIds:[14,15] pattern:"abc-123"` returns the originator (mobile session 14) + the receiver (driver session 15) paired by body substring.
-- "Did sanga_driver receive the webhook sanga_mobile sent at 14:32?": `pattern:"/handlers/webhook/order" timeWindowMs:5000` returns pairs within 5 seconds of each other.
+- "Did eats_driver receive the webhook eats_mobile sent at 14:32?": `pattern:"/handlers/webhook/order" timeWindowMs:5000` returns pairs within 5 seconds of each other.
 - "Which requests in session A contain an error id that also appears in session B's response?": `which:"any"` searches both URL + bodies for the pattern.
 
 ## How it works
@@ -53,7 +53,7 @@ With body decryption on (`session_configure bodyDecryption:{...}`), step 2 searc
   "sessions": [
     {
       "sessionId": 14,
-      "appName": "sanga_mobile",
+      "appName": "eats_mobile",
       "matchesTotal": 3,
       "matchesShown": 3,
       "matches": [
@@ -61,18 +61,18 @@ With body decryption on (`session_configure bodyDecryption:{...}`), step 2 searc
          "statusCode": 200, "startTimeMs": 1700000000000}
       ]
     },
-    {"sessionId": 15, "appName": "sanga_driver", "matchesTotal": 3, "matchesShown": 3, "matches": [...]}
+    {"sessionId": 15, "appName": "eats_driver", "matchesTotal": 3, "matchesShown": 3, "matches": [...]}
   ],
   "pairs": [
     {
       "match": "txn-abc-123",
       "spanMs": 412,
       "requests": [
-        {"sessionId": 14, "appName": "sanga_mobile", "id": "req-1",
+        {"sessionId": 14, "appName": "eats_mobile", "id": "req-1",
          "isolateId": "isolates/1", "method": "POST", "url": "...",
          "statusCode": 200, "startTimeMs": 1700000000000,
          "snippet": "...«txn-abc-123»..."},
-        {"sessionId": 15, "appName": "sanga_driver", "id": "req-2", ...}
+        {"sessionId": 15, "appName": "eats_driver", "id": "req-2", ...}
       ]
     }
   ],

@@ -31,8 +31,8 @@ Resolves the target session like `network_clear` (`sessionId`, else `appNameCont
 ```json
 {
   "cleared": true,
-  "scope": {"sessionId": 14, "appName": "sanga_mobile", "isLive": true},
-  "summary": "Live VM socket profile cleared for session 14 (sanga_mobile): 1 of 1 isolate(s). Persistent DB is untouched (socket_events rows remain queryable).",
+  "scope": {"sessionId": 14, "appName": "eats_mobile", "isLive": true},
+  "summary": "Live VM socket profile cleared for session 14 (eats_mobile): 1 of 1 isolate(s). Persistent DB is untouched (socket_events rows remain queryable).",
   "liveSessionId": 14,
   "clearedIsolates": ["isolates/1234"],
   "warnings": ["The persistent DB is NOT cleared. Use session_delete for DB-side removal."],

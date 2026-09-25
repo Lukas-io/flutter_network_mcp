@@ -14,7 +14,7 @@ import 'package:path/path.dart' as p;
 ///   "epoch": 1780462678169,
 ///   "pid": 77534,
 ///   "dartVersion": "3.12.0 (stable) ...",
-///   "workspaceRoot": "/Users/lukasio/StudioProjects/sanga_mobile",
+///   "workspaceRoot": "/Users/lukasio/StudioProjects/eats_mobile",
 ///   "ideName": "Android Studio"
 /// }
 /// ```

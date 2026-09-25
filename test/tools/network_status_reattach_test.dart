@@ -18,7 +18,7 @@ void main() {
   }) =>
       AttachedSession(
         id: 5,
-        appName: 'Flutter - Device: iPhone 17 - Package: sanga_mobile',
+        appName: 'Flutter - Device: iPhone 17 - Package: eats_mobile',
         vmServiceUri: 'ws://new',
         isolateId: 'isolates/1',
         vm: VmClient(),

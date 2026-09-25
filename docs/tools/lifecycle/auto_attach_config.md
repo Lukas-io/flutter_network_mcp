@@ -23,7 +23,7 @@ The file lives at `<data-dir>/auto-attach.json`:
 
 ```jsonc
 {
-  "allowed": ["sanga_mobile", "sanga_driver"],
+  "allowed": ["eats_mobile", "eats_driver"],
   "denied": ["iPhone 7"],
   "logBufferSize": 8000,
   "nativeLogs": true,
@@ -57,7 +57,7 @@ This closes the `claude mcp remove + claude mcp add --auto-attach=...` friction 
 ```jsonc
 {
   "enabled": true,
-  "allowed": ["sanga_mobile"],
+  "allowed": ["eats_mobile"],
   "denied": [],
   "logBufferSize": 8000,
   "nativeLogs": true,
@@ -70,14 +70,14 @@ This closes the `claude mcp remove + claude mcp add --auto-attach=...` friction 
 ```jsonc
 {
   "action": "add",
-  "app": "sanga_mobile",
+  "app": "eats_mobile",
   "alreadyPresent": false,
-  "allowed": ["sanga_mobile"],
+  "allowed": ["eats_mobile"],
   "denied": [],
   "persisted": true,
   "filePath": "/Users/me/.../auto-attach.json",
   "nextSteps": [
-    "Tell the user: \"sanga_mobile\" added to auto-attach. Effective on next MCP-host restart unless an env var or CLI flag overrides.",
+    "Tell the user: \"eats_mobile\" added to auto-attach. Effective on next MCP-host restart unless an env var or CLI flag overrides.",
     "auto_attach_config action:\"list\" — verify current state"
   ]
 }
@@ -112,12 +112,12 @@ This closes the `claude mcp remove + claude mcp add --auto-attach=...` friction 
 ```
 > network_attach
 < {attached:true, autoAttachSuggestion:{
-    appName:"Flutter - iPhone 17 - Package: sanga_mobile",
-    pattern:"sanga_mobile",
+    appName:"Flutter - iPhone 17 - Package: eats_mobile",
+    pattern:"eats_mobile",
     agentAction:"ASK THE USER..."}}
-> # agent to user: "Would you like flutter_network_mcp to auto-attach to sanga_mobile on future launches?"
+> # agent to user: "Would you like flutter_network_mcp to auto-attach to eats_mobile on future launches?"
 > # user: "yes"
-> auto_attach_config action:"add" app:"sanga_mobile"
-< {persisted:true, allowed:["sanga_mobile"]}
-> # agent: "Done. sanga_mobile will auto-attach next time you launch the MCP."
+> auto_attach_config action:"add" app:"eats_mobile"
+< {persisted:true, allowed:["eats_mobile"]}
+> # agent: "Done. eats_mobile will auto-attach next time you launch the MCP."
 ```

@@ -17,7 +17,7 @@ void main() {
       CapturesDatabase.open(dataDir: dir.path);
       dao = CapturesDao();
       // Three apps, ONE shared working directory (the #27 scenario).
-      for (final app in ['sangaeats', 'aetrust', 'sanga_driver']) {
+      for (final app in ['eatsapp', 'acme_pay', 'eats_driver']) {
         dao.createSession(
           appName: app,
           vmServiceUri: 'ws://$app/ws',
@@ -38,24 +38,24 @@ void main() {
     });
 
     test('appNameContains scopes to the matching app (case-insensitive)', () {
-      final rows = dao.listSessions(appNameContains: 'AETRUST');
-      expect(rows.map((r) => r['app_name']), ['aetrust']);
+      final rows = dao.listSessions(appNameContains: 'ACME_PAY');
+      expect(rows.map((r) => r['app_name']), ['acme_pay']);
     });
 
     test('appNameContains is a substring match', () {
-      final rows = dao.listSessions(appNameContains: 'sanga');
+      final rows = dao.listSessions(appNameContains: 'eats');
       expect(
         rows.map((r) => r['app_name']).toSet(),
-        {'sangaeats', 'sanga_driver'},
+        {'eatsapp', 'eats_driver'},
       );
     });
 
     test('appNameContains + projectPath combine (AND)', () {
       final rows = dao.listSessions(
-        appNameContains: 'aetrust',
+        appNameContains: 'acme_pay',
         projectPath: '/Users/x/StudioProjects',
       );
-      expect(rows.single['app_name'], 'aetrust');
+      expect(rows.single['app_name'], 'acme_pay');
     });
 
     test('no match returns empty', () {

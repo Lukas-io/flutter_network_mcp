@@ -144,7 +144,7 @@ Future<void> _runMain(List<String> args) async {
           'comma-separated allowlist of case-insensitive substring '
           'patterns matched against the app name from DTD; only matching '
           'apps are auto-attached. Example: '
-          '--auto-attach=sanga_mobile,sanga_driver. There is NO bool '
+          '--auto-attach=eats_mobile,eats_driver. There is NO bool '
           'form — to enable auto-attach you MUST specify which apps. '
           'Absent or empty value disables. Apps already running at '
           'startup that match the allowlist ARE auto-attached on the '
@@ -165,7 +165,7 @@ Future<void> _runMain(List<String> args) async {
           '--auto-attach. Useful for excluding specific devices like '
           'physical hardware or emulators when the allowlist would '
           'otherwise grab them. Example: '
-          '--auto-attach=sanga_mobile --auto-attach-deny="Pixel 7,Android emulator". '
+          '--auto-attach=eats_mobile --auto-attach-deny="Pixel 7,Android emulator". '
           'Env-var fallback: FLUTTER_NETWORK_MCP_AUTO_ATTACH_DENY=pat1,pat2.',
     )
     ..addFlag('help', abbr: 'h', negatable: false);

@@ -38,7 +38,7 @@ Log messages are cut at 512 characters, never inside an emoji or other surrogate
 
 ```jsonc
 {
-  "scope": { "sessionId": 14, "appName": "sanga_mobile", "isLive": true },
+  "scope": { "sessionId": 14, "appName": "eats_mobile", "isLive": true },
   "sessionId": 14,
   "summary": "2 log(s) + 1 request(s) within +/-1000ms of 1780462000000. Nearest: GET https://api/x (+45ms).",
   "anchorMs": 1780462000000,

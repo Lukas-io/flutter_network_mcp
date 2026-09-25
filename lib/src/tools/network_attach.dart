@@ -644,7 +644,7 @@ Future<Map<String, Object?>> _performAttachLocked({
     );
 
     // 0.7.3: persist the current attachment set so a future Claude Code
-    // reload can surface "you were on sanga_mobile 47 min ago — reattach?"
+    // reload can surface "you were on eats_mobile 47 min ago — reattach?"
     SessionContinuation.record(registry.attached.values);
 
     // 0.7.3: lazily start the anomaly detector now that we have at least
@@ -844,8 +844,8 @@ Map<String, Object?>? _buildAutoAttachSuggestion(String? appName) {
   if (AutoAttachConfig.matchesAllowlist(appName)) return null;
 
   // Pull a stable, recognizable token from the full DTD name. DTD app
-  // names look like "Flutter - iPhone 17 - Package: sanga_mobile"; the
-  // user's allowlist convention is the package name ("sanga_mobile"),
+  // names look like "Flutter - iPhone 17 - Package: eats_mobile"; the
+  // user's allowlist convention is the package name ("eats_mobile"),
   // not the whole string.
   final pattern = _extractPattern(appName);
 
@@ -886,10 +886,10 @@ Map<String, Object?>? _buildAutoAttachSuggestion(String? appName) {
 /// Extracts a stable allowlist token from a DTD app name.
 ///
 /// DTD app names typically look like:
-///   "Flutter - iPhone 17 - Package: sanga_mobile"
-///   "Flutter - macOS - Package: sanga_driver"
+///   "Flutter - iPhone 17 - Package: eats_mobile"
+///   "Flutter - macOS - Package: eats_driver"
 ///
-/// We want the user's allowlist to be `sanga_mobile`, not the whole
+/// We want the user's allowlist to be `eats_mobile`, not the whole
 /// string (which embeds device + form factor noise that breaks the
 /// substring match when the device changes). Strategy: take everything
 /// after "Package: " when present; otherwise fall back to the full name.

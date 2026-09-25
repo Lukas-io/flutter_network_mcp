@@ -46,8 +46,8 @@ Success: the full `network_attach` reply (see [`network_attach`](network_attach.
 ```json
 {
   "attached": true,
-  "summary": "Attached to sanga_mobile, capturing HTTP+sockets+logs into session 14.",
-  "scope": {"sessionId": 14, "appName": "sanga_mobile", "isLive": true},
+  "summary": "Attached to eats_mobile, capturing HTTP+sockets+logs into session 14.",
+  "scope": {"sessionId": 14, "appName": "eats_mobile", "isLive": true},
   "liveSessionId": 14,
   "waitedMs": 7420,
   "polls": 8,
@@ -60,7 +60,7 @@ Already attached (success):
 {
   "attached": true,
   "alreadyAttached": true,
-  "summary": "Already attached to sanga_mobile in session 14; reusing it, nothing new was started.",
+  "summary": "Already attached to eats_mobile in session 14; reusing it, nothing new was started.",
   "liveSessionId": 14,
   "waitedMs": 30,
   "polls": 1
@@ -86,11 +86,11 @@ With `appNameContains` matching several apps, the error is the attach's "Multipl
 Error (timeout):
 ```json
 {
-  "error": "No app attached within 30000ms (polled 30 time(s)). Waited for a name containing \"sanga\".",
+  "error": "No app attached within 30000ms (polled 30 time(s)). Waited for a name containing \"eats\".",
   "errorKind": "timeout",
   "waitedMs": 30012,
   "polls": 30,
-  "lastAttempt": "No app name contains \"sanga\" on any running DTD. Visible apps: ...",
+  "lastAttempt": "No app name contains \"eats\" on any running DTD. Visible apps: ...",
   "nextSteps": ["launch the app, or check it is not crashing on start",
                 "network_status ..."]
 }
@@ -108,7 +108,7 @@ Without `appNameContains`, the timeout `nextSteps` also suggest passing it when 
 
 App still building:
 ```
-> network_wait_for_app appNameContains:"sanga_mobile" timeoutMs:120000
+> network_wait_for_app appNameContains:"eats_mobile" timeoutMs:120000
 < {attached:true, liveSessionId:14, waitedMs:41200, polls:42}
 ```
 
