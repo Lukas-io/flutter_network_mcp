@@ -240,6 +240,10 @@ Future<void> _runMain(List<String> args) async {
     );
     io.exitCode = 73; // EX_CANTCREAT
     return;
+  } on NewerDatabaseError catch (e) {
+    io.stderr.writeln('flutter_network_mcp: $e');
+    io.exitCode = 78; // EX_CONFIG
+    return;
   } on StateError catch (e) {
     // Thrown by CapturesDatabase.open() when every candidate failed.
     io.stderr.writeln('flutter_network_mcp: ${e.message}');

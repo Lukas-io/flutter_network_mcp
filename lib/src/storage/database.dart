@@ -58,7 +58,12 @@ class CapturesDatabase {
         db.execute('PRAGMA busy_timeout = 5000');
         db.execute('PRAGMA foreign_keys = ON');
         _enableWal(db);
-        _migrate(db);
+        try {
+          _migrate(db);
+        } on NewerDatabaseError {
+          db.dispose();
+          rethrow;
+        }
 
         if (dataDir == null && dir != candidates.first) {
           stderr.writeln(
@@ -112,7 +117,11 @@ class CapturesDatabase {
         final version = row.isEmpty
             ? 0
             : int.tryParse(row.first['value'] as String? ?? '0') ?? 0;
-        if (version >= currentVersion) {
+        if (version > currentVersion) {
+          db.execute('ROLLBACK');
+          throw NewerDatabaseError(found: version, supported: currentVersion);
+        }
+        if (version == currentVersion) {
           db.execute('COMMIT');
           return;
         }
@@ -125,6 +134,8 @@ class CapturesDatabase {
           "INSERT OR REPLACE INTO _meta(key,value) VALUES ('schema_version','$next')",
         );
         db.execute('COMMIT');
+      } on NewerDatabaseError {
+        rethrow;
       } catch (e) {
         db.execute('ROLLBACK');
         rethrow;
@@ -250,4 +261,19 @@ class CapturesDatabase {
       );
     }
   }
+}
+
+/// The capture database was written by a newer build; an older build must not write to it, or it would corrupt rows the newer code relies on.
+class NewerDatabaseError implements Exception {
+  NewerDatabaseError({required this.found, required this.supported});
+
+  final int found;
+  final int supported;
+
+  @override
+  String toString() =>
+      'the capture database is at schema v$found, newer than this build '
+      'supports (v$supported). A newer flutter_network_mcp wrote it. Update '
+      'this install the way you installed it, or pass --data-dir <other dir> '
+      'to use a separate database.';
 }
