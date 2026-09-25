@@ -25,7 +25,7 @@ The detector runs on each persisted `logging`, `stdout` and `stderr` record with
 
 `regex` compiles with `multiLine:true` and is case-sensitive (no case flag is set). A leading `(?i)` is rejected as an invalid regex; use a character class such as `[Oo]rder[Ss]ervice` instead. `label` becomes the alert title; if omitted, the first line of the message is used (cut at 160 chars). The alert `detail` is the message, cut at 2048 chars. `kind` is your free-text label that shows in `alerts_drain.alerts[].kind`, and it feeds the dedup signature together with the title.
 
-`severity` is checked case-insensitively but stored exactly as given. Pass it in lowercase: `alerts_drain` / `alerts_peek` / `alerts_clear` `severityMin` filters only rank lowercase values, so an alert stored as `"ERROR"` never passes a `severityMin` filter.
+`severity` is checked case-insensitively and stored lowercase (`"ERROR"` is stored and reported as `"error"`), so its alerts pass `alerts_drain` / `alerts_peek` / `alerts_clear` `severityMin` filters. Patterns stored in another case by an older version still fire and filter correctly.
 
 Patterns are loaded from the DB on server start, so they survive restarts. The tool exists only when the `alerts` capability is enabled.
 

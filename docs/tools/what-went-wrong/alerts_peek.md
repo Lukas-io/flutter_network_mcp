@@ -28,7 +28,7 @@ Same as `alerts_drain` (`sessionId`, `appNameContains`, `severityMin`, `limit`) 
 
 Identical shape to `alerts_drain` (see that doc), with the summary starting `Peeked at N alert(s)`. `count` and the summary cover only the rows returned (at most `limit`), not everything pending; `network_status.alerts.pendingTotal` gives the DB-wide pending count.
 
-Errors match `alerts_drain`: scope errors carry `nextSteps` but currently no `errorKind`; an unknown `severityMin` or a DB failure returns `errorKind: "internal"` (`alerts_peek failed: ...`).
+Errors match `alerts_drain`: scope errors return `no_session` or `bad_argument` with `nextSteps`; an unknown `severityMin` returns `errorKind: "bad_argument"` naming the valid values; a DB failure returns `errorKind: "internal"` (`alerts_peek failed: ...`).
 
 ## Pairs well with
 

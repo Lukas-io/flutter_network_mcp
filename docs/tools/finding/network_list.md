@@ -95,8 +95,9 @@ Empty reads say why: `No HTTP captured yet in ...` (nothing ever), `No NEW HTTP 
 Error shapes:
 
 ```json
-// Nothing attached and no session opened (no errorKind field)
+// Nothing attached and no session opened
 {"error":"Not attached and no session opened for viewing. Call network_attach to capture live, or session_open id:<N> to read from a historical session, or pass sessionId:<N> directly.",
+ "errorKind":"no_session",
  "nextSteps":["network_status ...", "network_attach ...", "session_list ..."]}
 
 // Live read failed and the DB fallback failed too

@@ -27,7 +27,7 @@ Reads in-process state. If `connectDtd:true` (default) and DTD isn't already con
 
 **Multi-DTD enumeration (0.6.2+).** `knownApps` lists apps across EVERY live DTD on the local machine, not just the one the primary connection is on. Each `flutter run` spawns its own DTD; this tool probes every discovered DTD via transient `DtdClient` connections (parallel, 1.5s per-probe timeout, 30s cache) so a user with three `flutter run`s in three terminals sees three apps. Each entry carries a `dtdUri` + `workspaceRoot` naming the source DTD — the agent can pass `dtdUri:"<that one>"` to `network_attach` to switch DTDs explicitly, though passing `vmServiceUri:` directly bypasses DTD entirely. Per-DTD probe errors surface under `dtdProbeErrors`.
 
-When `attachIfOne:true` AND `attachedCount == 0` AND `knownApps.length == 1` AND a default DTD URI is configured, the call additionally runs the attach flow (same as `network_attach` with no args, which attaches through the default DTD). The attach result, success or error, is returned under `autoAttached`. On success the top-level `attached` list and `attachedCount` are refreshed in the same response, and an open `session_open` view is closed with a warning.
+When `attachIfOne:true` AND `attachedCount == 0` AND `knownApps.length == 1` AND a default DTD URI is configured, the call additionally runs the attach flow (same as `network_attach` with no args, which attaches through the default DTD). The attach result, success or error, is returned under `autoAttached` (an error carries the attach's `error`, `errorKind` and `nextSteps`). On success the top-level `attached` list and `attachedCount` are refreshed in the same response, and an open `session_open` view is closed with a warning.
 
 ## Args
 

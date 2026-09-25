@@ -88,7 +88,7 @@ NOT supported: filter predicates `[?(@.x=='y')]`, slices, recursive descent `..`
 
 The grep reply has no `nextSteps` entry when nothing matched.
 
-Errors: `bad_argument` (missing `id`, bad `which`, neither or both of `grep` / `jsonPath`, invalid regex, body over the 16 MB grep cap, non-JSON body in jsonPath mode, malformed path), `not_found` / `unresponsive_vm` (same body-fetch failures as `network_body`), `internal` (unexpected failure). Scope failures return `error` + `nextSteps` without an `errorKind`.
+Errors: `bad_argument` (missing `id`, bad `which`, neither or both of `grep` / `jsonPath`, invalid regex, body over the 16 MB grep cap, non-JSON body in jsonPath mode, malformed path), `not_found` / `unresponsive_vm` (same body-fetch failures as `network_body`), `internal` (unexpected failure). Scope failures return `no_session` (nothing attached or opened, or no attached session matches `appNameContains`) or `bad_argument` (several attached sessions match), with `nextSteps`.
 
 The recon -> drill ladder for one big body: `network_body_outline` (find the branch) -> `network_body_query` (extract it) -> `network_body` (raw bytes if you still need them).
 

@@ -69,7 +69,7 @@ Body decryption: when `session_configure bodyDecryption:{...}` is on, each respo
 
 The `nextSteps` wording above is shortened. There is no `scope` block.
 
-Errors: `internal` (the DB query failed). Scope failures return `error` + `nextSteps` without an `errorKind`.
+Errors: `internal` (the DB query failed). Scope failures return `no_session` (nothing attached or opened, or no attached session matches `appNameContains`) or `bad_argument` (several attached sessions match), with `nextSteps`.
 
 ## Pairs well with
 

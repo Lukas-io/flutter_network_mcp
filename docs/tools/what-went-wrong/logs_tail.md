@@ -28,7 +28,9 @@ Messages are stored whole. The VM sends each `developer.log` / `package:logging`
 
 Each returned `message` is cut at `messageTruncateBytes` characters (default 2048). A cut record carries `truncated:true` and `totalLength` (the full length in characters), and a warning counts the cut records. A cut never splits an emoji or other astral character. `error` and `stackTrace` are returned uncut.
 
-Filters you omit fall back to the sticky defaults from `session_configure` (`levelMin`, `loggerContains`, `messageContains`, `source`). Severe records (`level ≥ 1200`) are counted into `severeCount` when > 0.
+Filters you omit fall back to the sticky defaults from `session_configure` (`levelMin`, `loggerContains`, `messageContains`, `source`). Severe records (`level ≥ 1200`) in the returned page are counted into `severeCount` when > 0.
+
+`maxTokens` (or the sticky `maxResponseTokens`) trims `entries` to fit an estimated token budget (JSON length / 4), keeping the newest records and always at least one, and reports `budget:{maxTokens, dropped}` with a warning. `nextCursor` is still the newest id, so `since:<nextCursor>` pages forward past the dropped older records: raise `maxTokens` or narrow the filters to read them.
 
 ## Args
 
@@ -42,6 +44,7 @@ Filters you omit fall back to the sticky defaults from `session_configure` (`lev
 - `isolateId` (string, optional): restrict to one isolate (id from `network_status`). Omit to merge all isolates.
 - `limit` (int, default 100, hard cap 500).
 - `messageTruncateBytes` (int, default 2048): cut each message at this many characters. Clamped to 64 to 65536.
+- `maxTokens` (int, optional): token budget for this reply; overrides the sticky `maxResponseTokens`. A non-positive value means no budget.
 
 ## Returns
 
@@ -74,9 +77,10 @@ Filters you omit fall back to the sticky defaults from `session_configure` (`lev
 History replies have `"source":"history"` and no `bufferSize` / `bufferCapacity` / `streamActive`.
 Per-entry null fields (isolateId, level, loggerName, error, stackTrace) are omitted.
 Live only: `droppedSinceLastRead` (records that rotated out of the buffer since the previous read, with a warning).
-`warnings` surfaces: messages cut at `messageTruncateBytes`, records rotated out since the last read, the app running before the attach (records from then were never captured), log stream not subscribed, buffer near capacity (80%+), no matches under the current filters.
+`budget: {maxTokens, dropped}` appears when a token budget applied.
+`warnings` surfaces: messages cut at `messageTruncateBytes`, records trimmed to fit the token budget, records rotated out since the last read, the app running before the attach (records from then were never captured), log stream not subscribed, buffer near capacity (80%+), no matches under the current filters.
 
-Errors: a failed history query returns `errorKind: internal`. Scope errors (nothing attached and no session open, or an `appNameContains` that matches no attached session or several) come from the shared scope resolver with `nextSteps` and no `errorKind`.
+Errors: a failed history query returns `errorKind: internal`. Scope errors come from the shared scope resolver with `nextSteps`: `no_session` (nothing attached and no session open, or an `appNameContains` that matches no attached session) or `bad_argument` (it matches several).
 
 ## Pairs well with
 

@@ -3,6 +3,7 @@ import 'dart:io' as io;
 import 'package:dart_mcp/server.dart';
 
 import '../state/session.dart';
+import '../tools/error_kind.dart';
 import '../tools/network_attach.dart' show appSessionIdentity;
 import '../tools/result.dart';
 
@@ -148,6 +149,7 @@ String deadSessionNote(SessionRegistry reg, DeadSession d) {
         null,
         errorResult(
           'No attached session whose app name contains "$appNameContains".',
+          kind: ErrorKind.noSession,
           extra: {
             'attached': _attachedSummary(reg),
             'nextSteps': [
@@ -165,6 +167,7 @@ String deadSessionNote(SessionRegistry reg, DeadSession d) {
         errorResult(
           'Multiple attached sessions match "$appNameContains" '
           '(${matches.length}).',
+          kind: ErrorKind.badArgument,
           extra: {
             'matches': [
               for (final m in matches)
@@ -258,6 +261,7 @@ String deadSessionNote(SessionRegistry reg, DeadSession d) {
             : 'Not attached and no session opened for viewing. Call '
                 'network_attach to capture live, or session_open id:<N> to read '
                 'from a historical session, or pass sessionId:<N> directly.',
+        kind: ErrorKind.noSession,
         extra: {
           'nextSteps': [
             if (died != null)
@@ -276,6 +280,7 @@ String deadSessionNote(SessionRegistry reg, DeadSession d) {
     errorResult(
       'Ambiguous scope: ${reg.attachedCount} sessions attached. '
       'Pass sessionId:<N> or appNameContains:<substring>.',
+      kind: ErrorKind.badArgument,
       extra: {
         'attached': _attachedSummary(reg),
         'nextSteps': [

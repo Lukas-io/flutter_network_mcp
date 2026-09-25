@@ -50,4 +50,22 @@ void main() {
     expect(res.isError, isTrue);
     expect(res.structuredContent!['errorKind'], 'bad_query');
   });
+
+  test('every column the tool description names exists in the schema',
+      () async {
+    final desc = networkQueryTool.description!;
+    final named = RegExp(r'(\w+)\(([\w, ]+)\)').allMatches(desc).toList();
+    expect(named, isNotEmpty);
+    for (final m in named) {
+      final table = m.group(1)!;
+      final columns = CapturesDatabase.instance.raw
+          .select('PRAGMA table_info($table)')
+          .map((r) => r['name'] as String)
+          .toSet();
+      expect(columns, isNotEmpty, reason: 'unknown table $table');
+      for (final c in m.group(2)!.split(',').map((c) => c.trim())) {
+        expect(columns, contains(c), reason: '$table has no column $c');
+      }
+    }
+  });
 }
