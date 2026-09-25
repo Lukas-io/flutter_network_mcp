@@ -2,8 +2,10 @@ import 'dart:async';
 
 import 'package:dart_mcp/server.dart';
 
+import '../config/body_decryption.dart';
 import '../state/session.dart';
 import '../storage/captures_db.dart';
+import '../storage/plaintext_index.dart';
 import '../util/filters.dart';
 import 'error_kind.dart';
 import 'result.dart';
@@ -144,12 +146,23 @@ FutureOr<CallToolResult> networkCorrelate(CallToolRequest request) async {
 
   final List<Map<String, Object?>> allMatches;
   try {
-    allMatches = CapturesDao().correlateAcrossSessions(
-      sessionIds: sessionIds,
-      pattern: pattern,
-      which: whichArg,
-      perSessionLimit: perSessionLimit,
-    );
+    final scheme = BodyDecryptionConfig.active;
+    allMatches = scheme == null
+        ? CapturesDao().correlateAcrossSessions(
+            sessionIds: sessionIds,
+            pattern: pattern,
+            which: whichArg,
+            perSessionLimit: perSessionLimit,
+          )
+        : [
+            for (final sid in sessionIds)
+              ...(PlaintextIndex.instance..refresh(sid, scheme)).correlate(
+                pattern: pattern,
+                sessionId: sid,
+                which: whichArg,
+                limit: perSessionLimit,
+              ),
+          ];
   } catch (e) {
     return errorResult('network_correlate failed: $e', kind: ErrorKind.badQuery, extra: {
       'sessionIds': sessionIds,
@@ -226,6 +239,14 @@ FutureOr<CallToolResult> networkCorrelate(CallToolRequest request) async {
         'may be more matches not shown. Raise perSessionLimit or narrow '
         'the pattern.',
       );
+    } else if (n > 10) {
+      // D8: sessions[].matches is a compact preview of the first 10; the
+      // full set drives pair-finding but is not dumped.
+      warnings.add(
+        'Session $sid has $n matches; sessions[] previews the first 10 '
+        '(compact). The `pairs` array carries the correlated matches with '
+        'snippets.',
+      );
     }
   }
   if (pairs.length > limit) {
@@ -250,18 +271,7 @@ FutureOr<CallToolResult> networkCorrelate(CallToolRequest request) async {
 
   final nextSteps = <String>[];
   if (cappedPairs.isNotEmpty) {
-    final first = cappedPairs.first;
-    final reqs = first['requests'] as List;
-    final r0 = reqs[0] as Map;
-    final r1 = reqs[1] as Map;
-    nextSteps.add(
-      'network_get sessionId:${r0['sessionId']} id:"${r0['id']}" — full '
-      'detail on the originator (${first['spanMs']}ms before its pair)',
-    );
-    nextSteps.add(
-      'network_get sessionId:${r1['sessionId']} id:"${r1['id']}" — full '
-      'detail on the receiver',
-    );
+    nextSteps.addAll(pairInspectSteps(cappedPairs.first));
     if (cappedPairs.length > 1) {
       nextSteps.add(
         'network_correlate timeWindowMs:<smaller> — narrow if too many '
@@ -278,6 +288,12 @@ FutureOr<CallToolResult> networkCorrelate(CallToolRequest request) async {
     nextSteps.add('network_search — single-session FTS as a fallback');
   }
 
+  // D8 (audit RC/F24): the flood was `sessions[].matches` dumping every
+  // per-session match (up to perSessionLimit=100 each) with full snippets
+  // — thousands of tokens for a zero-pair answer. Snippets belong on the
+  // tight `pairs`; here emit a compact, capped preview and report the real
+  // count so the agent knows what was elided.
+  const displayCap = 10;
   return jsonResult({
     'scope': {'sessionIds': sessionIds},
     'pattern': pattern,
@@ -293,11 +309,46 @@ FutureOr<CallToolResult> networkCorrelate(CallToolRequest request) async {
         {
           'sessionId': sid,
           if (perSessionAppName[sid] != null) 'appName': perSessionAppName[sid],
-          'matches': perSessionMatches[sid],
+          'matchesTotal': perSessionMatches[sid]!.length,
+          'matchesShown':
+              perSessionMatches[sid]!.length.clamp(0, displayCap),
+          'matches': [
+            for (final m in perSessionMatches[sid]!.take(displayCap))
+              {
+                'id': m['id'],
+                if (m['method'] != null) 'method': m['method'],
+                if (m['url'] != null) 'url': m['url'],
+                if (m['statusCode'] != null) 'statusCode': m['statusCode'],
+                if (m['startTimeMs'] != null) 'startTimeMs': m['startTimeMs'],
+              },
+          ],
         },
     ],
     'pairs': cappedPairs,
     if (warnings.isNotEmpty) 'warnings': warnings,
     'nextSteps': nextSteps,
   });
+}
+
+/// network_get steps for [pair]'s two requests, labelled by start time rather than list order.
+List<String> pairInspectSteps(Map<String, Object?> pair) {
+  final reqs = pair['requests'] as List;
+  final a = reqs[0] as Map<String, Object?>;
+  final b = reqs[1] as Map<String, Object?>;
+  final span = pair['spanMs'];
+  String step(Map<String, Object?> r, String label) =>
+      'network_get sessionId:${r['sessionId']} id:"${r['id']}" for the $label';
+  if (span == 0) {
+    return [
+      step(a, 'request from session ${a['sessionId']} (same start time as its pair)'),
+      step(b, 'request from session ${b['sessionId']}'),
+    ];
+  }
+  final aFirst = (a['startTimeMs'] as int) < (b['startTimeMs'] as int);
+  final earlier = aFirst ? a : b;
+  final later = aFirst ? b : a;
+  return [
+    step(earlier, 'earlier request (${span}ms before its pair, likely the originator)'),
+    step(later, 'later request (likely the receiver)'),
+  ];
 }

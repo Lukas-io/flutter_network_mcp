@@ -67,4 +67,24 @@ void main() {
       expect(r.structuredContent!['warnings'], ['fell back']);
     });
   });
+
+  // D3 (audit RC5/F26): a healthy VM answering "no such id" must classify as
+  // not_found, not unresponsive_vm — the classifier is the shared decision.
+  group('looksLikeVmIdMiss (D3 taxonomy)', () {
+    test('VM id-lookup miss is recognized', () {
+      expect(
+          looksLikeVmIdMiss(
+              'getHttpProfileRequest: (-32602) Invalid params\n'
+              "Unable to find request with id: 'bogus'"),
+          isTrue);
+      expect(looksLikeVmIdMiss('Unable to find request with id: 42'), isTrue);
+    });
+
+    test('transport failures are NOT id misses', () {
+      expect(looksLikeVmIdMiss('Service connection disposed'), isFalse);
+      expect(looksLikeVmIdMiss('VmRpcTimeoutException(getHttpProfileRequest)'),
+          isFalse);
+      expect(looksLikeVmIdMiss(null), isFalse);
+    });
+  });
 }

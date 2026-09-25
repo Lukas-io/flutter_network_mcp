@@ -22,37 +22,47 @@ when_to_use: After picking an id from network_list or network_search, when you w
 
 ## How it works
 
-Live mode: calls `getHttpProfileRequest` on the VM service.
+Live mode: calls `getHttpProfileRequest` on the VM service, on the isolate you pass as `isolateId`, else the isolate recorded for this id in the DB, else every HTTP-profiling isolate in turn. If the live fetch fails but the request is already persisted, you get the DB copy instead: `source:"live-db-fallback"`, `degraded:true`, and a leading warning with the live error.
 
-History mode: reads from `http_requests` + `http_bodies` for the viewed session. If bodies aren't persisted yet (writer hasn't backfilled — happens within ~2s of request completion), the response includes a `warnings` entry saying so.
+History mode (a `session_open` view, or a `sessionId` that is not attached): reads from `http_requests` + `http_bodies`. When a body is missing, a `warnings` entry says why: "not persisted yet (writer may still be backfilling)" while the session can still capture, "not persisted yet (another server process captures this session ...)" when another server process sharing the DB is capturing it, or "was never captured before the session ended/was interrupted" once it cannot. Lifecycle events are not stored, so `includeEvents` has no effect here, and `isComplete` / `isResponseComplete` are not returned.
 
-Bodies decode as UTF-8 for json/text/xml/form content types, base64 otherwise. Truncated payloads carry `{truncated:true, totalSize, truncationMode}` in the body sub-object AND a top-level `warnings[]` entry pointing at `network_body`.
+Bodies decode as UTF-8 for text content types (`application/json`, `application/xml`, `application/x-www-form-urlencoded`, `application/javascript`, `application/graphql`, the `+json` API types, `text/*`), base64 otherwise. Each side uses its own `content-type` header: the request body is decoded by the request's header and the response body by the response's, in live and history mode alike (a JSON upload that returns an image still shows its request as text). Truncated payloads carry `{truncated:true, totalSize, truncationMode}` in the body sub-object AND a top-level `warnings[]` entry pointing at `network_body`.
 
 **Semantic truncation (0.7.0+).** For JSON and HTML bodies, truncation now preserves STRUCTURE instead of slicing at the byte cap:
 
 - **JSON**: arrays past 5 elements collapse to first 5 + a `{"_truncated":"42 more, 5 of 47 shown"}` marker. String leaves > 200 chars clip with `…(<n> chars)` suffix. Object keys are all preserved (the shape is what the agent needs). The output is pretty-printed with 2-space indent for readability.
 - **HTML**: `<script>` + `<style>` contents stripped, comments removed, whitespace collapsed.
 
-The `truncationMode` field tells you which path ran: `"semantic"` (JSON/HTML structural), `"byte"` (legacy byte-cap fallback for non-text or > 256 KB bodies), or omitted when nothing was truncated. A typical "list of 100 users" response now lands at ~1 KB with all keys + 5 sample rows visible, instead of a half-mangled 4 KB byte slice. The agent reads the same information AND can parse it.
+The `truncationMode` field tells you which path ran: `"semantic"` (JSON/HTML structural), `"byte"` (byte-cap fallback for everything else: other text types, binary, JSON that does not parse, or bodies over 256 KB), or omitted when nothing was truncated. A typical "list of 100 users" response now lands at ~1 KB with all keys + 5 sample rows visible, instead of a half-mangled 4 KB byte slice. The agent reads the same information AND can parse it. If the structural preview still exceeds `bodyTruncateBytes`, it is cut at that many characters and stays `truncated:true`.
 
-For byte-exact paging of the full untruncated payload — `network_body` (which always returns byte-exact content regardless of mode).
+For byte-exact paging of the full untruncated payload, use `network_body` (which always returns byte-exact content regardless of mode). After semantic truncation the `nextSteps` point `network_body` at `offset:0`, because offsets into the preview do not map to the raw body.
 
-Header values longer than `headerTruncateBytes` become `{value, truncated, totalLength}` objects so a 4 KB JWT doesn't drown the payload.
+Header values longer than `headerTruncateBytes` become `{value, truncated, totalLength}` objects so a 4 KB JWT doesn't drown the payload. At most 64 headers are shown per side; the rest are counted in `_omitted`.
+
+**Redaction (default on).** With `redact` unset or `true`, auth-like headers (`authorization`, `cookie`, `proxy-authorization`, `set-cookie`, `x-api-key`, `x-auth-token`, plus names added via `redacted_headers`) show as the plain string `"<redacted>"`. Pass `redact:false` to see real values when debugging auth.
+
+**Body decryption.** When `session_configure bodyDecryption:{...}` is on, each body sub-object is decrypted before decoding and carries `decrypted:true` (its `mimeType` becomes `application/json` when the plaintext starts with `{` or `[`, else `text/plain; charset=utf-8`). A body that does not fit the scheme is returned as captured with `decrypted:false` and `decryptionFailed:"<reason>"`; this is never an error. `totalSize` then counts plaintext bytes.
 
 ## Args
 
-- `id` (string, required) — request id from `network_list` or `network_search`.
-- `includeBodies` (bool, default true) — set false to skip both bodies entirely.
-- `bodyTruncateBytes` (int, default 4096, hard cap 262144) — max bytes per body. Pass 0 to use the hard cap.
-- `headerTruncateBytes` (int, default 256, hard cap 4096) — max chars per header value.
-- `includeEvents` (bool, default false) — include the request lifecycle events array. Opt-in to save tokens.
+- `id` (string, required): request id from `network_list` or `network_search`.
+- `sessionId` (int, optional): session to read. Omit to auto-resolve (the sole attached session, or the one you opened). A session that is not attached is read from history.
+- `appNameContains` (string, optional): pick the attached session by app-name substring instead of `sessionId`.
+- `isolateId` (string, optional, live only): try only this isolate (id from `network_status`).
+- `includeBodies` (bool, default true): set false to skip both bodies entirely.
+- `bodyTruncateBytes` (int, default 4096, hard cap 262144): max bytes per body. Pass 0 (or a negative number) to use the hard cap.
+- `headerTruncateBytes` (int, default 256, hard cap 4096): max chars per header value. 0 or negative means the default.
+- `includeEvents` (bool, default false, live only): include the request lifecycle events array (first 50 events, then `{"_omitted": N}`). Opt-in to save tokens.
+- `redact` (bool, default true): mask auth-like headers as `"<redacted>"`. Pass false to debug auth.
 
 ## Returns
 
 ```json
 {
   "source": "live",
+  "scope": {"sessionId": 1, "appName": "my_app", "isLive": true},
   "sessionId": 1,
+  "isolateId": "isolates/1234",
   "summary": "GET https://nexus.sangaeats.com/feed/vendors?page=1&limit=20 → 200 OK · 372ms (application/json)",
   "id": "-748091783736179394",
   "method": "GET",
@@ -63,7 +73,7 @@ Header values longer than `headerTruncateBytes` become `{value, truncated, total
   "isComplete": true,
   "isResponseComplete": true,
   "request": {
-    "headers": {"Accept":"application/json", "Authorization":"Bearer <very long token>"},
+    "headers": {"Accept":"application/json", "Authorization":"<redacted>"},
     "contentLength": 0,
     "bodyStatus": "empty"
   },
@@ -73,42 +83,47 @@ Header values longer than `headerTruncateBytes` become `{value, truncated, total
     "headers": {"content-type": "application/json; charset=utf-8"},
     "sizeKnown": false,
     "bodyStatus": "stored",
-    "body": {"encoding":"utf8","size":4096,"totalSize":18432,"truncated":true,
-             "mimeType":"application/json","value":"..."}
+    "body": {"encoding":"utf8","size":1180,"totalSize":18432,"truncated":true,
+             "truncationMode":"semantic","mimeType":"application/json; charset=utf-8","value":"..."}
   },
   "warnings": [
     "Response body truncated — totalSize 18432 bytes. Call network_body which:response for the full payload."
   ],
   "nextSteps": [
-    "network_body id:\"-748091...\" which:response offset:4096 length:16384 — page beyond the cap (totalSize 18432)",
+    "network_body_outline id:\"-748091...\" (structure of the full body: keys/types/sizes, no values)",
+    "network_body id:\"-748091...\" which:response offset:0 length:16384 (the raw body, totalSize 18432)",
     "network_replay id:\"-748091...\" — runnable curl reproduction (auth headers redacted)",
     "network_diff idA:\"-748091...\" idB:\"<other id>\" — compare with another captured request"
   ]
 }
 ```
 
-Null-valued fields are omitted. The `warnings` array only appears when something is degraded (truncation, in-flight, error). `nextSteps` is filtered against active capabilities.
+Null-valued fields are omitted. The `warnings` array only appears when something is degraded (truncation, in-flight, error, missing body, DB fallback, or a scope note such as reading history while live sessions are attached). `nextSteps` is filtered against active capabilities: with a truncated response body they lead with `network_body_outline` and `network_body which:response` (`offset:0` after semantic truncation, `offset:4096` after byte truncation); with only a truncated request body, a `network_body which:request` step; then always `network_replay` and `network_diff`. The step wording above is shortened.
+
+Other fields that appear when present: `request.error` / `response.error` (in place of headers when that side failed), `request.cookies`, `response.redirects` (the redirect chain the request followed), `response.compressionState` (live only), `events` (live only, with `includeEvents:true`), and `degraded:true` with `source:"live-db-fallback"`. `source` is `live`, `history`, or `live-db-fallback`.
 
 **`contentLength` vs `sizeKnown` (#62).** A `contentLength` is a real byte count (`0` = the message genuinely had no body). When the size was unknown ahead of the body (chunked transfer-encoding, or no `Content-Length` header) you get `sizeKnown: false` *instead of* a misleading `contentLength: -1` — the true size is only known once the body is read. Pair it with `bodyStatus` to tell a streamed-but-present body (`sizeKnown:false` + `bodyStatus:"stored"`) from a genuinely empty one (`contentLength:0` + `bodyStatus:"empty"`).
 
 **`bodyStatus` (#59).** Every request/response carries one of: `stored` (bytes present), `empty` (server sent no body), `pending` (the async body backfill has not run yet — retry in ~2s or read live), or `unavailable` (the body was lost before capture; `fetchAttempts` + `reason` explain). This is what stops "no body" from being ambiguous.
 
-Errors:
+Errors (each carries `nextSteps`):
+
+- `bad_argument`: `id` missing.
+- `not_found`: the id is in neither the live VM profile nor the DB (live), or not in the viewed session (history).
+- `unresponsive_vm`: no HTTP-profiling isolates are known, or the live fetch failed for a reason other than an unknown id and the request is not persisted either. The reply includes `id` and `triedIsolates`.
+- `internal`: the history read threw.
+- Scope failures return an `error` with `nextSteps` (and `attached` / `matches` where relevant) and an `errorKind`: `no_session` (not attached and nothing opened, or no attached session matches `appNameContains`) or `bad_argument` (several match).
 
 ```json
 // Missing id
 {"error":"Missing required arg `id`.",
+ "errorKind":"bad_argument",
  "nextSteps":["network_list — list captured requests and copy an id",
               "network_search query:\"...\" — find a request by body/url content"]}
 
-// Not attached + no history
-{"error":"Not attached and no session opened — cannot fetch a request.",
- "nextSteps":["network_status — see DTD apps",
-              "network_attach — connect to a live app",
-              "session_open id:<n> — view a past session and try this id there"]}
-
 // History id not found
 {"error":"Request `xyz` not found in session 14.",
+ "errorKind":"not_found",
  "sessionId":14,
  "nextSteps":["network_list — list valid request ids in this session",
               "session_list — confirm the session id is correct"]}
@@ -118,6 +133,7 @@ Errors:
 
 - `network_list` → pick an id → `network_get`.
 - `network_body` — when bodies are truncated.
+- `network_body_outline` / `network_body_query`: see the shape of a large body, or pull one field or regex match out of it.
 - `network_replay` — emit curl for the same request.
 - `network_diff` — compare against another id.
 

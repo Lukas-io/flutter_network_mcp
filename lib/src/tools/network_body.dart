@@ -107,6 +107,7 @@ FutureOr<CallToolResult> networkBody(CallToolRequest request) async {
     final bytes = fetch.bytes;
     final mimeType = fetch.mimeType;
     final source = fetch.source;
+    final decryption = fetch.decryption;
 
     if (bytes == null || bytes.isEmpty) {
       return noBodyResult(scope, id, which, source, mimeType);
@@ -148,6 +149,7 @@ FutureOr<CallToolResult> networkBody(CallToolRequest request) async {
 
     return jsonResult({
       'source': source,
+      ...decryption,
       'scope': scope.toBlock(),
       'sessionId': sessionIdForResp,
       'summary': summary,
@@ -165,7 +167,7 @@ FutureOr<CallToolResult> networkBody(CallToolRequest request) async {
       },
       if (warnings.isNotEmpty) 'warnings': warnings,
       'nextSteps': nextSteps,
-    }, scopeSessionId: scope.sessionId);
+    }, scopeSessionId: scope.sessionId, scopeNote: scope.note);
   } catch (e) {
     return errorResult('body fetch failed: $e',
         kind: ErrorKind.internal,

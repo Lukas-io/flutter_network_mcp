@@ -2,22 +2,24 @@ import 'dart:async';
 
 import 'package:dart_mcp/server.dart';
 
+import '../state/session.dart';
 import '../storage/captures_db.dart';
 import '../util/filters.dart';
 import '../util/scope.dart';
+import 'error_kind.dart';
 import 'result.dart';
+import 'ws_list.dart';
 
 final wsGetTool = Tool(
   name: 'ws_get',
   description:
-      'Returns the captured frames (messages) of one WebSocket connection by '
-      'connId (from ws_list), oldest-first so a conversation reads top to '
-      'bottom. Each frame carries direction, opcode, length, and a decoded '
-      'preview (text inline, binary as hex). Text frames are reassembled + '
-      'decompressed; ping/pong keepalives are dropped.',
+      'One WebSocket connection (id from ws_list) and its event timeline in '
+      'order: each message\'s time since the connection started, direction '
+      '(out = app to server, in = server to app), type (text, binary, ping, '
+      'pong, close, error) and size. Contents are not captured.',
   inputSchema: Schema.object(
     properties: {
-      'connId': Schema.int(description: 'Connection id from ws_list.'),
+      'id': Schema.int(description: 'Connection id from ws_list.'),
       'sessionId': Schema.int(
         description:
             'Session to read from. Omit to auto-resolve (the sole attached '
@@ -27,48 +29,73 @@ final wsGetTool = Tool(
         description:
             'Pick the session by app-name substring instead of sessionId.',
       ),
-      'dir': Schema.string(
+      'direction': Schema.string(description: '"out" or "in". Omit for both.'),
+      'kind': Schema.string(
         description:
-            'Filter to one direction: "out" (app to server) or "in" (server '
-            'to app). Omit for both.',
+            'Only this event type: text, binary, ping, pong, close or error.',
+      ),
+      'afterId': Schema.int(
+        description: 'Page on: pass the previous reply\'s nextAfterId.',
       ),
       'limit': Schema.int(
-        description:
-            'Max frames returned (default 100, hard cap 500). Caps to the most '
-            'recent N, then presented oldest-first.',
+        description: 'Max events, oldest first (default 100, cap 500).',
       ),
     },
-    required: ['connId'],
+    required: ['id'],
   ),
 );
 
+const _kinds = ['text', 'binary', 'ping', 'pong', 'close', 'error'];
+
 FutureOr<CallToolResult> wsGet(CallToolRequest request) async {
   final args = request.arguments ?? const <String, Object?>{};
-  final connId = args['connId'] as int?;
-  if (connId == null) {
-    return errorResult('Missing required arg `connId` (int).', extra: const {
-      'nextSteps': ['ws_list - list connections and pick a connId'],
-    });
+  final id = args['id'] as int?;
+  if (id == null) {
+    return errorResult('Missing required arg `id` (int).',
+        kind: ErrorKind.badArgument,
+        extra: const {
+          'nextSteps': ['ws_list - list connections and pick an id'],
+        });
   }
-  final dir = args['dir'] as String?;
-  if (dir != null && dir != 'out' && dir != 'in') {
-    return errorResult('`dir` must be "out" or "in".', extra: const {
-      'nextSteps': ['Retry with dir:"out", dir:"in", or omit it'],
-    });
+  final direction = args['direction'] as String?;
+  if (direction != null && direction != 'out' && direction != 'in') {
+    return errorResult('`direction` must be "out" or "in".',
+        kind: ErrorKind.badArgument,
+        extra: const {
+          'nextSteps': [
+            'Retry with direction:"out", direction:"in", or omit it'
+          ],
+        });
+  }
+  final kind = args['kind'] as String?;
+  if (kind != null && !_kinds.contains(kind)) {
+    return errorResult('`kind` must be one of ${_kinds.join(', ')}.',
+        kind: ErrorKind.badArgument,
+        extra: const {
+          'nextSteps': ['Retry with a valid kind, or omit it'],
+        });
   }
   final (scope, scopeErr) = resolveScope(args);
   if (scopeErr != null) return scopeErr;
   scope!;
 
+  if (scope.isLive) {
+    await SessionRegistry.instance
+        .attachedById(scope.sessionId)
+        ?.captureWriter
+        .refreshWebSockets();
+  }
+
   final dao = CapturesDao();
-  final conn = dao.getWsConnection(scope.sessionId, connId);
+  final conn = dao.getWsConnection(scope.sessionId, id);
   if (conn == null) {
     return errorResult(
-      'WebSocket connection $connId not found in session ${scope.sessionId}.',
+      'WebSocket connection $id not found in session ${scope.sessionId}.',
+      kind: ErrorKind.notFound,
       extra: {
         'sessionId': scope.sessionId,
         'nextSteps': const [
-          'ws_list - list valid connIds in this session',
+          'ws_list - list valid ids in this session',
           'session_list - confirm the session id',
         ],
       },
@@ -76,52 +103,59 @@ FutureOr<CallToolResult> wsGet(CallToolRequest request) async {
   }
 
   final limit = clampLimit(args['limit'] as int?, fallback: 100, hardMax: 500);
-  final rows = dao.queryWsFrames(
+  final rows = dao.queryWsMessages(
     sessionId: scope.sessionId,
-    connId: connId,
-    direction: dir,
-    limit: limit,
+    connKey: conn['conn_key'] as String,
+    kind: kind,
+    direction: direction,
+    afterId: args['afterId'] as int?,
+    limit: limit + 1,
   );
-  // queryWsFrames returns newest-first (so the limit keeps the most recent
-  // window); reverse to chronological for reading.
-  final frames = [for (final r in rows.reversed) _frame(r)];
-
-  final host = conn['host'] as String?;
-  final port = conn['port'] as int?;
-  final path = conn['path'] as String?;
-  final endpoint = port == null
-      ? '${host ?? "unknown"}${path ?? "/"}'
-      : '${host ?? "unknown"}:$port${path ?? "/"}';
+  final more = rows.length > limit;
+  final page = more ? rows.sublist(0, limit) : rows;
+  final originUs = conn['connect_started_us'] as int? ??
+      conn['opened_us'] as int? ??
+      conn['first_us'] as int?;
+  final connection = wsConnectionJson(conn);
+  final filter = [
+    if (direction != null) 'direction $direction',
+    if (kind != null) 'kind $kind',
+  ].join(', ');
 
   return jsonResult({
     'scope': scope.toBlock(),
     'sessionId': scope.sessionId,
-    'connId': connId,
-    'url': endpoint,
-    if (conn['started_ms'] != null) 'startedMs': conn['started_ms'],
-    'summary': frames.isEmpty
-        ? 'Connection $connId ($endpoint) has no captured frames'
-            '${dir != null ? ' in direction "$dir"' : ''}.'
-        : '${frames.length} frame(s) for connection $connId ($endpoint)'
-            '${dir != null ? ', dir "$dir"' : ''}, oldest-first.',
-    'count': frames.length,
+    'summary': page.isEmpty
+        ? 'Connection $id (${connection['url'] ?? 'url unknown'}) has no events'
+            '${filter.isEmpty ? '' : ' matching $filter'}.'
+        : '${page.length} event(s) of connection $id '
+            '(${connection['url'] ?? 'url unknown'}, ${connection['state']})'
+            '${filter.isEmpty ? '' : ', $filter'}, oldest first.',
+    'connection': connection,
+    'eventFormat':
+        '+seconds since start, direction, type, size or close detail',
+    'events': [for (final r in page) _event(r, originUs)],
+    if (more) 'nextAfterId': page.last['id'],
     'nextSteps': [
-      'ws_list - see sibling connections',
-      if (frames.isNotEmpty)
-        'ws_get connId:$connId dir:"out" - filter to outbound frames',
+      if (more) 'ws_get id:$id afterId:${page.last['id']} - next page',
+      'ws_list - the other connections',
+      if (connection['url'] == null)
+        'network_list - the upgrade request (status 101) names the url',
     ],
-    'frames': frames,
-  }, scopeSessionId: scope.sessionId);
+  }, scopeSessionId: scope.sessionId, scopeNote: scope.note);
 }
 
-Map<String, Object?> _frame(Map<String, Object?> r) {
-  return {
-    if (r['ts_ms'] != null) 'tsMs': r['ts_ms'],
-    'dir': r['direction'],
-    'opcode': r['opcode'],
-    'len': r['length'] ?? 0,
-    'isText': (r['is_text'] as int? ?? 0) == 1,
-    if ((r['compressed'] as int? ?? 0) == 1) 'compressed': true,
-    'preview': r['preview'],
-  };
+/// One event as `+1.204s out text 239B`.
+String _event(Map<String, Object?> r, int? originUs) {
+  final ts = r['ts_us'] as int;
+  final offset = originUs == null
+      ? ''
+      : '+${((ts - originUs) ~/ 1000 / 1000).toStringAsFixed(3)}s ';
+  final bytes = r['bytes'] as int?;
+  final detail = r['detail'] as String?;
+  return [
+    '$offset${r['direction'] ?? '-'} ${r['kind']}',
+    if (bytes != null) '${bytes}B',
+    if (detail != null && detail.isNotEmpty) detail,
+  ].join(' ');
 }

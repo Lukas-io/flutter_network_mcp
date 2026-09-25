@@ -3,11 +3,13 @@ import 'dart:convert';
 
 import 'package:dart_mcp/server.dart';
 
+import '../config/body_decryption.dart';
 import '../storage/captures_db.dart';
 import '../util/json_shape.dart';
 import '../util/scope.dart';
 import 'error_kind.dart';
 import 'result.dart';
+import 'body_fetch.dart';
 
 final networkDriftTool = Tool(
   name: 'network_drift',
@@ -80,7 +82,8 @@ FutureOr<CallToolResult> networkDrift(CallToolRequest request) async {
   final matched = <Map<String, Object?>>[];
   for (final r in rows) {
     final ct = (r['content_type'] as String?)?.toLowerCase() ?? '';
-    if (!ct.contains('json')) continue;
+    // Encrypted bodies travel under any content type; the JSON check happens after decryption.
+    if (!ct.contains('json') && BodyDecryptionConfig.active == null) continue;
     final path = (r['path'] as String?)?.toLowerCase() ?? '';
     if (pathContains != null && !path.contains(pathContains)) continue;
     if (r['vm_id'] == null) continue;
@@ -103,9 +106,20 @@ FutureOr<CallToolResult> networkDrift(CallToolRequest request) async {
   }
 
   final samples = <Map<String, Object?>>[];
+  var decrypted = 0;
+  var decryptionFailed = 0;
+  String? firstFailure;
   for (final r in candidates) {
-    final bytes = dao.getBody(sid, r['vm_id'] as String, 'response');
-    if (bytes == null || bytes.isEmpty) continue;
+    final stored = dao.getBody(sid, r['vm_id'] as String, 'response');
+    if (stored == null || stored.isEmpty) continue;
+    final readable = bodyForReading(stored, r['content_type'] as String?);
+    final bytes = readable.bytes;
+    if (readable.flags['decrypted'] == true) decrypted++;
+    final failure = readable.flags['decryptionFailed'] as String?;
+    if (failure != null) {
+      decryptionFailed++;
+      firstFailure ??= failure;
+    }
     Object? decoded;
     try {
       decoded = jsonDecode(utf8.decode(bytes));
@@ -120,19 +134,37 @@ FutureOr<CallToolResult> networkDrift(CallToolRequest request) async {
     });
   }
 
+  final decryption = BodyDecryptionConfig.active == null
+      ? const <String, Object?>{}
+      : {
+          'decryption': {
+            'decrypted': decrypted,
+            'failed': decryptionFailed,
+            if (firstFailure != null) 'firstFailure': firstFailure,
+          },
+        };
+  final decryptionWarnings = [
+    if (decryptionFailed > 0)
+      '$decryptionFailed response(s) did not decrypt ($firstFailure); those '
+          'that are not plain JSON were left out of the comparison.',
+  ];
+
   if (samples.length < 2) {
     return jsonResult({
+      'scope': scope.toBlock(),
       'summary':
           'Not enough JSON responses to compare (${samples.length} found; '
               'need 2+).',
       'sessionId': sid,
       'scanned': samples.length,
+      ...decryption,
+      if (decryptionWarnings.isNotEmpty) 'warnings': decryptionWarnings,
       'nextSteps': const [
         'Drive the endpoint more, then re-call (need 2+ JSON responses)',
         'network_summarize — see which endpoints have JSON traffic',
         'network_drift pathContains:"..." — widen or change the filter',
       ],
-    }, scopeSessionId: sid);
+    }, scopeSessionId: sid, scopeNote: scope.note);
   }
 
   final first = samples.first['shape'] as Map<String, String>;
@@ -162,6 +194,7 @@ FutureOr<CallToolResult> networkDrift(CallToolRequest request) async {
           'contract).';
 
   return jsonResult({
+    'scope': scope.toBlock(),
     'summary': summary,
     'sessionId': sid,
     'scanned': samples.length,
@@ -169,6 +202,8 @@ FutureOr<CallToolResult> networkDrift(CallToolRequest request) async {
     'drifted': drifted,
     if (drifted) ...diff,
     if (driftAt != null) 'firstDriftAt': driftAt,
+    ...decryption,
+    if (decryptionWarnings.isNotEmpty) 'warnings': decryptionWarnings,
     'nextSteps': [
       if (drifted)
         'network_get id:"${driftAt['id']}" — inspect the response that changed'
@@ -176,5 +211,5 @@ FutureOr<CallToolResult> networkDrift(CallToolRequest request) async {
         'network_summarize — endpoint overview',
       'network_drift pathContains:"..." — narrow to a single endpoint',
     ],
-  }, scopeSessionId: sid);
+  }, scopeSessionId: sid, scopeNote: scope.note);
 }

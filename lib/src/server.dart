@@ -3,11 +3,16 @@ import 'dart:io' as io;
 
 import 'package:dart_mcp/server.dart';
 import 'package:dart_mcp/stdio.dart';
+import 'package:sqlite3/sqlite3.dart' as sql;
 
 import 'config/capabilities.dart';
+import 'docs/doc_resources.dart';
+import 'tools/network_wait_for_app.dart';
 import 'telemetry/usage_recorder.dart';
 import 'version.dart';
 import 'tools/alert_patterns.dart';
+import 'tools/result.dart';
+import 'tools/error_kind.dart';
 import 'tools/auto_attach_config_tool.dart';
 import 'tools/alerts_clear.dart';
 import 'tools/alerts_config.dart';
@@ -60,7 +65,8 @@ import 'tools/ws_list.dart';
 /// MCP server exposing Flutter DevTools data via DTD + VM service, with
 /// persistent capture sessions in SQLite, full-text search, proactive alerts,
 /// CLI-driven capability gating, and runtime configurability.
-base class FlutterNetworkMcpServer extends MCPServer with ToolsSupport {
+base class FlutterNetworkMcpServer extends MCPServer
+    with ToolsSupport, ResourcesSupport {
   FlutterNetworkMcpServer.fromStreamChannel(
     super.channel, {
     this.defaultDtdUri,
@@ -73,7 +79,11 @@ base class FlutterNetworkMcpServer extends MCPServer with ToolsSupport {
               'Read HTTP, sockets, and logs from a running Flutter/Dart app, '
               'live or from history. Start with network_status; it reports '
               'what is reachable and its nextSteps tell you what to call next. '
-              'See docs/tools for per-tool guides.\n\n'
+              'Per-tool guides and the response contract are available as MCP '
+              'resources (flutter-network://docs/...) — read them for deep '
+              'usage. Only dart:io HTTP is captured: native SDK traffic '
+              '(analytics, crash reporting, ads, maps) is invisible here, so '
+              'never conclude an SDK is idle from an empty capture.\n\n'
               'You are the maintainer feedback channel. When the user voices '
               'friction, you hit a surprising tool error you have to work '
               'around, or a debugging session wraps up, OFFER (at most once '
@@ -85,6 +95,10 @@ base class FlutterNetworkMcpServer extends MCPServer with ToolsSupport {
     final caps = CapabilityConfig.instance;
 
     _register(networkStatusTool, (req) => networkStatus(req, defaultDtdUri));
+    _register(
+        networkWaitForAppTool,
+        (req) => networkWaitForApp(req, defaultDtdUri,
+            notifyProgress: notifyProgress));
     _register(networkAttachTool, (req) => networkAttach(req, defaultDtdUri));
     _register(networkDetachTool, networkDetach);
     _register(networkDiscoverDtdTool, networkDiscoverDtd);
@@ -115,9 +129,7 @@ base class FlutterNetworkMcpServer extends MCPServer with ToolsSupport {
       _register(socketClearTool, socketClear);
     }
 
-    // WebSocket frame capture (0.9.0): needs the flutter_network_mcp_hooks
-    // companion installed in the app; the tools just read the persisted frames.
-    if (caps.isEnabled(Category.realtime)) {
+    if (caps.isEnabled(Category.websockets)) {
       _register(wsListTool, wsList);
       _register(wsGetTool, wsGet);
     }
@@ -165,6 +177,37 @@ base class FlutterNetworkMcpServer extends MCPServer with ToolsSupport {
       _register(dbVacuumTool, dbVacuum);
       _register(bodiesPurgeTool, bodiesPurge);
     }
+
+    _registerDocResources();
+  }
+
+  /// D6 (audit RC10/F8): expose the shipped `docs/**` guides as MCP
+  /// resources so a fresh agent (with no repo checkout) can actually read
+  /// the per-tool guides and the response contract the tool descriptions
+  /// point at. Best-effort — a missing docs dir just yields no resources.
+  void _registerDocResources() {
+    try {
+      for (final doc in DocResources.discover()) {
+        addResource(
+          Resource(
+            uri: doc.uri,
+            name: doc.name,
+            mimeType: 'text/markdown',
+            description: 'flutter_network_mcp guide: ${doc.name}',
+          ),
+          (req) async {
+            final text = await io.File(doc.path).readAsString();
+            return ReadResourceResult(contents: [
+              TextResourceContents(
+                uri: doc.uri,
+                text: text,
+                mimeType: 'text/markdown',
+              ),
+            ]);
+          },
+        );
+      }
+    } catch (_) {/* docs unavailable — tools still work */}
   }
 
   /// Registers [tool] and instruments it: every call records a privacy-safe
@@ -177,11 +220,15 @@ base class FlutterNetworkMcpServer extends MCPServer with ToolsSupport {
     registerTool(tool, (req) async {
       final sw = Stopwatch()..start();
       try {
-        final result = await handler(req);
+        final result = await boundedToolCall(tool.name, () => handler(req));
+        final ms = sw.elapsedMilliseconds;
+        if (ms >= kSlowToolMs) {
+          io.stderr.writeln('flutter_network_mcp: ${tool.name} took ${ms}ms');
+        }
         UsageRecorder.instance.record(
           tool: tool.name,
           request: req,
-          durationMs: sw.elapsedMilliseconds,
+          durationMs: ms,
           result: result,
         );
         return result;
@@ -204,5 +251,74 @@ base class FlutterNetworkMcpServer extends MCPServer with ToolsSupport {
       stdioChannel(input: io.stdin, output: io.stdout),
       defaultDtdUri: defaultDtdUri,
     );
+  }
+}
+
+/// Calls slower than this are logged to stderr so a hang has a trail.
+const int kSlowToolMs = 2000;
+
+/// Tools that legitimately run long (compaction, export, replay).
+const Set<String> kUnboundedTools = {
+  'db_vacuum',
+  'session_export',
+  'network_replay',
+  'network_replay_as_test',
+  'report_issue',
+  'bodies_purge',
+  'network_wait_for_app',
+};
+
+/// `FLUTTER_NETWORK_MCP_TOOL_TIMEOUT_MS` (2000–120000). Default 20000.
+Duration toolDeadline() {
+  final raw = io.Platform.environment['FLUTTER_NETWORK_MCP_TOOL_TIMEOUT_MS'];
+  final parsed = raw == null ? null : int.tryParse(raw);
+  if (parsed == null) return const Duration(seconds: 20);
+  return Duration(milliseconds: parsed.clamp(2000, 120000));
+}
+
+/// Runs [body] under the per-tool deadline. A call that overruns comes back
+/// as errorKind `timeout` (the work keeps running in the background, its
+/// result discarded); a database locked past busy_timeout comes back as
+/// `unresponsive_db`. Neither ever hangs the MCP host.
+Future<CallToolResult> boundedToolCall(
+  String tool,
+  FutureOr<CallToolResult> Function() body, {
+  Duration? deadline,
+}) async {
+  final limit = deadline ?? toolDeadline();
+  try {
+    if (kUnboundedTools.contains(tool)) return await body();
+    return await Future<CallToolResult>.sync(body).timeout(limit);
+  } on TimeoutException {
+    io.stderr.writeln(
+      'flutter_network_mcp: $tool exceeded ${limit.inMilliseconds}ms and was '
+      'cut off; the work continues in the background.',
+    );
+    return errorResult(
+      '$tool did not finish within ${limit.inSeconds}s.',
+      kind: ErrorKind.timeout,
+      extra: {
+        'timeoutMs': limit.inMilliseconds,
+        'nextSteps': const [
+          'Retry with a narrower filter or a smaller limit',
+          'network_status — check whether the session is still reachable',
+          'Raise FLUTTER_NETWORK_MCP_TOOL_TIMEOUT_MS if this tool legitimately needs longer',
+        ],
+      },
+    );
+  } on sql.SqliteException catch (e) {
+    if (e.resultCode == 5 || e.resultCode == 6) {
+      return errorResult(
+        'captures.db is locked by another process (${e.message}).',
+        kind: ErrorKind.unresponsiveDb,
+        extra: const {
+          'nextSteps': [
+            'Another flutter_network_mcp server (another IDE window?) holds the database; close it or start this one with --data-dir <other>',
+            'Retry in a few seconds',
+          ],
+        },
+      );
+    }
+    rethrow;
   }
 }

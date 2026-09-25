@@ -5,6 +5,7 @@ import 'package:dart_mcp/server.dart';
 import '../state/session.dart';
 import '../util/scope.dart';
 import 'error_kind.dart';
+import 'network_clear.dart' show clearFailedResult;
 import 'result.dart';
 
 final socketClearTool = Tool(
@@ -73,11 +74,19 @@ FutureOr<CallToolResult> socketClear(CallToolRequest request) async {
       failed.add({'isolateId': isoId, 'error': e.toString()});
     }
   }
+  final nothingCleared = clearFailedResult(
+    what: 'socket',
+    sessionId: scope.sessionId,
+    failed: failed,
+    cleared: cleared,
+  );
+  if (nothingCleared != null) return nothingCleared;
   return jsonResult({
     'cleared': true,
+    if (failed.isNotEmpty) 'partial': true,
     'scope': scope.toBlock(),
     'summary':
-        'Live VM socket profile cleared for session ${scope.sessionId}${scope.appName != null ? " (${scope.appName})" : ""}: ${cleared.length} isolate(s). Persistent DB is untouched (socket_events rows remain queryable).',
+        'Live VM socket profile cleared for session ${scope.sessionId}${scope.appName != null ? " (${scope.appName})" : ""}: ${cleared.length} of ${isolates.length} isolate(s). Persistent DB is untouched (socket_events rows remain queryable).',
     'liveSessionId': scope.sessionId,
     'clearedIsolates': cleared,
     if (failed.isNotEmpty) 'failed': failed,
@@ -90,5 +99,5 @@ FutureOr<CallToolResult> socketClear(CallToolRequest request) async {
       'socket_list — confirm the live profile is empty',
       'Drive the app, then socket_list — fresh isolated socket capture',
     ],
-  }, scopeSessionId: scope.sessionId);
+  }, scopeSessionId: scope.sessionId, scopeNote: scope.note);
 }

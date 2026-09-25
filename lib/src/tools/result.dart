@@ -34,9 +34,20 @@ CallToolResult jsonResult(
   Map<String, Object?> data, {
   bool isError = false,
   int? scopeSessionId,
+  String? scopeNote,
 }) {
+  var enriched = data;
+  // D2: a scope resolved through surprising process state (session_open
+  // view shadowing live sessions) carries a note — promote it to a
+  // warning so the agent cannot miss it in any read tool's response.
+  if (!isError && scopeNote != null) {
+    final existing = (data['warnings'] as List?)?.cast<String>() ?? const [];
+    if (!existing.contains(scopeNote)) {
+      enriched = {...data, 'warnings': [scopeNote, ...existing]};
+    }
+  }
   final payload =
-      isError ? data : _maybeAnnotatePendingAlerts(data, scopeSessionId);
+      isError ? enriched : _maybeAnnotatePendingAlerts(enriched, scopeSessionId);
   final pretty = const JsonEncoder.withIndent('  ').convert(payload);
   return CallToolResult(
     content: [TextContent(text: pretty)],
@@ -97,6 +108,9 @@ Map<String, Object?> _maybeAnnotatePendingAlerts(
   if (!CapturesDatabase.isOpen) return data;
   try {
     final sid = scopeSessionId ?? Session.instance.effectiveSessionId;
+    // No session in scope → no count. A DB-wide number rode on every reply
+    // (17k in one report) and taught agents to ignore nextSteps.
+    if (sid == null) return data;
     final dao = CapturesDao();
     final pending = dao.pendingAlertCount(sessionId: sid);
     if (pending == 0) return data;
@@ -107,6 +121,8 @@ Map<String, Object?> _maybeAnnotatePendingAlerts(
     return {
       ...data,
       'pendingAlerts': {
+        'scope': 'session',
+        'sessionId': sid,
         'count': pending,
         if (critical > 0) 'critical': critical,
       },

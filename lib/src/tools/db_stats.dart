@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:dart_mcp/server.dart';
 
 import '../config/capabilities.dart';
+import '../alerts/alert_rules.dart';
 import '../config/db_cap_config.dart';
 import '../storage/captures_db.dart';
 import '../storage/database.dart';
@@ -83,6 +84,14 @@ FutureOr<CallToolResult> dbStats(CallToolRequest request) async {
         if (capBytes != null) 'maxBytes': capBytes,
         if (capBytes != null) 'maxMb': (capBytes / (1024 * 1024)).toStringAsFixed(0),
         'env': 'FLUTTER_NETWORK_MCP_MAX_DB_BYTES (0/off disables)',
+      },
+      'alertRetention': {
+        'days': AlertRules.instance.alertRetentionDays,
+        'enabled': AlertRules.instance.alertRetentionDays > 0,
+        'note': AlertRules.instance.alertRetentionDays > 0
+            ? 'alerts from non-attached sessions older than '
+                '${AlertRules.instance.alertRetentionDays}d auto-expire hourly'
+            : 'disabled — alerts kept forever (alerts_config set:{retentionDays:N})',
       },
       if (lastEviction != null) 'lastEviction': lastEviction,
       if (warnings.isNotEmpty) 'warnings': warnings,

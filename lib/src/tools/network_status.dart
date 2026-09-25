@@ -11,9 +11,13 @@ import '../storage/database.dart';
 import '../update/update_check.dart';
 import '../version.dart';
 import '../vm/dtd_discovery.dart';
+import '../util/scope.dart' show movedToFor;
+import 'network_attach.dart' show appSessionIdentity;
 import '../vm/dtd_probe.dart';
 import 'network_attach.dart' as attach_helper;
+import '../util/suggest.dart';
 import 'result.dart';
+import '../vm/vm_uri.dart';
 
 /// Per-session entry for `network_status.attached[]`. Carries structured
 /// capability health (issue #17) so socket/log degradation shows up as a
@@ -38,6 +42,7 @@ Map<String, Object?> attachedStatusEntry(AttachedSession a) {
     if (capState.degraded.isNotEmpty) 'degraded': capState.degraded,
     // #21: surface the log ring-buffer fill so the agent can reason about
     // rotation proactively (and knows to read now / bump the buffer).
+    if (a.nativeLog?.isActive == true) 'nativeLogs': a.nativeLog!.detail,
     'logBufferUsed': a.logBuffer.length,
     'logBufferCapacity': a.logBuffer.capacity,
     // #16: hot-restart continuity. When this session id has survived one or
@@ -100,8 +105,29 @@ FutureOr<CallToolResult> networkStatus(
     'mcp': _buildMcpBlock(),
     'attachedCount': registry.attachedCount,
     'attached': attachedList,
+    // RC4: apps that died while attached — their sessions auto-ended, so
+    // the agent reads history instead of polling a corpse.
+    if (registry.dead.isNotEmpty)
+      'stale': [
+        for (final d in registry.dead)
+          {
+            ...d.toJson(),
+            if (movedToFor(registry, d) != null) 'movedTo': movedToFor(registry, d),
+          },
+      ],
+    if (registry.recentlyDied.isNotEmpty)
+      'recentlyEnded': [
+        for (final d in registry.recentlyDied)
+          {
+            'sessionId': d.sessionId,
+            if (d.appName != null) 'appName': d.appName,
+            'endedReason': 'app exited',
+            'diedAtMs': d.diedAt.millisecondsSinceEpoch,
+          },
+      ],
     // Compact: emit "all" instead of the 8-element list in the common case.
     'capabilities': allEnabled ? 'all' : [for (final c in caps.enabled) c.key],
+    'captureBoundary': kCaptureBoundary,
     'dtd': <String, Object?>{
       'connected': session.dtd.isConnected,
       'uri': session.dtd.connectedUri?.toString(),
@@ -114,19 +140,48 @@ FutureOr<CallToolResult> networkStatus(
   // Opportunistic DTD connect so knownApps lands on the first status call.
   String? connectError;
   if (connectDtd && !session.dtd.isConnected && defaultDtdUri != null) {
+    var target = defaultDtdUri;
     try {
       await session.dtd
-          .connect(Uri.parse(defaultDtdUri))
+          .connect(Uri.parse(target))
           .timeout(const Duration(seconds: 5));
       (out['dtd'] as Map<String, Object?>)['connected'] = true;
-      (out['dtd'] as Map<String, Object?>)['uri'] = defaultDtdUri;
+      (out['dtd'] as Map<String, Object?>)['uri'] = target;
     } catch (e) {
-      connectError = e.toString();
+      // D10/F10/F27: the startup default URI goes stale when the DTD that
+      // owned it exits (a common cause of "auto-attach saw the app but
+      // couldn't connect"). Rediscover a live DTD and retry ONCE before
+      // reporting failure, instead of pinning the dead URI forever.
+      final fresh = DtdDiscovery.discover();
+      final candidate = fresh.isEmpty ? null : fresh.first.wsUri;
+      if (candidate != null && candidate != target) {
+        try {
+          await session.dtd
+              .connect(Uri.parse(candidate))
+              .timeout(const Duration(seconds: 5));
+          target = candidate;
+          (out['dtd'] as Map<String, Object?>)['connected'] = true;
+          (out['dtd'] as Map<String, Object?>)['uri'] = candidate;
+          (out['dtd'] as Map<String, Object?>)['rediscovered'] = true;
+        } catch (e2) {
+          connectError = 'default URI ($defaultDtdUri) and rediscovered URI '
+              '($candidate) both failed: $e2';
+        }
+      } else {
+        connectError = e.toString();
+      }
     }
   }
 
   if (connectError != null) {
-    (out['dtd'] as Map<String, Object?>)['connectError'] = connectError;
+    final dtdBlock = out['dtd'] as Map<String, Object?>;
+    dtdBlock['connectError'] = connectError;
+    // F10: the failure used to leave the agent to guess; route it to the
+    // tool that exists for exactly this.
+    dtdBlock['nextSteps'] = const [
+      'network_discover_dtd — list live DTD instances and pick a fresh URI',
+      'network_discover_dtd includeStale:true — inspect dead-pid candidates',
+    ];
   }
 
   // DB-level context: path, session count, and alert totals across all
@@ -246,6 +301,8 @@ FutureOr<CallToolResult> networkStatus(
         for (final a in registry.attached.values) {
           (out['attached'] as List).add(attachedStatusEntry(a));
         }
+        // D2/F4: agent-initiated attach — close a shadowing history view.
+        attach_helper.closeStaleViewAfterAttach(out);
       }
     }
   }
@@ -300,7 +357,16 @@ Map<String, Object?> _buildMcpBlock() {
   if (CapturesDatabase.isOpen) {
     final dataDir = p.dirname(CapturesDatabase.instance.path);
     final status = UpdateCheck.readStatusFile(dataDir);
-    if (status != null && status['isNewer'] == true) {
+    // Re-verify at read time: the status file is written pre-upgrade and
+    // the daily check cache blocks a rewrite, so after `update` it can
+    // still claim an "available" version that is now current or older
+    // (audit: 0.9.18 showing "updateAvailable: 0.9.16").
+    if (status != null &&
+        status['isNewer'] == true &&
+        UpdateCheck.isNewerVersion(
+          status['latest'] as String? ?? '',
+          packageVersion,
+        )) {
       block['updateAvailable'] = {
         'latest': status['latest'],
         if (status['checkedAtMs'] != null) 'checkedAtMs': status['checkedAtMs'],
@@ -309,6 +375,34 @@ Map<String, Object?> _buildMcpBlock() {
   }
 
   return block;
+}
+
+/// The continuation reattach nextStep, or null. Suppresses a reattach to a VM
+/// no longer reachable (#99): when the app relaunched it points at the new URI,
+/// else it says the app exited instead of suggesting a dead socket. [dead] is
+/// true when the URI is known gone (this process saw it die, or a connected DTD
+/// no longer lists it); [relaunchUri] is a live URI for the same app, if any.
+String? continuationReattachStep({
+  required String? lastUri,
+  required String lastApp,
+  required bool dead,
+  String? attachedAgo,
+  String? exitedAgo,
+  String? relaunchUri,
+}) {
+  if (lastUri == null) return null;
+  if (!dead) {
+    return 'network_attach vmServiceUri:"$lastUri" — reattach to $lastApp'
+        '${attachedAgo == null ? '' : ' (attached ~$attachedAgo ago)'}; '
+        'previous attachment recorded by 0.7.3 continuation';
+  }
+  if (relaunchUri != null) {
+    return 'network_attach vmServiceUri:"$relaunchUri" — $lastApp exited and '
+        'relaunched at a new URI';
+  }
+  return '$lastApp has exited${exitedAgo == null ? '' : ' ~$exitedAgo ago'}; '
+      'relaunch it and network_attach, or network_wait_for_app to block until '
+      'it is back';
 }
 
 /// Returns 1–2 short hints telling the agent what to do given the current
@@ -369,14 +463,50 @@ List<String> _suggestNextSteps(
     final lastUri = last['vmServiceUri'] as String?;
     final lastApp = last['appName'] as String? ?? 'previous app';
     final attachedAtMs = last['attachedAtMs'] as int?;
-    final ageDesc = attachedAtMs == null
-        ? ''
-        : ' (~${_formatAgo(attachedAtMs)} ago)';
     if (lastUri != null) {
-      steps.add(
-        'network_attach vmServiceUri:"$lastUri" — reattach to $lastApp '
-        '$ageDesc; previous attachment recorded by 0.7.3 continuation',
+      final knownUris = <String>{
+        for (final a in (knownApps ?? const []))
+          if ((a as Map)['uri'] is String)
+            canonicalVmServiceUri(a['uri'] as String),
+      };
+      final died = registry.dead
+          .where((d) =>
+              canonicalVmServiceUri(d.vmServiceUri) ==
+              canonicalVmServiceUri(lastUri))
+          .firstOrNull;
+      // DTD discovery listing live apps but not this URI is authoritative that
+      // the app is gone; an empty discovery, or one where a DTD failed to
+      // answer, cannot tell, so we do not infer death from it.
+      final probesFailed =
+          (out['dtdProbeErrors'] as List?)?.isNotEmpty ?? false;
+      final absentFromLiveDtd = !probesFailed &&
+          knownUris.isNotEmpty &&
+          !knownUris.contains(canonicalVmServiceUri(lastUri));
+      final lastIdentity = appSessionIdentity(lastApp);
+      String? relaunchUri;
+      for (final a in (knownApps ?? const [])) {
+        final m = a as Map;
+        final uri = m['uri'] as String?;
+        if (uri == null ||
+            canonicalVmServiceUri(uri) == canonicalVmServiceUri(lastUri)) {
+          continue;
+        }
+        if (appSessionIdentity(m['name'] as String?) == lastIdentity) {
+          relaunchUri = uri;
+          break;
+        }
+      }
+      final step = continuationReattachStep(
+        lastUri: lastUri,
+        lastApp: lastApp,
+        attachedAgo: attachedAtMs == null ? null : _formatAgo(attachedAtMs),
+        exitedAgo: died == null
+            ? null
+            : _formatAgo(died.diedAt.millisecondsSinceEpoch),
+        dead: died != null || absentFromLiveDtd,
+        relaunchUri: relaunchUri,
       );
+      if (step != null) steps.add(step);
     }
   }
 

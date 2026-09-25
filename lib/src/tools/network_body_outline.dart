@@ -94,6 +94,7 @@ FutureOr<CallToolResult> networkBodyOutline(CallToolRequest request) async {
     final bytes = fetch.bytes;
     final mimeType = fetch.mimeType;
     final source = fetch.source;
+    final decryption = fetch.decryption;
 
     if (bytes == null || bytes.isEmpty) {
       return noBodyResult(scope, id, which, source, mimeType);
@@ -120,6 +121,7 @@ FutureOr<CallToolResult> networkBodyOutline(CallToolRequest request) async {
       );
       return jsonResult({
         'source': source,
+        ...decryption,
         'scope': scope.toBlock(),
         'sessionId': scope.sessionId,
         'summary':
@@ -135,7 +137,7 @@ FutureOr<CallToolResult> networkBodyOutline(CallToolRequest request) async {
         'nextSteps': [
           'network_body id:"$id" which:$which — page the raw bytes',
         ],
-      }, scopeSessionId: scope.sessionId);
+      }, scopeSessionId: scope.sessionId, scopeNote: scope.note);
     }
 
     final outline = jsonSkeleton(decoded, maxDepth: maxDepth, maxKeys: maxKeys);
@@ -143,6 +145,7 @@ FutureOr<CallToolResult> networkBodyOutline(CallToolRequest request) async {
 
     return jsonResult({
       'source': source,
+      ...decryption,
       'scope': scope.toBlock(),
       'sessionId': scope.sessionId,
       'summary':
@@ -160,7 +163,7 @@ FutureOr<CallToolResult> networkBodyOutline(CallToolRequest request) async {
         'network_body_query id:"$id" which:$which grep:"<regex>" — text-search the body',
         'network_body id:"$id" which:$which offset:0 length:16384 — fetch the actual bytes of a branch',
       ],
-    }, scopeSessionId: scope.sessionId);
+    }, scopeSessionId: scope.sessionId, scopeNote: scope.note);
   } catch (e) {
     return errorResult('outline failed: $e',
         kind: ErrorKind.internal,

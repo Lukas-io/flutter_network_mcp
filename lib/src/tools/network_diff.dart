@@ -9,6 +9,7 @@ import '../util/body_decoder.dart';
 import '../util/scope.dart';
 import 'error_kind.dart';
 import 'result.dart';
+import 'body_fetch.dart';
 
 final networkDiffTool = Tool(
   name: 'network_diff',
@@ -102,14 +103,23 @@ FutureOr<CallToolResult> networkDiff(CallToolRequest request) async {
 
     final headersA = _parseHeaders(a['response_headers_json']);
     final headersB = _parseHeaders(b['response_headers_json']);
-    final headerDiff = _diffHeaders(headersA, headersB);
+    // D5: auth headers are always redacted in the diff view (network_diff
+    // has no debug-auth use case — use network_get redact:false for that).
+    final headerDiff =
+        _diffHeaders(headersA, headersB, redactNames: dao.redactedHeaderSet());
 
     final ctA = a['content_type'] as String?;
     final ctB = b['content_type'] as String?;
     final bodyA = dao.getBody(sessionId, idA, 'response');
     final bodyB = dao.getBody(sessionId, idB, 'response');
-    final textA = bodyA == null ? null : decodeBody(bodyA, ctA, maxBytes: -1, semantic: false);
-    final textB = bodyB == null ? null : decodeBody(bodyB, ctB, maxBytes: -1, semantic: false);
+    final readableA = bodyA == null ? null : bodyForReading(bodyA, ctA);
+    final readableB = bodyB == null ? null : bodyForReading(bodyB, ctB);
+    final textA = readableA == null
+        ? null
+        : decodeBody(readableA.bytes, readableA.mimeType, maxBytes: -1, semantic: false);
+    final textB = readableB == null
+        ? null
+        : decodeBody(readableB.bytes, readableB.mimeType, maxBytes: -1, semantic: false);
 
     Map<String, Object?>? bodyDiff;
     if (textA?.encoding == 'utf8' && textB?.encoding == 'utf8') {
@@ -145,6 +155,13 @@ FutureOr<CallToolResult> networkDiff(CallToolRequest request) async {
             : 'One or both response bodies are binary — body diff skipped.',
       );
     }
+    for (final (side, readable) in [('A', readableA), ('B', readableB)]) {
+      final failure = readable?.flags['decryptionFailed'];
+      if (failure != null) {
+        warnings.add('Response body $side did not decrypt ($failure); it is '
+            'diffed as captured.');
+      }
+    }
     if (bodyDiff?['truncated'] == true) {
       warnings.add('Body diff truncated at $maxLines lines per side.');
     }
@@ -165,8 +182,8 @@ FutureOr<CallToolResult> networkDiff(CallToolRequest request) async {
       'scope': scope.toBlock(),
       'sessionId': sessionId,
       'summary': summary,
-      'a': _summary(a),
-      'b': _summary(b),
+      'a': {..._summary(a), ...?readableA?.flags},
+      'b': {..._summary(b), ...?readableB?.flags},
       if (statusChanged)
         'statusDiff': {'a': a['status_code'], 'b': b['status_code']},
       if (methodChanged)
@@ -182,7 +199,7 @@ FutureOr<CallToolResult> networkDiff(CallToolRequest request) async {
           },
       if (warnings.isNotEmpty) 'warnings': warnings,
       'nextSteps': nextSteps,
-    }, scopeSessionId: scope.sessionId);
+    }, scopeSessionId: scope.sessionId, scopeNote: scope.note);
   } catch (e) {
     return errorResult('network_diff failed: $e',
         kind: ErrorKind.internal,
@@ -244,9 +261,19 @@ Map<String, dynamic>? _parseHeaders(Object? raw) {
   }
 }
 
-Map<String, Object?> _diffHeaders(Map<String, dynamic>? a, Map<String, dynamic>? b) {
+Map<String, Object?> _diffHeaders(
+  Map<String, dynamic>? a,
+  Map<String, dynamic>? b, {
+  Set<String> redactNames = const {},
+}) {
   final ma = _flat(a);
   final mb = _flat(b);
+  // D5 (audit RC9): diffing two authenticated requests printed BOTH raw
+  // tokens in `changed`. Redact the value but still report that the header
+  // changed (`<redacted>` vs `<redacted>` collapses to "present in both,
+  // masked"), so the diff stays useful without leaking secrets.
+  String show(String key, String value) =>
+      redactNames.contains(key) ? '<redacted>' : value;
   final added = <String, String>{};
   final removed = <String, String>{};
   final changed = <String, Map<String, String?>>{};
@@ -254,11 +281,11 @@ Map<String, Object?> _diffHeaders(Map<String, dynamic>? a, Map<String, dynamic>?
     final va = ma[k];
     final vb = mb[k];
     if (va == null && vb != null) {
-      added[k] = vb;
+      added[k] = show(k, vb);
     } else if (va != null && vb == null) {
-      removed[k] = va;
+      removed[k] = show(k, va);
     } else if (va != vb) {
-      changed[k] = {'a': va, 'b': vb};
+      changed[k] = {'a': show(k, va!), 'b': show(k, vb!)};
     }
   }
   return {'added': added, 'removed': removed, 'changed': changed};

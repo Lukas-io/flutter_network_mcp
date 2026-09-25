@@ -8,10 +8,13 @@ import '../config/capabilities.dart';
 import '../state/session.dart';
 import '../storage/captures_db.dart';
 import '../util/body_decoder.dart';
+import '../util/http_timing.dart';
 import '../util/body_status.dart';
 import '../util/scope.dart';
+import '../util/guidance.dart';
 import 'error_kind.dart';
 import 'result.dart';
+import 'body_fetch.dart';
 
 final networkGetTool = Tool(
   name: 'network_get',
@@ -55,10 +58,27 @@ final networkGetTool = Tool(
             'Include the request lifecycle events array (HttpProfileRequest.events). '
             'Default false — events are rarely useful and add bulk.',
       ),
+      'redact': Schema.bool(
+        description:
+            'Redact auth-like headers (authorization, cookie, x-api-key, + '
+            'the redacted_headers list). Default TRUE — the agent transcript '
+            'is not a safe place for live tokens. Pass false to debug auth.',
+      ),
     },
     required: ['id'],
   ),
 );
+
+/// D7/F22: decode the persisted redirect-chain JSON for history responses.
+List<Object?>? _decodeRedirects(String? json) {
+  if (json == null || json.isEmpty) return null;
+  try {
+    final decoded = jsonDecode(json);
+    return decoded is List ? decoded : null;
+  } catch (_) {
+    return null;
+  }
+}
 
 const _kBodyHardCap = 262144;
 const _kHeaderHardCap = 4096;
@@ -84,6 +104,10 @@ FutureOr<CallToolResult> networkGet(CallToolRequest request) async {
 
   final includeBodies = (args['includeBodies'] as bool?) ?? true;
   final includeEvents = (args['includeEvents'] as bool?) ?? false;
+  // D5: redact by default; opt out to debug auth flows.
+  final redact = (args['redact'] as bool?) ?? true;
+  final redactNames =
+      redact ? CapturesDao().redactedHeaderSet() : const <String>{};
   final truncateRaw = args['bodyTruncateBytes'] as int?;
   final maxBytes = (truncateRaw == null)
       ? 4096
@@ -102,6 +126,7 @@ FutureOr<CallToolResult> networkGet(CallToolRequest request) async {
       maxBytes: maxBytes,
       headerTruncateBytes: headerTruncateBytes,
       caps: caps,
+      redactNames: redactNames,
     );
   }
 
@@ -149,23 +174,38 @@ FutureOr<CallToolResult> networkGet(CallToolRequest request) async {
         maxBytes: maxBytes,
         headerTruncateBytes: headerTruncateBytes,
         caps: caps,
+        redactNames: redactNames,
         degradedFrom:
             'Live fetch failed (${lastError ?? "no isolate had id $id"}); '
             'returned the persisted DB copy instead.',
       );
     }
+    // D3 (audit RC5/F26): classify before blaming the VM. A healthy VM
+    // answering "no such id" — with no persisted row either — is a
+    // not_found, not an unresponsive_vm. Misfiling it poisoned the
+    // usage_stats error telemetry and sent agents down VM-recovery paths
+    // for what was a typo'd id.
+    final idMiss = looksLikeVmIdMiss(lastError);
     return errorResult(
-      'getHttpProfileRequest failed: ${lastError ?? "no isolate had id $id"}',
-      kind: ErrorKind.unresponsiveVm,
+      idMiss
+          ? 'No request with id "$id" in session ${scope.sessionId} — not in '
+              'the live VM profile and not in the persisted DB.'
+          : 'getHttpProfileRequest failed: ${lastError ?? "no isolate had id $id"}',
+      kind: idMiss ? ErrorKind.notFound : ErrorKind.unresponsiveVm,
       extra: {
         'id': id,
         'triedIsolates': candidateIsolates,
-        'nextSteps': const [
-          'network_search query:"..." — DB-backed search; works when the live path is down (in-flight/collected request)',
-          'network_query sql:"SELECT * FROM http_requests WHERE vm_id=?" — read the persisted row for this id',
-          'Verify the id exists via network_list',
-          'network_status — check VM service / zombie-DTD state',
-        ],
+        'nextSteps': idMiss
+            ? const [
+                'network_list — list captured requests and copy a valid id',
+                'network_search query:"..." — find the request by content instead',
+              ]
+            : const [
+                'network_search query:"..." — DB-backed search; works when the live path is down (in-flight/collected request)',
+                'network_query sql:"SELECT * FROM http_requests WHERE vm_id=?" — read the persisted row for this id',
+                'Verify the id exists via network_list',
+                'network_status — check VM service / zombie-DTD state',
+              ],
       },
     );
   }
@@ -178,6 +218,7 @@ FutureOr<CallToolResult> networkGet(CallToolRequest request) async {
     maxBytes: maxBytes,
     headerTruncateBytes: headerTruncateBytes,
     caps: caps,
+    redactNames: redactNames,
   );
 }
 
@@ -190,16 +231,17 @@ CallToolResult _buildLiveResponse({
   required int maxBytes,
   required int headerTruncateBytes,
   required CapabilityConfig caps,
+  Set<String> redactNames = const {},
 }) {
   final reqCt = (r.request?.hasError ?? false)
       ? null
       : firstHeader(r.request?.headers, 'content-type');
   final respCt = firstHeader(r.response?.headers, 'content-type');
   final reqBody = includeBodies
-      ? decodeBody(r.requestBody, reqCt, maxBytes: maxBytes)?.toJson()
+      ? readableBodyJson(r.requestBody, reqCt, maxBytes: maxBytes)
       : null;
   final respBody = includeBodies
-      ? decodeBody(r.responseBody, respCt, maxBytes: maxBytes)?.toJson()
+      ? readableBodyJson(r.responseBody, respCt, maxBytes: maxBytes)
       : null;
 
   // Classify body presence (#59) from the persisted row when available, so a
@@ -222,7 +264,7 @@ CallToolResult _buildLiveResponse({
       : {
           if (r.request!.hasError) 'error': r.request!.error,
           if (!r.request!.hasError) ...{
-            'headers': truncateHeaders(r.request!.headers, maxValueBytes: headerTruncateBytes),
+            'headers': truncateHeaders(r.request!.headers, maxValueBytes: headerTruncateBytes, redactNames: redactNames),
             ...sizeFields(r.request!.contentLength),
             if ((r.request!.cookies ?? []).isNotEmpty) 'cookies': r.request!.cookies,
             ...liveBodyStatus('request', r.requestBody, r.request!.contentLength),
@@ -236,7 +278,10 @@ CallToolResult _buildLiveResponse({
           if (!r.response!.hasError) ...{
             if (r.response!.statusCode != null) 'statusCode': r.response!.statusCode,
             if (r.response!.reasonPhrase != null) 'reasonPhrase': r.response!.reasonPhrase,
-            'headers': truncateHeaders(r.response!.headers, maxValueBytes: headerTruncateBytes),
+            // D7/F22: the redirect chain the request followed.
+            if (r.response!.redirects.isNotEmpty)
+              'redirects': r.response!.redirects,
+            'headers': truncateHeaders(r.response!.headers, maxValueBytes: headerTruncateBytes, redactNames: redactNames),
             ...sizeFields(r.response!.contentLength),
             if (r.response!.compressionState != null) 'compressionState': r.response!.compressionState,
             ...liveBodyStatus('response', r.responseBody, r.response!.contentLength),
@@ -253,7 +298,9 @@ CallToolResult _buildLiveResponse({
     responseError: r.response?.hasError == true ? r.response!.error : null,
   );
 
-  final reqDurationMs = r.endTime?.difference(r.startTime).inMilliseconds;
+  // RC1: exchange end, not request-upload end — see util/http_timing.dart.
+  final exchangeEnd = exchangeEndTime(r);
+  final reqDurationMs = exchangeEnd?.difference(r.startTime).inMilliseconds;
   final summary = _summaryFor(
     method: r.method,
     uri: r.uri.toString(),
@@ -276,7 +323,7 @@ CallToolResult _buildLiveResponse({
     'method': r.method,
     'uri': r.uri.toString(),
     'startTimeMs': r.startTime.millisecondsSinceEpoch,
-    if (r.endTime != null) 'endTimeMs': r.endTime!.millisecondsSinceEpoch,
+    if (exchangeEnd != null) 'endTimeMs': exchangeEnd.millisecondsSinceEpoch,
     if (reqDurationMs != null) 'durationMs': reqDurationMs,
     'isComplete': r.isRequestComplete,
     'isResponseComplete': r.isResponseComplete,
@@ -290,7 +337,7 @@ CallToolResult _buildLiveResponse({
       requestBody: reqBody,
       responseBody: respBody,
     ),
-  }, scopeSessionId: scope.sessionId);
+  }, scopeSessionId: scope.sessionId, scopeNote: scope.note);
 }
 
 FutureOr<CallToolResult> _historyGet({
@@ -301,6 +348,7 @@ FutureOr<CallToolResult> _historyGet({
   required int maxBytes,
   required int headerTruncateBytes,
   required CapabilityConfig caps,
+  Set<String> redactNames = const {},
   String? degradedFrom,
 }) {
   final sid = scope.sessionId;
@@ -320,12 +368,12 @@ FutureOr<CallToolResult> _historyGet({
     }
     final reqHeaders = _parseHeaders(row['request_headers_json']);
     final respHeaders = _parseHeaders(row['response_headers_json']);
-    final reqCt = row['content_type'] as String? ?? firstHeader(reqHeaders, 'content-type');
-    final respCt = row['content_type'] as String? ?? firstHeader(respHeaders, 'content-type');
+    final reqCt = storedContentType(row, 'request');
+    final respCt = storedContentType(row, 'response');
     final reqBlob = includeBodies ? dao.getBody(sid, id, 'request') : null;
     final respBlob = includeBodies ? dao.getBody(sid, id, 'response') : null;
-    final reqBody = reqBlob == null ? null : decodeBody(reqBlob, reqCt, maxBytes: maxBytes)?.toJson();
-    final respBody = respBlob == null ? null : decodeBody(respBlob, respCt, maxBytes: maxBytes)?.toJson();
+    final reqBody = readableBodyJson(reqBlob, reqCt, maxBytes: maxBytes);
+    final respBody = readableBodyJson(respBlob, respCt, maxBytes: maxBytes);
 
     final startUs = row['start_us'] as int?;
     final endUs = row['end_us'] as int?;
@@ -334,17 +382,20 @@ FutureOr<CallToolResult> _historyGet({
 
     final requestData = {
       if (reqHeaders != null)
-        'headers': truncateHeaders(reqHeaders, maxValueBytes: headerTruncateBytes),
+        'headers': truncateHeaders(reqHeaders, maxValueBytes: headerTruncateBytes, redactNames: redactNames),
       ...sizeFields(row['request_size'] as int?),
       ...bodyStatusFor(
           row: row, which: 'request', hasBytes: reqBlob != null && reqBlob.isNotEmpty),
       if (reqBody != null) 'body': reqBody,
     };
+    // D7/F22: surface the persisted redirect chain.
+    final redirects = _decodeRedirects(row['redirects_json'] as String?);
     final responseData = {
       if (row['status_code'] != null) 'statusCode': row['status_code'],
       if (row['reason_phrase'] != null) 'reasonPhrase': row['reason_phrase'],
+      if (redirects != null) 'redirects': redirects,
       if (respHeaders != null)
-        'headers': truncateHeaders(respHeaders, maxValueBytes: headerTruncateBytes),
+        'headers': truncateHeaders(respHeaders, maxValueBytes: headerTruncateBytes, redactNames: redactNames),
       ...sizeFields(row['response_size'] as int?),
       ...bodyStatusFor(
           row: row, which: 'response', hasBytes: respBlob != null && respBlob.isNotEmpty),
@@ -362,11 +413,21 @@ FutureOr<CallToolResult> _historyGet({
     if (degradedFrom != null) {
       warnings.insert(0, degradedFrom);
     }
-    if (reqBlob == null && includeBodies) {
-      warnings.add('Request body not persisted yet (writer may still be backfilling).');
-    }
-    if (respBlob == null && includeBodies && row['response_size'] != null) {
-      warnings.add('Response body not persisted yet (writer may still be backfilling).');
+    if (reqBlob == null || (respBlob == null && row['response_size'] != null)) {
+      // D1/F12: "still backfilling" is only true while the capture runs; for
+      // an ended session the body is simply gone.
+      final bodyState = SessionStateView.of(scope.sessionId);
+      final why = bodyState.canGenerateTraffic
+          ? 'not persisted yet (writer may still be backfilling)'
+          : bodyState.capturedElsewhere
+          ? 'not persisted yet (another server process captures this session and may still be backfilling)'
+          : 'was never captured before the session ${bodyState.isEnded ? "ended" : "was interrupted"}';
+      if (reqBlob == null && includeBodies) {
+        warnings.add('Request body $why.');
+      }
+      if (respBlob == null && includeBodies && row['response_size'] != null) {
+        warnings.add('Response body $why.');
+      }
     }
 
     final durMs = durUs == null ? null : durUs ~/ 1000;
@@ -404,7 +465,7 @@ FutureOr<CallToolResult> _historyGet({
         requestBody: reqBody,
         responseBody: respBody,
       ),
-    }, scopeSessionId: scope.sessionId);
+    }, scopeSessionId: scope.sessionId, scopeNote: scope.note);
   } catch (e) {
     return errorResult('history query failed: $e',
         kind: ErrorKind.internal,
@@ -459,14 +520,19 @@ List<String> _nextStepsFor({
   final steps = <String>[];
   final reqTrunc = requestBody?['truncated'] == true;
   final respTrunc = responseBody?['truncated'] == true;
+  // D8/F15: after SEMANTIC truncation the returned bytes are a transformed
+  // preview, so a byte offset into them corresponds to nothing the agent
+  // saw. Point network_body at offset:0 (raw body from the start) instead.
+  final respOffset = responseBody?['truncationMode'] == 'semantic' ? 0 : 4096;
+  final reqOffset = requestBody?['truncationMode'] == 'semantic' ? 0 : 4096;
   if (caps.isEnabled(Category.http)) {
     if (respTrunc) {
       final total = responseBody!['totalSize'];
       steps.add('network_body_outline id:"$id" — structure of the full body (keys/types/sizes, no values) so you drill the right branch');
-      steps.add('network_body id:"$id" which:response offset:4096 length:16384 — page beyond the cap (totalSize $total)');
+      steps.add('network_body id:"$id" which:response offset:$respOffset length:16384 — the raw body (totalSize $total)');
     } else if (reqTrunc) {
       final total = requestBody!['totalSize'];
-      steps.add('network_body id:"$id" which:request offset:4096 length:16384 — page beyond the cap (totalSize $total)');
+      steps.add('network_body id:"$id" which:request offset:$reqOffset length:16384 — the raw body (totalSize $total)');
     }
     steps.add('network_replay id:"$id" — runnable curl reproduction (auth headers redacted)');
     steps.add('network_diff idA:"$id" idB:"<other id>" — compare with another captured request');

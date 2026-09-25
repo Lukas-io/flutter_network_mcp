@@ -8,6 +8,8 @@ import '../state/session.dart';
 import '../storage/captures_db.dart';
 import '../util/filters.dart';
 import '../util/scope.dart';
+import '../util/guidance.dart';
+import '../util/token_budget.dart';
 import 'error_kind.dart';
 import 'result.dart';
 
@@ -50,7 +52,8 @@ final logsTailTool = Tool(
         items: Schema.string(),
       ),
       'source': Schema.string(
-        description: '"logging" | "stdout" | "stderr". Omit for all.',
+        description: '"logging" | "stdout" | "stderr" | "native" (device log, '
+            'when the attach requested nativeLogs). Omit for all.',
       ),
       'isolateId': Schema.string(
         description:
@@ -60,9 +63,34 @@ final logsTailTool = Tool(
       'limit': Schema.int(
         description: 'Max records (default 100, cap 500).',
       ),
+      'messageTruncateBytes': Schema.int(
+        description:
+            'Cut each message at this many characters (default 2048, '
+            '64-65536). A cut record carries truncated:true and totalLength.',
+      ),
+      'maxTokens': Schema.int(
+        description:
+            'Token budget for this response; keeps the newest records that '
+            'fit and reports budget.dropped. Overrides the session_configure '
+            'maxResponseTokens default.',
+      ),
     },
   ),
 );
+
+/// Message cut for one record: the text to return plus the flags.
+({String message, bool truncated, int totalLength}) truncateMessage(
+    String msg, int max) {
+  final cut = msg.length > max;
+  var end = max;
+  // Never split an emoji or other astral character in half.
+  if (cut && end > 0 && msg.codeUnitAt(end - 1) & 0xFC00 == 0xD800) end--;
+  return (
+    message: cut ? msg.substring(0, end) : msg,
+    truncated: cut,
+    totalLength: msg.length,
+  );
+}
 
 FutureOr<CallToolResult> logsTail(CallToolRequest request) async {
   final caps = CapabilityConfig.instance;
@@ -85,6 +113,10 @@ FutureOr<CallToolResult> logsTail(CallToolRequest request) async {
       args.containsKey('source') ? args['source'] as String? : sf.source;
   final isolateFilter = args['isolateId'] as String?;
   final limit = clampLimit(args['limit'] as int?, fallback: 100, hardMax: 500);
+  final truncateAt =
+      ((args['messageTruncateBytes'] as int?) ?? _kMessageTruncateBytes)
+          .clamp(64, 65536);
+  final maxTokens = args['maxTokens'] as int? ?? sf.maxResponseTokens;
 
   if (!scope.isLive) {
     final sid = scope.sessionId;
@@ -99,31 +131,21 @@ FutureOr<CallToolResult> logsTail(CallToolRequest request) async {
         isolateId: isolateFilter,
         limit: limit,
       );
-      final out = <Map<String, Object?>>[];
-      int? maxId;
-      int severeCount = 0;
-      for (final r in rows) {
-        final id = r['id'] as int;
-        if (maxId == null || id > maxId) maxId = id;
-        final lvl = r['level'] as int?;
-        if (lvl != null && lvl >= _kSevereLevel) severeCount++;
-        out.add(_historyEntry(r));
-      }
+      final out = [for (final r in rows) _historyEntry(r, truncateAt)];
       return jsonResult(_buildResponse(
         scope: scope,
         source: 'history',
         entries: out,
-        nextCursor: maxId,
+        maxTokens: maxTokens,
         bufferSize: null,
         bufferCapacity: null,
         streamActive: null,
-        severeCount: severeCount,
         levelMin: levelMin,
         loggerContains: loggerContains,
         messageContains: messageContains,
         sourceFilter: source,
         caps: caps,
-      ), scopeSessionId: scope.sessionId);
+      ), scopeSessionId: scope.sessionId, scopeNote: scope.note);
     } catch (e) {
       return errorResult('history query failed: $e', kind: ErrorKind.internal, extra: {
         'sessionId': sid,
@@ -136,6 +158,9 @@ FutureOr<CallToolResult> logsTail(CallToolRequest request) async {
   }
 
   final attached = SessionRegistry.instance.attachedById(scope.sessionId)!;
+  final droppedSinceLastRead =
+      attached.logBuffer.droppedTotal - attached.lastReportedDropped;
+  attached.lastReportedDropped = attached.logBuffer.droppedTotal;
   final entries = attached.logBuffer.tail(
     sinceId: sinceId,
     levelMin: levelMin,
@@ -145,34 +170,44 @@ FutureOr<CallToolResult> logsTail(CallToolRequest request) async {
     isolateId: isolateFilter,
     limit: limit,
   );
-  final out = <Map<String, Object?>>[];
-  int? maxId;
-  int severeCount = 0;
-  for (final e in entries) {
-    if (maxId == null || e.id > maxId) maxId = e.id;
-    if ((e.level ?? 0) >= _kSevereLevel) severeCount++;
-    out.add(_liveEntry(e));
-  }
-  return jsonResult(_buildResponse(
+  final out = [for (final e in entries) _liveEntry(e, truncateAt)];
+  final response = _buildResponse(
     scope: scope,
     source: 'live',
     entries: out,
-    nextCursor: maxId,
+    maxTokens: maxTokens,
     bufferSize: attached.logBuffer.length,
     bufferCapacity: attached.logBuffer.capacity,
     streamActive: attached.logStream.isActive,
-    severeCount: severeCount,
     levelMin: levelMin,
     loggerContains: loggerContains,
     messageContains: messageContains,
     sourceFilter: source,
     caps: caps,
-  ), scopeSessionId: scope.sessionId);
+  );
+  final extraWarnings = <String>[
+    if (droppedSinceLastRead > 0)
+      '$droppedSinceLastRead record(s) rotated out of the ${attached.logBuffer.capacity}-record buffer since your last read — what you see is a fragment; raise logBufferSize (network_attach) or auto_attach_config logBufferSize, or read history via session_open',
+    if (sinceId == null && attached.preAttachUptimeMs != null)
+      'The app had been running ~${(attached.preAttachUptimeMs! / 1000).round()}s before this session attached; records from before then were never captured (the VM keeps no log history). A hot restart re-runs startup inside the capture window.',
+  ];
+  if (extraWarnings.isNotEmpty) {
+    response['warnings'] = [
+      ...extraWarnings,
+      ...?(response['warnings'] as List?)?.cast<String>(),
+    ];
+  }
+  if (droppedSinceLastRead > 0) {
+    response['droppedSinceLastRead'] = droppedSinceLastRead;
+  }
+  return jsonResult(response,
+      scopeSessionId: scope.sessionId, scopeNote: scope.note);
 }
 
-Map<String, Object?> _historyEntry(Map<String, Object?> r) {
+Map<String, Object?> _historyEntry(Map<String, Object?> r, int max) {
   final msg = (r['message'] as String?) ?? '';
-  final truncated = msg.length > _kMessageTruncateBytes;
+  final t = truncateMessage(msg, max);
+  final truncated = t.truncated;
   return {
     'id': r['id'],
     'source': r['source'],
@@ -180,7 +215,7 @@ Map<String, Object?> _historyEntry(Map<String, Object?> r) {
     if (r['timestamp_ms'] != null) 'timestampMs': r['timestamp_ms'],
     if (r['level'] != null) 'level': r['level'],
     if (r['logger'] != null) 'loggerName': r['logger'],
-    'message': truncated ? msg.substring(0, _kMessageTruncateBytes) : msg,
+    'message': t.message,
     if (truncated) 'truncated': true,
     if (truncated) 'totalLength': msg.length,
     if (r['error'] != null) 'error': r['error'],
@@ -188,9 +223,10 @@ Map<String, Object?> _historyEntry(Map<String, Object?> r) {
   };
 }
 
-Map<String, Object?> _liveEntry(dynamic e) {
+Map<String, Object?> _liveEntry(dynamic e, int max) {
   final msg = e.message as String;
-  final truncated = msg.length > _kMessageTruncateBytes;
+  final t = truncateMessage(msg, max);
+  final truncated = t.truncated;
   return {
     'id': e.id,
     'source': e.source,
@@ -198,7 +234,7 @@ Map<String, Object?> _liveEntry(dynamic e) {
     if (e.timestampMs != null) 'timestampMs': e.timestampMs,
     if (e.level != null) 'level': e.level,
     if (e.loggerName != null) 'loggerName': e.loggerName,
-    'message': truncated ? msg.substring(0, _kMessageTruncateBytes) : msg,
+    'message': t.message,
     if (truncated) 'truncated': true,
     if (truncated) 'totalLength': msg.length,
     if (e.error != null) 'error': e.error,
@@ -210,11 +246,10 @@ Map<String, Object?> _buildResponse({
   required Scope scope,
   required String source,
   required List<Map<String, Object?>> entries,
-  required int? nextCursor,
+  required int? maxTokens,
   required int? bufferSize,
   required int? bufferCapacity,
   required bool? streamActive,
-  required int severeCount,
   required int? levelMin,
   required String? loggerContains,
   required List<String>? messageContains,
@@ -222,6 +257,15 @@ Map<String, Object?> _buildResponse({
   required CapabilityConfig caps,
 }) {
   final sessionId = scope.sessionId;
+  final nextCursor = entries.isEmpty ? null : entries.first['id'] as int;
+  final budgetTrim = trimToTokenBudget(entries, maxTokens);
+  final budgetDropped = budgetTrim.dropped;
+  if (budgetDropped > 0) {
+    entries.removeRange(budgetTrim.kept.length, entries.length);
+  }
+  final severeCount = entries
+      .where((e) => ((e['level'] as int?) ?? 0) >= _kSevereLevel)
+      .length;
   final filters =
       _filterDesc(levelMin, loggerContains, messageContains, sourceFilter);
   final nearCapacity = source == 'live' &&
@@ -238,8 +282,18 @@ Map<String, Object?> _buildResponse({
           '${filters.isEmpty ? "" : "; filtered by $filters"}.';
 
   final warnings = <String>[];
+  final cut = entries.where((e) => e['truncated'] == true).length;
+  if (cut > 0) {
+    warnings.add('$cut message(s) cut at the byte limit (truncated:true, '
+        'totalLength given) — raise messageTruncateBytes to read them whole.');
+  }
   if (source == 'live' && streamActive == false) {
     warnings.add('Log stream is not subscribed — buffer will stay empty. Re-attach to start log capture.');
+  }
+  if (budgetDropped > 0) {
+    warnings.add('Trimmed $budgetDropped older record(s) to fit the '
+        '$maxTokens-token budget; since:nextCursor pages forward past them, so '
+        'raise maxTokens or narrow the filters to read them.');
   }
   if (entries.isEmpty && filters.isNotEmpty) {
     warnings.add('No matches — try widening levelMin / dropping loggerContains.');
@@ -254,13 +308,16 @@ Map<String, Object?> _buildResponse({
 
   final nextSteps = <String>[];
   if (entries.isEmpty) {
-    nextSteps.add('Drive the app to generate logs');
+    final state = SessionStateView.of(scope.sessionId);
+    nextSteps.add(state.canGenerateTraffic
+        ? 'Drive the app to generate logs'
+        : emptyCaptureHint(state, reRun: 'logs_tail'));
     if (filters.isNotEmpty) {
       nextSteps.add('Drop filters to broaden the search');
     }
   } else {
     if (severeCount > 0 && caps.isEnabled(Category.alerts)) {
-      nextSteps.add('alerts_drain — see what the detector flagged for these severe records');
+      nextSteps.add('alerts_drain — $severeCount severe record(s) in this page raised alerts');
     }
     if (nextCursor != null) {
       nextSteps.add('logs_tail since:$nextCursor — page incrementally on next call');
@@ -283,6 +340,8 @@ Map<String, Object?> _buildResponse({
     if (streamActive != null) 'streamActive': streamActive,
     if (severeCount > 0) 'severeCount': severeCount,
     'nextCursor': nextCursor,
+    if (maxTokens != null && maxTokens > 0)
+      'budget': {'maxTokens': maxTokens, 'dropped': budgetDropped},
     if (warnings.isNotEmpty) 'warnings': warnings,
     'nextSteps': nextSteps,
     'entries': entries,

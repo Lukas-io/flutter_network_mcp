@@ -1,6 +1,6 @@
 /// Captures-DB schema version. Bump this AND add a migration block in the
 /// `_migrationFor` switch in `database.dart` whenever a table here changes.
-const int currentVersion = 11;
+const int currentVersion = 14;
 
 const List<String> initialSchema = [
   '''
@@ -34,6 +34,7 @@ const List<String> initialSchema = [
     content_type          TEXT,
     request_headers_json  TEXT,
     response_headers_json TEXT,
+    redirects_json        TEXT,
     has_error             INTEGER NOT NULL DEFAULT 0,
     bodies_fetched        INTEGER NOT NULL DEFAULT 0,
     body_fetch_attempts   INTEGER NOT NULL DEFAULT 0,
@@ -72,34 +73,6 @@ const List<String> initialSchema = [
   )
   ''',
   '''
-  CREATE TABLE websocket_connections (
-    session_id  INTEGER NOT NULL,
-    conn_id     INTEGER NOT NULL,
-    host        TEXT,
-    port        INTEGER,
-    path        TEXT,
-    started_ms  INTEGER,
-    isolate_id  TEXT,
-    PRIMARY KEY (session_id, conn_id),
-    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
-  )
-  ''',
-  '''
-  CREATE TABLE websocket_frames (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    session_id  INTEGER NOT NULL,
-    conn_id     INTEGER NOT NULL,
-    ts_ms       INTEGER,
-    direction   TEXT,
-    opcode      TEXT,
-    length      INTEGER,
-    is_text     INTEGER NOT NULL DEFAULT 0,
-    compressed  INTEGER NOT NULL DEFAULT 0,
-    preview     TEXT,
-    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
-  )
-  ''',
-  '''
   CREATE TABLE log_records (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id   INTEGER NOT NULL,
@@ -111,6 +84,7 @@ const List<String> initialSchema = [
     message      TEXT,
     error        TEXT,
     stack_trace  TEXT,
+    dedup_key    TEXT,
     FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
   )
   ''',
@@ -173,11 +147,61 @@ const List<String> initialSchema = [
   'CREATE INDEX idx_http_status ON http_requests(status_code)',
   'CREATE INDEX idx_http_isolate ON http_requests(session_id, isolate_id)',
   'CREATE INDEX idx_socket_session_start ON socket_events(session_id, start_us)',
-  'CREATE INDEX idx_ws_conn_session ON websocket_connections(session_id, started_ms)',
-  'CREATE INDEX idx_ws_frames_conn ON websocket_frames(session_id, conn_id, id)',
   'CREATE INDEX idx_logs_session_time ON log_records(session_id, timestamp_ms)',
   'CREATE INDEX idx_logs_level ON log_records(level)',
   'CREATE INDEX idx_logs_isolate ON log_records(session_id, isolate_id)',
+  'CREATE UNIQUE INDEX idx_logs_dedup ON log_records(session_id, dedup_key) '
+      'WHERE dedup_key IS NOT NULL',
+  '''
+  CREATE TABLE session_attachments (
+    session_id  INTEGER NOT NULL,
+    pid         INTEGER NOT NULL,
+    attached_at INTEGER NOT NULL,
+    PRIMARY KEY (session_id, pid),
+    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+  )
+  ''',
+  'CREATE UNIQUE INDEX idx_sessions_live_uri ON sessions(vm_service_uri) '
+      'WHERE vm_service_uri IS NOT NULL AND ended_at IS NULL',
+  '''
+  CREATE TABLE websocket_connections (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id         INTEGER NOT NULL,
+    conn_key           TEXT NOT NULL,
+    isolate_id         TEXT,
+    connection_id      INTEGER,
+    uri                TEXT,
+    uri_inferred       INTEGER NOT NULL DEFAULT 0,
+    connect_started_us INTEGER,
+    opened_us          INTEGER,
+    closed_us          INTEGER,
+    close_code         INTEGER,
+    close_reason       TEXT,
+    closed_by          TEXT,
+    error              TEXT,
+    http_status        INTEGER,
+    state              TEXT NOT NULL,
+    UNIQUE (session_id, conn_key),
+    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+  )
+  ''',
+  '''
+  CREATE TABLE websocket_messages (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id  INTEGER NOT NULL,
+    conn_key    TEXT NOT NULL,
+    ts_us       INTEGER NOT NULL,
+    direction   TEXT,
+    kind        TEXT NOT NULL,
+    bytes       INTEGER,
+    detail      TEXT,
+    dedup_key   TEXT,
+    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+  )
+  ''',
+  'CREATE INDEX idx_ws_messages_conn ON websocket_messages(session_id, conn_key, ts_us)',
+  'CREATE UNIQUE INDEX idx_ws_messages_dedup ON websocket_messages(session_id, dedup_key) '
+      'WHERE dedup_key IS NOT NULL',
   'CREATE INDEX idx_alerts_drained ON alerts(drained, severity, ts_ms)',
   '''
   CREATE TABLE redacted_headers (
@@ -351,48 +375,6 @@ const List<String> migrationV6toV7 = [
   'CREATE INDEX IF NOT EXISTS idx_tool_events_tool ON tool_events(tool, ts_ms)',
 ];
 
-/// v10 -> v11: WebSocket frame capture (0.9.0, shelved companion). The dart:io
-/// VM profiler stops at the HTTP upgrade, so post-upgrade frames are invisible
-/// to getHttpProfile. The `flutter_network_mcp_hooks` companion captures frames
-/// in-app; the MCP drains them over `ext.flutter_network_mcp.getRealtimeProfile`
-/// into these two tables. Apps without the companion leave them empty.
-///
-/// Renumbered from v9->v10 to v10->v11: master took v10 for the capture_allow
-/// table (#64), so the shelved WS tables move one slot up to keep this branch
-/// mergeable with master without a version collision.
-const List<String> migrationV10toV11 = [
-  '''
-  CREATE TABLE IF NOT EXISTS websocket_connections (
-    session_id  INTEGER NOT NULL,
-    conn_id     INTEGER NOT NULL,
-    host        TEXT,
-    port        INTEGER,
-    path        TEXT,
-    started_ms  INTEGER,
-    isolate_id  TEXT,
-    PRIMARY KEY (session_id, conn_id),
-    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
-  )
-  ''',
-  '''
-  CREATE TABLE IF NOT EXISTS websocket_frames (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    session_id  INTEGER NOT NULL,
-    conn_id     INTEGER NOT NULL,
-    ts_ms       INTEGER,
-    direction   TEXT,
-    opcode      TEXT,
-    length      INTEGER,
-    is_text     INTEGER NOT NULL DEFAULT 0,
-    compressed  INTEGER NOT NULL DEFAULT 0,
-    preview     TEXT,
-    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
-  )
-  ''',
-  'CREATE INDEX IF NOT EXISTS idx_ws_conn_session ON websocket_connections(session_id, started_ms)',
-  'CREATE INDEX IF NOT EXISTS idx_ws_frames_conn ON websocket_frames(session_id, conn_id, id)',
-];
-
 /// v7 -> v8: token-usage tracking. Adds [estimated_tokens] to [tool_events]
 /// (result_bytes / 4, a UTF-8 approximation). Surfaced in [usage_stats] as
 /// avgEstimatedTokens and totalEstimatedTokens per tool.
@@ -420,4 +402,95 @@ const List<String> migrationV9toV10 = [
     reason    TEXT
   )
   ''',
+];
+
+/// v10 -> v11: redirect chain (audit F22). dart:io collapses a followed
+/// redirect chain into ONE profile entry with a `redirects` list of
+/// {location, method, statusCode} hops; we persist it as JSON so
+/// network_get can surface the chain and HAR export can fill redirectURL.
+const List<String> migrationV10toV11 = [
+  'ALTER TABLE http_requests ADD COLUMN redirects_json TEXT',
+];
+
+/// v12 (#97): one open session row per live VM URI. Several server processes
+/// (one per MCP-client window) each attached to the same app and blind-inserted
+/// a row, so one run showed as 4-5 duplicate sessions differing only by cwd.
+/// Close pre-existing duplicate open rows (keep the lowest id per URI) so the
+/// index below can be built, then enforce uniqueness on the live URI going
+/// forward; createSession reuses the open row instead of inserting a second.
+const List<String> migrationV11toV12 = [
+  "UPDATE sessions "
+      "SET ended_at = CAST(strftime('%s','now') AS INTEGER) * 1000, "
+      "note = COALESCE(note || ' ', '') || '[deduped]' "
+      "WHERE ended_at IS NULL AND vm_service_uri IS NOT NULL AND id NOT IN ("
+      "  SELECT MIN(id) FROM sessions "
+      "  WHERE ended_at IS NULL AND vm_service_uri IS NOT NULL "
+      "  GROUP BY vm_service_uri)",
+  "CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_live_uri "
+      "ON sessions(vm_service_uri) "
+      "WHERE vm_service_uri IS NOT NULL AND ended_at IS NULL",
+];
+
+/// v13 (#97 follow-up): several server processes share one session row, so a
+/// row ends only when its last live process leaves (session_attachments), and
+/// each log record is stored once however many processes receive it
+/// (dedup_key). Also builds the v12 live-URI index on databases that were
+/// created fresh at v12, whose initial schema lacked it.
+const List<String> migrationV12toV13 = [
+  '''
+  CREATE TABLE IF NOT EXISTS session_attachments (
+    session_id  INTEGER NOT NULL,
+    pid         INTEGER NOT NULL,
+    attached_at INTEGER NOT NULL,
+    PRIMARY KEY (session_id, pid),
+    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+  )
+  ''',
+  'ALTER TABLE log_records ADD COLUMN dedup_key TEXT',
+  'CREATE UNIQUE INDEX IF NOT EXISTS idx_logs_dedup '
+      'ON log_records(session_id, dedup_key) WHERE dedup_key IS NOT NULL',
+  ...migrationV11toV12,
+];
+
+/// v14: WebSocket capture with no app code. dart:io writes a `WebSocket.*` timeline event for each connect, message, ping/pong, close and error (direction, type and size, never contents); the capture writer reads them from the VM timeline into these tables.
+const List<String> migrationV13toV14 = [
+  '''
+    CREATE TABLE IF NOT EXISTS websocket_connections (
+      id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id         INTEGER NOT NULL,
+      conn_key           TEXT NOT NULL,
+      isolate_id         TEXT,
+      connection_id      INTEGER,
+      uri                TEXT,
+      uri_inferred       INTEGER NOT NULL DEFAULT 0,
+      connect_started_us INTEGER,
+      opened_us          INTEGER,
+      closed_us          INTEGER,
+      close_code         INTEGER,
+      close_reason       TEXT,
+      closed_by          TEXT,
+      error              TEXT,
+      http_status        INTEGER,
+      state              TEXT NOT NULL,
+      UNIQUE (session_id, conn_key),
+      FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+    )
+    ''',
+  '''
+    CREATE TABLE IF NOT EXISTS websocket_messages (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id  INTEGER NOT NULL,
+      conn_key    TEXT NOT NULL,
+      ts_us       INTEGER NOT NULL,
+      direction   TEXT,
+      kind        TEXT NOT NULL,
+      bytes       INTEGER,
+      detail      TEXT,
+      dedup_key   TEXT,
+      FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+    )
+    ''',
+  'CREATE INDEX IF NOT EXISTS idx_ws_messages_conn ON websocket_messages(session_id, conn_key, ts_us)',
+  'CREATE UNIQUE INDEX IF NOT EXISTS idx_ws_messages_dedup ON websocket_messages(session_id, dedup_key) '
+      'WHERE dedup_key IS NOT NULL',
 ];

@@ -13,8 +13,11 @@ import '../storage/capture_writer.dart';
 import '../storage/captures_db.dart';
 import '../vm/dtd_probe.dart';
 import '../vm/log_stream.dart';
+import '../vm/native_log_source.dart';
 import '../vm/vm_client.dart';
+import 'error_kind.dart';
 import 'result.dart';
+import '../vm/vm_uri.dart';
 
 /// One connected app flattened out of a [DtdProbe] listing, tagged with the
 /// DTD that owns it. Used to resolve `appNameContains` across every DTD.
@@ -76,8 +79,9 @@ final networkAttachTool = Tool(
       ),
       'logBufferSize': Schema.int(
         description:
-            'Per-session log ring capacity (50-10000). Overrides the env '
-            'default (500); raise it for chatty apps.',
+            'Per-session log ring capacity (50-20000). Overrides the env '
+            'default (2000, or auto_attach_config logBufferSize); raise it '
+            'for chatty apps.',
       ),
       'reattach': Schema.bool(
         description:
@@ -85,18 +89,41 @@ final networkAttachTool = Tool(
             'package+device) instead of starting a new one. Pair with '
             'appNameContains.',
       ),
+      'nativeLogs': Schema.bool(
+        description:
+            'Also stream the device\'s native log for this app (simctl log '
+            'stream / adb logcat) into logs_tail as source:"native", so '
+            'native SDK output is readable. Default: auto_attach_config '
+            'nativeLogs (false).',
+      ),
     },
   ),
 );
 
-/// Reads `FLUTTER_NETWORK_MCP_MAX_ATTACH` env var (1–32). Default 4.
+/// Reads `FLUTTER_NETWORK_MCP_MAX_ATTACH` env var (1–32). Default 8; only
+/// live sessions count, dead ones are evicted by the heartbeat.
 int _maxAttachFromEnv() {
   final raw = io.Platform.environment['FLUTTER_NETWORK_MCP_MAX_ATTACH'];
   final parsed = raw == null ? null : int.tryParse(raw);
-  if (parsed == null) return 4;
+  if (parsed == null) return 8;
   if (parsed < 1) return 1;
   if (parsed > 32) return 32;
   return parsed;
+}
+
+/// Attach targets currently being connected. Auto-attach, the migration
+/// watcher and a manual call can all race for the same app; the first one
+/// in owns it, the rest are told to wait instead of creating a twin session.
+class AttachInFlight {
+  AttachInFlight._();
+  static final AttachInFlight instance = AttachInFlight._();
+  final Set<String> _keys = {};
+
+  /// True when [key] was free and is now held.
+  bool claim(String key) => _keys.add(key);
+  void release(String key) => _keys.remove(key);
+  bool holds(String key) => _keys.contains(key);
+  Set<String> get keys => Set.unmodifiable(_keys);
 }
 
 FutureOr<CallToolResult> networkAttach(
@@ -109,10 +136,34 @@ FutureOr<CallToolResult> networkAttach(
     vmServiceUri: args['vmServiceUri'] as String?,
     appNameContains: args['appNameContains'] as String?,
     logBufferSize: args['logBufferSize'] as int?,
+    nativeLogs: args['nativeLogs'] as bool?,
     reattach: (args['reattach'] as bool?) ?? false,
     defaultDtdUri: defaultDtdUri,
   );
+  if (result['error'] == null) {
+    closeStaleViewAfterAttach(result);
+  }
   return jsonResult(result, isError: result['error'] != null);
+}
+
+/// D2/F4: an open session_open view silently outranks a fresh live attach
+/// in scope resolution, so the very next bare read returns stale history
+/// while the agent believes it is reading the app it just attached. On the
+/// AGENT-INITIATED attach paths (this tool + network_status attachIfOne) we
+/// close the view and say so. Background attaches (auto-attach watcher,
+/// hot-restart migrator) must never yank a deliberately opened view — they
+/// rely on the resolveScope shadow note instead.
+void closeStaleViewAfterAttach(Map<String, Object?> result) {
+  final viewed = Session.instance.viewedSessionId;
+  if (viewed == null) return;
+  Session.instance.viewedSessionId = null;
+  final warnings =
+      (result['warnings'] as List?)?.cast<String>().toList() ?? <String>[];
+  warnings.add(
+    'Closed the open history view of session $viewed — reads now target '
+    'the live session; session_open id:$viewed to reopen it.',
+  );
+  result['warnings'] = warnings;
 }
 
 /// Shared attach implementation. Returns a Map suitable for [jsonResult].
@@ -121,7 +172,7 @@ FutureOr<CallToolResult> networkAttach(
 /// **Multi-attach (Phase 5):** the old "any attach blocks attach" rule +
 /// force:true escape hatch is replaced by a per-vmServiceUri duplicate
 /// guard. Multiple distinct apps can attach concurrently up to
-/// FLUTTER_NETWORK_MCP_MAX_ATTACH (default 4).
+/// FLUTTER_NETWORK_MCP_MAX_ATTACH (default 8).
 ///
 /// Exported so [networkStatus] can reuse it for `attachIfOne:true`.
 Future<Map<String, Object?>> performAttach({
@@ -131,35 +182,105 @@ Future<Map<String, Object?>> performAttach({
   int? logBufferSize,
   bool reattach = false,
   String? defaultDtdUri,
+  bool? nativeLogs,
 }) async {
   final session = Session.instance;
   final registry = SessionRegistry.instance;
 
-  // Cap check first — cheap and rejects without any IO.
+  // Cap check first — cheap and rejects without any IO. Dead sessions never
+  // count: a silent VM is evicted by the heartbeat, and a suspect one is
+  // checked right here before we refuse.
   final maxAttach = _maxAttachFromEnv();
-  if (registry.attachedCount >= maxAttach) {
+  if (registry.liveCount >= maxAttach) {
+    await registry.heartbeatOnce();
+  }
+  if (registry.liveCount >= maxAttach) {
     return {
       'error':
-          'Reached max attached sessions ($maxAttach). Detach one first or '
-          'raise FLUTTER_NETWORK_MCP_MAX_ATTACH.',
+          'Reached max attached sessions ($maxAttach live). Detach one first '
+          '(network_detach keep:true frees the slot without ending the '
+          'session) or raise FLUTTER_NETWORK_MCP_MAX_ATTACH.',
+      'errorKind': ErrorKind.badArgument.wire,
       'attached': [
         for (final a in registry.attached.values)
           {'sessionId': a.id, 'appName': a.appName},
       ],
       'maxAttach': maxAttach,
+      'retryable': false,
       'nextSteps': [
         for (final a in registry.attached.values)
-          'network_detach sessionId:${a.id}  // ${a.appName ?? "(no name)"}',
+          'network_detach sessionId:${a.id} keep:true  // ${a.appName ?? "(no name)"}',
         'network_detach all:true — drop everything',
       ],
     };
   }
+
+  final requestKey = vmServiceUri ??
+      (appNameContains != null ? 'app:$appNameContains' : 'dtd:${dtdUri ?? defaultDtdUri ?? ""}');
+  final inFlight = AttachInFlight.instance;
+  if (!inFlight.claim(requestKey)) {
+    return {
+      'error': 'An attach to "$requestKey" is already in progress.',
+      'errorKind': ErrorKind.timeout.wire,
+      'nextSteps': const [
+        'Wait a moment, then network_status — the session will be listed under attached',
+      ],
+    };
+  }
+  String? resolvedKey;
+  int? createdSid;
+  try {
+    return await _performAttachLocked(
+      session: session,
+      registry: registry,
+      inFlight: inFlight,
+      dtdUri: dtdUri,
+      vmServiceUri: vmServiceUri,
+      appNameContains: appNameContains,
+      logBufferSize: logBufferSize,
+      reattach: reattach,
+      defaultDtdUri: defaultDtdUri,
+      nativeLogs: nativeLogs ?? AutoAttachConfig.nativeLogs,
+      onResolved: (uri) {
+        if (uri != requestKey && !inFlight.claim(uri)) return false;
+        if (uri != requestKey) resolvedKey = uri;
+        return true;
+      },
+      onSessionCreated: (sid) => createdSid = sid,
+    );
+  } finally {
+    inFlight.release(requestKey);
+    if (resolvedKey != null) inFlight.release(resolvedKey!);
+    final sid = createdSid;
+    if (sid != null && registry.attachedById(sid) == null) {
+      try {
+        CapturesDao().leaveSession(sid);
+      } catch (_) {/* best effort */}
+    }
+  }
+}
+
+Future<Map<String, Object?>> _performAttachLocked({
+  required Session session,
+  required SessionRegistry registry,
+  required AttachInFlight inFlight,
+  required String? dtdUri,
+  required String? vmServiceUri,
+  required String? appNameContains,
+  required int? logBufferSize,
+  required bool reattach,
+  required String? defaultDtdUri,
+  required bool nativeLogs,
+  required bool Function(String resolvedUri) onResolved,
+  required void Function(int sid) onSessionCreated,
+}) async {
 
   // Per-attach resources are constructed locally and only become visible
   // to other tools after the AttachedSession is registered. If anything
   // fails mid-setup, the catch block tears them down directly so nothing
   // leaks into the registry.
   VmClient? localVm;
+  String? nativeFailure;
   CaptureWriter? localCaptureWriter;
   LogStreamSubscriber? localLogStream;
   bool dtdWasConnectedBefore = registry.dtd.isConnected;
@@ -169,7 +290,7 @@ Future<Map<String, Object?>> performAttach({
     String? appName;
 
     if (vmServiceUri != null) {
-      resolvedVmServiceUri = vmServiceUri;
+      resolvedVmServiceUri = canonicalVmServiceUri(vmServiceUri);
       // Resolve the app name for this URI from DTD. Without it, attaching by
       // raw vmServiceUri leaves appName null, which (a) breaks identity-based
       // reattach (#16: the auto-migration watcher and auto-attach both attach
@@ -182,7 +303,7 @@ Future<Map<String, Object?>> performAttach({
         outer:
         for (final l in listings) {
           for (final a in l.apps) {
-            if (a.uri == resolvedVmServiceUri) {
+            if (canonicalVmServiceUri(a.uri) == resolvedVmServiceUri) {
               appName = a.name;
               break outer;
             }
@@ -213,6 +334,7 @@ Future<Map<String, Object?>> performAttach({
                   'running in debug mode?'
               : 'No app name contains "$appNameContains" on any running DTD. '
                   'Visible apps: ${allNames.join(', ')}.',
+          'errorKind': ErrorKind.notFound.wire,
           'apps': [
             for (final a in apps)
               {'name': a.name, 'uri': a.uri, 'dtdUri': a.dtdUri.toString()},
@@ -228,6 +350,8 @@ Future<Map<String, Object?>> performAttach({
         return {
           'error': 'Multiple apps across DTDs match "$appNameContains"; pass a '
               'more specific substring or an explicit `vmServiceUri`.',
+          'errorKind': ErrorKind.badArgument.wire,
+          'retryable': false,
           'apps': [
             for (final m in matches)
               {'name': m.name, 'uri': m.uri, 'dtdUri': m.dtdUri.toString()},
@@ -239,7 +363,7 @@ Future<Map<String, Object?>> performAttach({
         };
       }
       final match = matches.single;
-      resolvedVmServiceUri = match.uri;
+      resolvedVmServiceUri = canonicalVmServiceUri(match.uri);
       appName = match.name;
       // Parity with the single-DTD path: point the session DTD at the DTD
       // that actually owns this app (best-effort; the VM attach below is
@@ -255,6 +379,7 @@ Future<Map<String, Object?>> performAttach({
               'No DTD URI provided and no default configured. Pass '
               '`dtdUri` or `vmServiceUri`, or have the user configure '
               'a default at server startup.',
+          'errorKind': ErrorKind.badArgument.wire,
           'nextSteps': const [
             'Ask the user for the DTD URI (printed in the IDE console after `flutter run`)',
             'Update --dtd-uri in .mcp.json and have the user restart Claude Code',
@@ -266,6 +391,7 @@ Future<Map<String, Object?>> performAttach({
       if (apps.isEmpty) {
         return {
           'error': 'DTD is up but reports no connected apps yet.',
+          'errorKind': ErrorKind.notFound.wire,
           'nextSteps': [
             'Launch a Flutter app in debug mode',
             'Re-check via network_status',
@@ -285,6 +411,7 @@ Future<Map<String, Object?>> performAttach({
             'error':
                 'No DTD app name contains "$appNameContains". '
                 'Visible apps: ${apps.map((a) => a.name).join(', ')}.',
+            'errorKind': ErrorKind.notFound.wire,
             'apps': [
               for (final a in apps) {'name': a.name, 'uri': a.uri},
             ],
@@ -300,6 +427,8 @@ Future<Map<String, Object?>> performAttach({
         return {
           'error': 'DTD has multiple matching apps; pass `appNameContains` or '
               'an explicit `vmServiceUri`.',
+          'errorKind': ErrorKind.badArgument.wire,
+          'retryable': false,
           'apps': [
             for (final a in filtered) {'name': a.name, 'uri': a.uri},
           ],
@@ -309,23 +438,41 @@ Future<Map<String, Object?>> performAttach({
           ],
         };
       }
-      resolvedVmServiceUri = filtered.single.uri;
+      resolvedVmServiceUri = canonicalVmServiceUri(filtered.single.uri);
       appName = filtered.single.name;
     }
 
     // Per-URI duplicate guard — replaces the old force:true gate. Same
     // app can't be attached twice; different apps can coexist.
+    if (!onResolved(resolvedVmServiceUri)) {
+      return {
+        'error': 'An attach to $resolvedVmServiceUri is already in progress.',
+        'errorKind': ErrorKind.timeout.wire,
+        'nextSteps': const [
+          'Wait a moment, then network_status — the session will be listed under attached',
+        ],
+      };
+    }
     final existing = registry.attachedByUri(resolvedVmServiceUri);
     if (existing != null) {
+      // The caller's goal (capture from this app) already holds: hand back the live session.
       return {
-        'error':
-            'Already attached to "${existing.appName ?? "(unknown app)"}" '
-            'at $resolvedVmServiceUri (session ${existing.id}).',
-        'attachedSessionId': existing.id,
-        'attachedAppName': existing.appName,
+        'attached': true,
+        'alreadyAttached': true,
+        'summary': 'Already attached to ${existing.appName ?? "this app"} in '
+            'session ${existing.id}; reusing it, nothing new was started.',
+        'scope': {
+          'sessionId': existing.id,
+          if (existing.appName != null) 'appName': existing.appName,
+          'isLive': true,
+        },
+        'appName': existing.appName,
+        'vmServiceUri': resolvedVmServiceUri,
+        'liveSessionId': existing.id,
+        'attachedCount': registry.attachedCount,
         'nextSteps': [
-          'network_detach sessionId:${existing.id} — drop this attachment first',
-          'Read from the existing session: network_list sessionId:${existing.id}',
+          'network_list sessionId:${existing.id} — read what it has captured',
+          'network_detach sessionId:${existing.id} then attach again for a fresh session',
         ],
       };
     }
@@ -335,7 +482,8 @@ Future<Map<String, Object?>> performAttach({
     final vm = localVm = VmClient();
     final captureWriter = localCaptureWriter = CaptureWriter();
     final logBuffer = LogBuffer(
-      capacity: logBufferSize?.clamp(50, 10000),
+      capacity: (logBufferSize ?? AutoAttachConfig.logBufferSize)
+          ?.clamp(50, LogBuffer.maxCapacity),
     );
     final logStream = localLogStream = LogStreamSubscriber();
 
@@ -353,6 +501,19 @@ Future<Map<String, Object?>> performAttach({
         'No running isolate exposes dart:io HTTP profiling. '
         'Is the target a Flutter/Dart app that uses HttpClient / package:http?',
       );
+    }
+
+    // F17: how long was the app running BEFORE this attach? dart:io profiling
+    // records nothing before it is enabled, so any HTTP/socket traffic in
+    // that window is simply absent — an agent attaching to an already-running
+    // app must be told, or it will read an "empty" capture as a broken tool.
+    int? preAttachMs;
+    final vmStart = await vm.vmStartTimeMs();
+    if (vmStart != null) {
+      final up = DateTime.now().millisecondsSinceEpoch - vmStart;
+      // Only meaningful past a few seconds (below that, attach effectively
+      // coincides with app start and nothing was missed).
+      if (up > 5000) preAttachMs = up;
     }
     final primaryIsolateId = allIsolates.first.id;
 
@@ -400,14 +561,14 @@ Future<Map<String, Object?>> performAttach({
     final String? previousVmServiceUri;
     final int reattachCount;
     if (reattachPrior != null) {
-      sid = reattachPrior.id;
       previousVmServiceUri = reattachPrior.vmServiceUri;
       reattachCount = reattachPrior.reattachCount + 1;
-      dao.repointSession(
-        sid,
+      sid = dao.repointSession(
+        reattachPrior.id,
         vmServiceUri: resolvedVmServiceUri,
         isolateId: isolateId,
       );
+      dao.attachProcess(sid);
       // Dispose the stale session's resources (its VM is already gone after
       // the restart, so disconnect is best-effort) and free the old URI key.
       try {
@@ -430,7 +591,10 @@ Future<Map<String, Object?>> performAttach({
         isolateId: isolateId,
         projectPath: io.Directory.current.path,
       );
+      dao.attachProcess(sid);
+      onSessionCreated(sid);
     }
+    registry.forgetDead(sid);
 
     if (caps.isEnabled(Category.logs)) {
       await logStream.start(
@@ -447,6 +611,17 @@ Future<Map<String, Object?>> performAttach({
 
     // Publish the fully-built session to the registry. After this point,
     // Session.instance's delegated getters reflect this attach.
+    NativeLogSource? nativeSource;
+    if (nativeLogs && caps.isEnabled(Category.logs)) {
+      final candidate = NativeLogSource();
+      final ok = await candidate.start(
+        appName: appName,
+        buffer: logBuffer,
+        sessionIdProvider: () => sid,
+      );
+      nativeSource = ok ? candidate : null;
+      if (!ok) nativeFailure = candidate.detail;
+    }
     SessionRegistry.instance.register(
       AttachedSession(
         id: sid,
@@ -463,7 +638,9 @@ Future<Map<String, Object?>> performAttach({
         lastReattachAt: reattachPrior != null ? DateTime.now() : null,
         previousVmServiceUri: previousVmServiceUri,
         reattachCount: reattachCount,
-      ),
+        projectPath: io.Directory.current.path,
+        preAttachUptimeMs: reattachPrior == null ? preAttachMs : null,
+      )..nativeLog = nativeSource,
     );
 
     // 0.7.3: persist the current attachment set so a future Claude Code
@@ -476,6 +653,16 @@ Future<Map<String, Object?>> performAttach({
 
     // Synthesize warnings for partial degradation.
     final warnings = <String>[];
+    if (preAttachMs != null && reattachPrior == null) {
+      warnings.add(
+        'This app was already running ~${_humanizeMs(preAttachMs)} before '
+        'attach. Capture starts NOW — any HTTP/socket traffic before this '
+        'moment was NOT recorded (dart:io profiling only captures from '
+        'attach onward). A near-empty capture here means the traffic '
+        'predated the attach, not that the app is idle; drive the app (or '
+        'hot-restart it) to generate fresh captured traffic.',
+      );
+    }
     if (!httpEnabled) {
       warnings.add(
         'HTTP timeline logging did not enable cleanly — captured requests may be incomplete.',
@@ -491,6 +678,12 @@ Future<Map<String, Object?>> performAttach({
         'log stream subscription did not start — logs_tail will be empty.',
       );
     }
+    if (nativeLogs && nativeSource == null) {
+      warnings.add(
+        'native log stream not started — ${nativeFailure ?? "device or tool not found"}; '
+        'Dart logs are unaffected.',
+      );
+    }
 
     // Capability-aware nextSteps for the post-attach read tools.
     final readTools = <String>[];
@@ -498,7 +691,6 @@ Future<Map<String, Object?>> performAttach({
     if (caps.isEnabled(Category.logs) && logStream.isActive) {
       readTools.add('logs_tail');
     }
-    if (caps.isEnabled(Category.alerts)) readTools.add('alerts_drain');
     final secondStep = readTools.isEmpty
         ? 'Then read via the enabled tools (see network_status.capabilities)'
         : 'Then call ${readTools.join(' / ')}';
@@ -544,9 +736,31 @@ Future<Map<String, Object?>> performAttach({
       'isolateId': isolateId,
       'liveSessionId': sid,
       if (reattachPrior != null) 'reattached': true,
+      // F25: a reattach request that matched nothing must not degrade
+      // silently into a fresh session — say it and say why.
+      if (reattach && reattachPrior == null) ...{
+        'reattachRequested': true,
+        'reattachMatched': false,
+        'reattachMissReason': appName == null
+            ? 'the attach target has no DTD app name (raw vmServiceUri '
+                'attach), so there is no identity to match a prior session '
+                'against — a NEW session was started'
+            : 'no attached session shares this app\'s identity '
+                '(package + device) under a stale VM URI — a NEW session '
+                'was started',
+      },
       if (previousVmServiceUri != null)
         'previousVmServiceUri': previousVmServiceUri,
       'socketProfilingEnabled': socketEnabled,
+      // F17: machine-readable companion to the pre-attach warning above.
+      if (preAttachMs != null && reattachPrior == null)
+        'preAttachUptimeMs': preAttachMs,
+      if (nativeSource != null)
+        'nativeLogs': {
+          'active': true,
+          'platform': nativeSource.platform,
+          'detail': nativeSource.detail,
+        },
       'capabilities': capState.capabilities,
       if (capState.degraded.isNotEmpty) 'degraded': capState.degraded,
       'attachedCount': registry.attachedCount,
@@ -556,7 +770,9 @@ Future<Map<String, Object?>> performAttach({
       'nextSteps': [
         'Drive the app to generate traffic',
         if (registry.attachedCount > 1)
-          'Subsequent reads need sessionId:$sid (or appNameContains) to disambiguate'
+          'Bare reads target the session for this project, else the most '
+              'recently used one (the reply\'s scope.pickedBy says which); '
+              'pass sessionId:$sid to be explicit'
         else
           secondStep,
         if (autoAttachSuggestion != null)
@@ -580,6 +796,7 @@ Future<Map<String, Object?>> performAttach({
     final isZombie = msg.contains('did not respond to getVersion');
     return {
       'error': 'Attach failed: $msg',
+      'errorKind': attachFailureKind(e).wire,
       'nextSteps': isZombie
           ? const [
               'Restart the Flutter app to spawn a fresh DTD/DDS',
@@ -590,6 +807,27 @@ Future<Map<String, Object?>> performAttach({
             ],
     };
   }
+}
+
+ErrorKind attachFailureKind(Object e) {
+  if (e is VmRpcTimeoutException || e is TimeoutException) {
+    return ErrorKind.unresponsiveVm;
+  }
+  if (e is FormatException || e is ArgumentError) return ErrorKind.badArgument;
+  final msg = e.toString();
+  if (msg.contains('did not respond to getVersion')) {
+    return ErrorKind.unresponsiveVm;
+  }
+  if (msg.contains('No running isolate exposes')) return ErrorKind.notFound;
+  if (e is io.SocketException ||
+      e is io.WebSocketException ||
+      e is io.HttpException ||
+      msg.contains('WebSocketChannelException') ||
+      msg.contains('Connection refused') ||
+      msg.contains('Connection closed')) {
+    return ErrorKind.unresponsiveVm;
+  }
+  return ErrorKind.internal;
 }
 
 /// Builds an onboarding hint asking the agent to PROMPT the user about
@@ -660,4 +898,15 @@ String _extractPattern(String appName) {
   final idx = appName.indexOf(marker);
   if (idx == -1) return appName.trim();
   return appName.substring(idx + marker.length).trim();
+}
+
+/// Coarse human duration for the F17 pre-attach note ("3m", "2h", "1d").
+String _humanizeMs(int ms) {
+  final s = ms ~/ 1000;
+  if (s < 90) return '${s}s';
+  final m = s ~/ 60;
+  if (m < 90) return '${m}m';
+  final h = m ~/ 60;
+  if (h < 48) return '${h}h';
+  return '${h ~/ 24}d';
 }

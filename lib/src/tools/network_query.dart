@@ -14,8 +14,23 @@ final networkQueryTool = Tool(
       'Read-only SELECT against the captures DB for what the typed tools '
       'cannot express (cross-session aggregates, percentile timings, joins, '
       'top error URLs). Single statement, 500-row cap; BLOB cells return '
-      '{type:"blob",size}. Schema in docs/tools/power/network_query.md. Prefer '
-      'the typed tools first.',
+      '{type:"blob",size}. Prefer the typed tools first.\n'
+      'Key columns (*_us are microseconds; *_ms, started_at, ended_at are '
+      'milliseconds): '
+      'http_requests(session_id, vm_id, method, url, host, path, status_code, '
+      'start_us, end_us, duration_us, request_size, response_size, '
+      'content_type, has_error, isolate_id, redirects_json); '
+      'sessions(id, started_at, ended_at, app_name, vm_service_uri); '
+      'log_records(id, session_id, source, level, logger, message, '
+      'timestamp_ms); '
+      'socket_events(session_id, vm_id, address, port, read_bytes, '
+      'write_bytes); '
+      'websocket_connections(id, session_id, conn_key, uri, state, opened_us, '
+      'closed_us, close_code, error); '
+      'websocket_messages(session_id, conn_key, ts_us, direction, kind, bytes); '
+      'alerts(session_id, ts_ms, severity, kind, title, drained). A failed query '
+      'returns the live `schema` map; full guide at resource '
+      'flutter-network://docs/tools/power/network_query.md.',
   inputSchema: Schema.object(
     properties: {
       'sql': Schema.string(
@@ -66,6 +81,9 @@ FutureOr<CallToolResult> networkQuery(CallToolRequest request) async {
 
     return jsonResult({
       'summary': summary,
+      // F14: every sibling read tool honors the session_open view; SQL
+      // deliberately does not — say so instead of leaving it implicit.
+      'scope': 'all-sessions',
       'rowCount': rowCount,
       if (warnings.isNotEmpty) 'warnings': warnings,
       'nextSteps': const [

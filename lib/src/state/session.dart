@@ -1,8 +1,16 @@
+import 'dart:async' show Timer, unawaited;
+import 'dart:io' as io;
+
+import 'package:vm_service/vm_service.dart' show HttpProfileRequest;
+
 import '../storage/capture_writer.dart';
+import '../storage/captures_db.dart';
 import '../vm/dtd_client.dart';
 import '../vm/log_stream.dart';
+import '../vm/native_log_source.dart';
 import '../vm/vm_client.dart';
 import 'log_buffer.dart';
+import '../vm/vm_uri.dart';
 
 /// Process-lifetime singleton owning the DTD connection and exposing
 /// backwards-compat getters for the per-attach resources that have moved
@@ -100,6 +108,49 @@ class Session {
 /// **Phase 2 status:** the resources are now per-attach (constructed fresh
 /// by `network_attach`). Multiple AttachedSessions can coexist in the
 /// registry once Phase 5 lifts the single-attach guard.
+/// RC4: record of a session that ended because its app process died while
+/// attached (vs an explicit network_detach).
+/// A session whose VM stopped answering (app exited, restarted, device gone).
+/// Kept so status can name it, reads against it can say so, and the slot it
+/// held is free. Its capture stays in the DB as history.
+class DeadSession {
+  DeadSession({
+    required this.sessionId,
+    required this.appName,
+    required this.vmServiceUri,
+    required this.diedAt,
+    required this.reason,
+    this.projectPath,
+  });
+
+  final int sessionId;
+  final String? appName;
+  final String vmServiceUri;
+  final DateTime diedAt;
+  final String reason;
+  final String? projectPath;
+
+  Map<String, Object?> toJson() => {
+        'sessionId': sessionId,
+        if (appName != null) 'appName': appName,
+        'vmServiceUri': vmServiceUri,
+        'diedAtMs': diedAt.millisecondsSinceEpoch,
+        'reason': reason,
+      };
+}
+
+class EndedByAppExit {
+  EndedByAppExit({
+    required this.sessionId,
+    required this.appName,
+    required this.diedAt,
+  });
+
+  final int sessionId;
+  final String? appName;
+  final DateTime diedAt;
+}
+
 class AttachedSession {
   AttachedSession({
     required this.id,
@@ -116,7 +167,9 @@ class AttachedSession {
     this.lastReattachAt,
     this.previousVmServiceUri,
     this.reattachCount = 0,
-  });
+    this.projectPath,
+    this.preAttachUptimeMs,
+  }) : lastActivityMs = DateTime.now().millisecondsSinceEpoch;
 
   /// DB row id in `sessions` table — the canonical anchor for routing.
   final int id;
@@ -139,10 +192,12 @@ class AttachedSession {
 
   final DateTime attachedAt;
 
-  /// Capture state captured at attach-time. Immutable for the lifetime of
-  /// the session (the streams either enabled cleanly or they didn't).
-  final bool httpProfilingEnabled;
-  final bool socketProfilingEnabled;
+  /// Capture state, first set at attach. D9 (audit F28): mutable so the
+  /// capture writer's rescan can flip a `false` to `true` when a stream
+  /// that lost the attach-time race finally enables — a degraded attach
+  /// now self-heals instead of staying degraded for the whole session.
+  bool httpProfilingEnabled;
+  bool socketProfilingEnabled;
 
   /// Set when this session id was carried across a hot-restart reattach
   /// (issue #16): the wall-clock of the most recent migration, and the VM
@@ -158,6 +213,34 @@ class AttachedSession {
 
   /// Mutable: updated by network_list when caller omits `since`.
   DateTime? lastHttpCursor;
+
+  /// Per-isolate incremental cursor, so one failing isolate keeps its own
+  /// place without holding the others back; absent keys use [lastHttpCursor].
+  final Map<String, DateTime?> httpCursorByIsolate = {};
+
+  /// Live requests a network_list read fetched but did not return (past
+  /// `limit` or the token budget), by id; the next incremental read returns them.
+  final Map<String, (HttpProfileRequest, String)> unreturnedHttp = {};
+
+  /// Working directory of the server that attached this session — the
+  /// project the caller is most likely asking about.
+  final String? projectPath;
+
+  /// Last read or capture write, for "most recently active" scope picking.
+  int lastActivityMs;
+
+  /// How long the app had been running before this attach, when known and
+  /// over 5s — what the capture cannot contain.
+  final int? preAttachUptimeMs;
+
+  /// `logBuffer.droppedTotal` at the last logs_tail read, so the next read
+  /// can say how many records rotated out in between.
+  int lastReportedDropped = 0;
+
+  /// The device's native log stream, when nativeLogs was requested.
+  NativeLogSource? nativeLog;
+
+  void touch() => lastActivityMs = DateTime.now().millisecondsSinceEpoch;
 
   /// Live snapshot of every HTTP-profiling isolate the capture writer is
   /// polling for this session. Delegates to the VmClient so the list stays
@@ -192,7 +275,7 @@ class SessionRegistry {
   int get attachedCount => _attached.length;
 
   AttachedSession? attachedByUri(String vmServiceUri) =>
-      _attached[vmServiceUri];
+      _attached[canonicalVmServiceUri(vmServiceUri)];
 
   AttachedSession? attachedById(int sessionId) {
     for (final s in _attached.values) {
@@ -215,23 +298,155 @@ class SessionRegistry {
   AttachedSession? get soleAttached =>
       _attached.length == 1 ? _attached.values.first : null;
 
+  /// Live sessions only — dead ones have already been evicted.
+  int get liveCount => _attached.length;
+
+  /// The live session touched most recently, or null when none is attached.
+  AttachedSession? get mostRecentLive {
+    AttachedSession? best;
+    for (final s in _attached.values) {
+      if (best == null || s.lastActivityMs > best.lastActivityMs) best = s;
+    }
+    return best;
+  }
+
+  /// Live sessions attached from [projectPath] (exact match), most recent first.
+  List<AttachedSession> liveForProject(String projectPath) =>
+      _attached.values.where((s) => s.projectPath == projectPath).toList()
+        ..sort((a, b) => b.lastActivityMs.compareTo(a.lastActivityMs));
+
+  final List<DeadSession> _dead = [];
+
+  /// Sessions evicted because their VM stopped answering, newest first (≤ 20).
+  List<DeadSession> get dead => List.unmodifiable(_dead);
+
+  DeadSession? deadById(int sessionId) {
+    for (final d in _dead) {
+      if (d.sessionId == sessionId) return d;
+    }
+    return null;
+  }
+
+  /// `uri → appName` of every app the last DTD probe saw, fed by the
+  /// auto-attach / migration ticks so status can say where a dead session's
+  /// app moved without another probe.
+  Map<String, String> lastLiveApps = const {};
+
+  void recordLiveApps(Map<String, String> uriToName) =>
+      lastLiveApps = Map.unmodifiable(uriToName);
+
+  /// Evicts [s] as dead: stops its capture, ends its DB row, frees its slot,
+  /// and remembers it so reads and status can explain what happened.
+  void markDead(AttachedSession s, String reason) {
+    if (!_attached.containsKey(canonicalVmServiceUri(s.vmServiceUri))) return;
+    io.stderr.writeln(
+      'flutter_network_mcp: session ${s.id} (${s.appName ?? s.vmServiceUri}) '
+      'is dead — $reason. Slot freed; capture preserved as history.',
+    );
+    // Flush pending bodies to the DB before the VM goes away (#95), then
+    // disconnect. Best-effort: on app death / heartbeat timeout the VM is
+    // usually already gone, so the flush no-ops behind its own timeout.
+    unawaited(() async {
+      await s.captureWriter.stop(flush: true);
+      await s.vm.disconnect().catchError((_) {});
+    }());
+    unawaited(s.logStream.stop().catchError((_) {}));
+    unawaited(s.nativeLog?.stop().catchError((_) {}) ?? Future<void>.value());
+    try {
+      CapturesDao().leaveSession(s.id);
+    } catch (_) {/* DB may be closing during shutdown */}
+    unregister(s.vmServiceUri);
+    _dead.insert(
+      0,
+      DeadSession(
+        sessionId: s.id,
+        appName: s.appName,
+        vmServiceUri: s.vmServiceUri,
+        diedAt: DateTime.now(),
+        reason: reason,
+        projectPath: s.projectPath,
+      ),
+    );
+    if (_dead.length > 20) _dead.removeLast();
+    _recentlyDied.insert(
+      0,
+      EndedByAppExit(sessionId: s.id, appName: s.appName, diedAt: DateTime.now()),
+    );
+    if (_recentlyDied.length > 5) _recentlyDied.removeLast();
+  }
+
+  /// A session re-attached under the same id (hot-restart migration) is no
+  /// longer dead.
+  void forgetDead(int sessionId) =>
+      _dead.removeWhere((d) => d.sessionId == sessionId);
+
+  Timer? _heartbeat;
+
+  /// Asks every live VM for its version on a cadence; one that stays silent
+  /// is marked dead. Idempotent.
+  void startHeartbeat({Duration every = const Duration(seconds: 5)}) {
+    if (_heartbeat != null) return;
+    _heartbeat = Timer.periodic(every, (_) => unawaited(heartbeatOnce()));
+  }
+
+  void stopHeartbeat() {
+    _heartbeat?.cancel();
+    _heartbeat = null;
+  }
+
+  Future<void> heartbeatOnce(
+      {Duration timeout = const Duration(seconds: 3)}) async {
+    for (final s in List<AttachedSession>.from(_attached.values)) {
+      if (!_attached.containsKey(canonicalVmServiceUri(s.vmServiceUri))) continue;
+      final ok = await s.vm.isResponsive(timeout: timeout);
+      if (!ok && _attached.containsKey(canonicalVmServiceUri(s.vmServiceUri))) {
+        markDead(s, 'no response to getVersion within ${timeout.inSeconds}s');
+      }
+    }
+  }
+
   /// Adds an attached session. Throws [StateError] when a session for the
   /// same vmServiceUri is already registered.
   void register(AttachedSession session) {
-    if (_attached.containsKey(session.vmServiceUri)) {
+    final key = canonicalVmServiceUri(session.vmServiceUri);
+    if (_attached.containsKey(key)) {
       throw StateError(
         'Already attached to ${session.vmServiceUri} '
-        '(session id ${_attached[session.vmServiceUri]!.id}).',
+        '(session id ${_attached[key]!.id}).',
       );
     }
-    _attached[session.vmServiceUri] = session;
+    _attached[key] = session;
+    // RC4: the app dying must end the session, not leave a zombie attach
+    // that reads report as healthy ("drive the app to generate traffic").
+    session.vm.onUnexpectedDisconnect = () => _onAppDied(session);
   }
+
+  /// RC3: pushes the current ignored_hosts/capture_allow tables to EVERY
+  /// attached session's capture writer. The old path
+  /// (`Session.instance.captureWriter.refreshIgnoredHosts()`) resolved to
+  /// `soleAttached ?? stub`, so with 2+ sessions attached a mid-session
+  /// filter change refreshed a stub — a silent no-op while the tool
+  /// reported "Capture writer refreshed".
+  void refreshCaptureFilters() {
+    for (final s in _attached.values) {
+      s.captureWriter.refreshIgnoredHosts();
+    }
+  }
+
+  /// RC4: sessions whose app died while attached, newest first (capped at
+  /// 5). Read by network_status ("app exited") and by the scope resolver's
+  /// not-attached error so agents get routed to the session's history
+  /// instead of polling a corpse.
+  final List<EndedByAppExit> _recentlyDied = [];
+  List<EndedByAppExit> get recentlyDied => List.unmodifiable(_recentlyDied);
+
+  void _onAppDied(AttachedSession s) => markDead(s, 'app exited');
 
   /// Removes the session matching [vmServiceUri]. Caller tears down the
   /// session's resources first (today that happens via [detachOne]).
   /// No-op when not present.
   void unregister(String vmServiceUri) {
-    _attached.remove(vmServiceUri);
+    _attached.remove(canonicalVmServiceUri(vmServiceUri));
   }
 
   /// Tears down one attached session's resources (capture writer, log
@@ -240,8 +455,9 @@ class SessionRegistry {
   /// whether to disconnect DTD (typically only when [attachedCount] is
   /// now zero).
   Future<void> detachOne(AttachedSession s) async {
-    s.captureWriter.stop();
+    await s.captureWriter.stop(flush: true);
     await s.logStream.stop();
+    await s.nativeLog?.stop();
     await s.vm.disconnect();
     unregister(s.vmServiceUri);
   }

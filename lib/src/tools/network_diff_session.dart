@@ -69,15 +69,33 @@ FutureOr<CallToolResult> networkDiffSession(CallToolRequest request) async {
 
   List<Map<String, Object?>> current;
   List<Map<String, Object?>> baseline;
+  final int currentRows;
   try {
-    current = summarizeRequests(
-      CapturesDao().queryHttpRequests(sessionId: currentId, limit: _kRawRowsCap),
-      minCount: minCount,
-    );
-    baseline = summarizeRequests(
-      CapturesDao().queryHttpRequests(sessionId: baselineId, limit: _kRawRowsCap),
-      minCount: minCount,
-    );
+    final dao = CapturesDao();
+    final baselineRows =
+        dao.queryHttpRequests(sessionId: baselineId, limit: _kRawRowsCap);
+    if (baselineRows.isEmpty) {
+      final exists = dao.getSession(baselineId) != null;
+      return errorResult(
+          exists
+              ? 'Baseline session $baselineId has no captured HTTP requests, so '
+                  'there is nothing to compare against.'
+              : 'Baseline session $baselineId does not exist.',
+          kind: ErrorKind.notFound,
+          extra: {
+            'baselineSessionId': baselineId,
+            'currentSessionId': currentId,
+            'nextSteps': const [
+              'session_list: pick a past session with HTTP traffic as the baseline',
+              'network_summarize: see the current session on its own',
+            ],
+          });
+    }
+    final currentRaw =
+        dao.queryHttpRequests(sessionId: currentId, limit: _kRawRowsCap);
+    currentRows = currentRaw.length;
+    current = summarizeRequests(currentRaw, minCount: minCount);
+    baseline = summarizeRequests(baselineRows, minCount: minCount);
   } catch (e) {
     return errorResult('network_diff_session query failed: $e',
         kind: ErrorKind.internal,
@@ -99,12 +117,18 @@ FutureOr<CallToolResult> networkDiffSession(CallToolRequest request) async {
       '${goneEndpoints.length} gone, ${changed.length} changed endpoint(s).';
 
   return jsonResult({
+    'scope': scope.toBlock(),
     'summary': summary,
     'currentSessionId': currentId,
     'baselineSessionId': baselineId,
     'newEndpoints': newEndpoints,
     'goneEndpoints': goneEndpoints,
     'changed': changed,
+    if (currentRows == 0)
+      'warnings': [
+        'Session $currentId has no captured HTTP requests, so every baseline '
+            'endpoint reads as gone.',
+      ],
     'nextSteps': [
       if (changed.isNotEmpty)
         'network_summarize — drill into the current session endpoint stats',
@@ -112,7 +136,7 @@ FutureOr<CallToolResult> networkDiffSession(CallToolRequest request) async {
         'network_list hostContains:"..." — inspect a new endpoint live',
       'session_list — pick a different baseline session',
     ],
-  }, scopeSessionId: currentId);
+  }, scopeSessionId: currentId, scopeNote: scope.note);
 }
 
 /// Diffs two lists of [summarizeRequests] endpoint buckets, keyed by

@@ -5,6 +5,7 @@ import 'package:dart_mcp/server.dart';
 
 import '../config/capabilities.dart';
 import '../storage/captures_db.dart';
+import '../util/body_decoder.dart';
 import '../util/scope.dart';
 import 'error_kind.dart';
 import 'result.dart';
@@ -16,8 +17,9 @@ final networkReplayTool = Tool(
   name: 'network_replay',
   description:
       'Emit a runnable curl for a captured request. Auth headers redacted by '
-      'default; body truncated to bodyTruncateBytes (default 4 KB). '
-      'redact:false for unredacted (local only); bodyTruncateBytes:0 for full.',
+      'default (the curl may land in a transcript/log); body truncated to '
+      'bodyTruncateBytes (default 4 KB). redact:false to include the real '
+      'token when you are debugging auth locally; bodyTruncateBytes:0 for full.',
   inputSchema: Schema.object(
     properties: {
       'id': Schema.string(description: 'Request id from network_list / network_search.'),
@@ -31,9 +33,10 @@ final networkReplayTool = Tool(
       ),
       'redact': Schema.bool(
         description:
-            'Mask auth-like headers with <redacted> (default FALSE — this is a '
-            'local repro of your own traffic, and debugging auth needs the real '
-            'token). Set redact:true before sharing the curl externally.',
+            'Mask auth-like headers with <redacted> (default TRUE — the '
+            'emitted curl can end up in an agent transcript or a pasted '
+            'issue). Set redact:false to include the real token when '
+            'reproducing an auth flow locally.',
       ),
       'bodyTruncateBytes': Schema.int(
         description: 'Max body bytes in the curl (default 4096, cap 262144; 0 = cap).',
@@ -61,11 +64,12 @@ FutureOr<CallToolResult> networkReplay(CallToolRequest request) async {
   if (scopeErr != null) return scopeErr;
   scope!;
   final sessionId = scope.sessionId;
-  // #57: default OFF. This is a local repro of the developer's own traffic;
-  // the most common task (debugging auth) needs the real token, and redaction
-  // is display-only (the data is stored unredacted regardless). Safety lives at
-  // the share boundary (session_export warns; replay warns when not redacted).
-  final redact = (args['redact'] as bool?) ?? false;
+  // D5 (audit RC9): default ON. #57 originally defaulted this OFF (auth
+  // debugging needs the token), but the emitted curl routinely lands in the
+  // agent's transcript and pasted issues — an exfiltration path the
+  // developer never opted into. Reversed: safe by default, opt out
+  // (redact:false) with intent. Auth debugging still works, now auditable.
+  final redact = (args['redact'] as bool?) ?? true;
   final bodyMaxRaw = (args['bodyTruncateBytes'] as int?) ?? _kDefaultBodyTruncate;
   final bodyMax = bodyMaxRaw <= 0
       ? _kMaxBodyTruncate
@@ -110,11 +114,14 @@ FutureOr<CallToolResult> networkReplay(CallToolRequest request) async {
 
     bool bodyTruncated = false;
     int? totalSize;
+    int? sentSize;
     bool bodyIsBinary = false;
     if (body != null && body.isNotEmpty) {
       totalSize = body.length;
-      final clipped = body.length > bodyMax ? body.sublist(0, bodyMax) : body;
       bodyTruncated = body.length > bodyMax;
+      final clipped =
+          bodyTruncated ? body.sublist(0, utf8SafeCut(body, bodyMax)) : body;
+      sentSize = clipped.length;
       try {
         final text = utf8.decode(clipped, allowMalformed: false);
         buf.write(" --data-raw '${_shellEscape(text)}'");
@@ -133,13 +140,13 @@ FutureOr<CallToolResult> networkReplay(CallToolRequest request) async {
     }
     if (bodyTruncated) {
       warnings.add(
-        'Request body truncated at $bodyMax of $totalSize bytes — the curl will send a shortened body unless you raise bodyTruncateBytes.',
+        'Request body truncated to $sentSize of $totalSize bytes (cut on a character boundary); the curl will send a shortened body unless you raise bodyTruncateBytes.',
       );
     }
     if (!redact) {
       warnings.add(
-        'Auth headers are NOT redacted (the default for local repro) — pass '
-        'redact:true before sharing this curl externally.',
+        'Auth headers are NOT redacted (redact:false, for a local auth '
+        'repro). Drop redact:false before sharing this curl externally.',
       );
     }
 
@@ -167,12 +174,13 @@ FutureOr<CallToolResult> networkReplay(CallToolRequest request) async {
       if (totalSize != null) ...{
         'bodyTotalSize': totalSize,
         'bodyTruncated': bodyTruncated,
+        if (bodyTruncated) 'bodySentSize': sentSize,
         if (bodyIsBinary) 'bodyIsBinary': true,
       },
       'curl': buf.toString(),
       if (warnings.isNotEmpty) 'warnings': warnings,
       'nextSteps': nextSteps,
-    }, scopeSessionId: scope.sessionId);
+    }, scopeSessionId: scope.sessionId, scopeNote: scope.note);
   } catch (e) {
     return errorResult('network_replay failed: $e',
         kind: ErrorKind.internal,

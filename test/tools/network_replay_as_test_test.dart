@@ -82,6 +82,50 @@ void main() {
     expect(code, contains("expect(response.body, contains('token'));"));
   });
 
+  void insertRequest(String vmId, String url, List<int> body) {
+    CapturesDatabase.instance.raw.execute(
+      'INSERT INTO http_requests(session_id, vm_id, method, url, status_code) '
+      'VALUES (?,?,?,?,?)',
+      [sid, vmId, 'POST', url, 200],
+    );
+    CapturesDatabase.instance.raw.execute(
+      'INSERT INTO http_bodies(session_id, vm_id, which, bytes, size) '
+      'VALUES (?,?,?,?,?)',
+      [sid, vmId, 'request', Uint8List.fromList(body), body.length],
+    );
+  }
+
+  Future<Map<String, Object?>> replay(String id) async =>
+      (await networkReplayAsTest(CallToolRequest(
+        name: 'network_replay_as_test',
+        arguments: {'id': id, 'sessionId': sid},
+      )))
+          .structuredContent!;
+
+  test(r'test name escapes $ so it is not an interpolation', () async {
+    insertRequest('r2', r'https://api.example.com/price/$total', utf8.encode('x'));
+    final code = (await replay('r2'))['test'] as String;
+    expect(code, contains(r"test('POST /price/\$total replays'"));
+  });
+
+  test('a body cut inside a multi-byte character keeps the text', () async {
+    final body = utf8.encode('${'a' * 8191}é tail');
+    insertRequest('r3', 'https://api.example.com/text', body);
+    final out = await replay('r3');
+    final code = out['test'] as String;
+    expect(code, contains("request.body = '${'a' * 8191}';"));
+    expect(out['bodyIsBinary'], isNull);
+    expect((out['warnings'] as List).join(' '), contains('8191 of ${body.length}'));
+  });
+
+  test('a binary body is reported, not silently dropped', () async {
+    insertRequest('r4', 'https://api.example.com/bin', [0xff, 0xfe, 0x00, 0x81]);
+    final out = await replay('r4');
+    expect(out['bodyIsBinary'], isTrue);
+    expect((out['test'] as String), isNot(contains('request.body')));
+    expect((out['warnings'] as List).join(' '), contains('not UTF-8'));
+  });
+
   test('unknown id -> errorKind not_found', () async {
     final res = await networkReplayAsTest(CallToolRequest(
       name: 'network_replay_as_test',
