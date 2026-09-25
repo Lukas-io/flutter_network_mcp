@@ -7,7 +7,7 @@ when_to_use: At the end of an investigation (or right after attach) — annotate
 ## DO NOT USE THIS TOOL WHEN
 
 - The session has nothing useful in it yet — wait until there's something worth noting.
-- You want structured metadata — this is a single text field. Use SQL UPDATE on `sessions` for richer schemas.
+- You want structured metadata: this is a single text field, and no tool writes other `sessions` columns (`network_query` is read-only).
 - You want the note to apply to one request — it doesn't. Notes are session-wide.
 - You're storing secrets — notes are stored unencrypted in the DB.
 
@@ -19,12 +19,12 @@ when_to_use: At the end of an investigation (or right after attach) — annotate
 
 ## How it works
 
-`UPDATE sessions SET note = ? WHERE id = ?`. Empty string clears the note (stored as NULL).
+`UPDATE sessions SET note = ? WHERE id = ?`. Empty string clears the note (stored as NULL). The new text replaces the whole note, including an `[orphaned]` marker the startup sweep may have appended. Works on any session, live or ended.
 
 ## Args
 
 - `id` (int, required).
-- `note` (string, required) — empty to clear.
+- `note` (string, required): empty string to clear.
 
 ## Returns
 
@@ -40,10 +40,14 @@ when_to_use: At the end of an investigation (or right after attach) — annotate
 }
 ```
 
+The `summary` quotes at most 80 characters of the note. Clearing returns `note: null`, summary `Cleared note on session 14.`, and only the `session_list` nextStep.
+
+Errors: missing `id` or `note` returns `bad_argument`; an unknown id returns `not_found` (nextSteps: `session_list`).
+
 ## Pairs well with
 
 - `session_list` — the note is visible there.
-- `session_export` — note travels with future-you.
+- `session_export`: the NDJSON export carries the note in its first (session) line; HAR does not include it.
 
 ## Example
 

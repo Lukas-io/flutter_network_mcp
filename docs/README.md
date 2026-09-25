@@ -6,7 +6,7 @@ The index below is by **use case** ("I want to do X — which tool?"). Some tool
 
 > **Filing issues is agent-first.** When something breaks or feels off in this MCP — wrong output, missing field, slow, confusing, awkward — open an issue at https://github.com/Lukas-io/flutter_network_mcp/issues. Two templates, both dead simple: **"Bug report"** for code issues (3 fields — what broke, the failing tool call, the `network_status` response; optional context collapses), **"UX friction / suggestion"** for anything that just felt awkward (3 fields, no environment needed). Use a GitHub tool if you have one; otherwise hand the user a paste-ready body. Don't wait for the user to ask. Big or small, code or UX — every report helps.
 
-> **Multi-attach (0.6.0):** the server can hold N concurrent attached sessions (capped via `FLUTTER_NETWORK_MCP_MAX_ATTACH`, default 4). Every read tool accepts an optional `sessionId:int` or `appNameContains:string`. With exactly one session attached the tool auto-resolves and no scope arg is needed. With 2+ attached and no scope, tools error with a structured `attached:[...]` list + `nextSteps` like `sessionId:14  // sanga_mobile`. Successful responses include a `scope:{sessionId, appName, isLive}` block so you can verify which session you just read from. `pendingAlerts` auto-injection is scoped per-session — no cross-app data bleed in the push-like signal. `network_status.attached` is now a list, `network_detach` takes `sessionId` / `appNameContains` / `all:true`.
+> **Multi-attach (0.6.0):** the server can hold N concurrent attached sessions (capped via `FLUTTER_NETWORK_MCP_MAX_ATTACH`, default 8). Every read tool accepts an optional `sessionId:int` or `appNameContains:string`. With exactly one session attached the tool auto-resolves and no scope arg is needed. With 2+ attached and no scope, tools read the session for this project, else the most recently used one (`scope.pickedBy` says which); pass `sessionId` to be explicit. Successful responses include a `scope:{sessionId, appName, isLive}` block so you can verify which session you just read from. `pendingAlerts` auto-injection is scoped per-session, so there is no cross-app data bleed in the push-like signal. `network_status.attached` is now a list, `network_detach` takes `sessionId` / `appNameContains` / `all:true`.
 
 > **Multi-isolate within one app (0.6.0):** captures HTTP/socket/log traffic from EVERY isolate in the attached app (was: only the first). Per-row `isolate_id` tagging via schema v4. The 11 read tools that take `sessionId:` also accept an optional **`isolateId:`** filter (omit to merge every isolate — single-isolate UX preserved). `network_status.attached[].isolates` lists what's being captured. Newly-spawned isolates get picked up automatically on a ~20s re-scan.
 
@@ -20,6 +20,7 @@ The index below is by **use case** ("I want to do X — which tool?"). Some tool
 - [`network_status`](tools/lifecycle/network_status.md) — what's reachable, what's pending, what's enabled. Auto-connects DTD.
 - [`network_discover_dtd`](tools/lifecycle/network_discover_dtd.md) — list DTDs on this machine from the standard `package:dtd` directory. Useful when multiple `flutter run` instances are active or when startup auto-discovery picked the wrong one (0.6.2+).
 - [`network_attach`](tools/lifecycle/network_attach.md) — open a capture session against a running app.
+- [`network_wait_for_app`](tools/lifecycle/network_wait_for_app.md): wait for an app that is still launching to register, then attach to it.
 - [`report_issue`](tools/lifecycle/report_issue.md) — file a GitHub issue against this MCP from inside an agent turn. `gh` CLI or paste-ready URL fallback (0.7.2+).
 - [`auto_attach_config`](tools/lifecycle/auto_attach_config.md) — persist auto-attach allowlist changes from agent + user confirmation; closes the `mcp remove/add` cycle (0.7.4+).
 
@@ -27,6 +28,7 @@ The index below is by **use case** ("I want to do X — which tool?"). Some tool
 - [`network_list`](tools/finding/network_list.md) — by metadata (host, method, status, time). Cursor-based.
 - [`network_search`](tools/finding/network_search.md) — by content (text in url or body). BM25-ranked.
 - [`network_summarize`](tools/finding/network_summarize.md) — one digest row per endpoint (count, statusDist, p50/p95, errorRate). Cheaper than `network_list` for shape-of-session orientation (0.7.0+).
+- [`network_report`](tools/finding/network_report.md): a short health report of a session (top error hotspots, slowest endpoints, one headline).
 
 ### [Inspecting one request](tools/inspecting/)
 - [`network_get`](tools/inspecting/network_get.md) — full headers + truncated body for one id.
@@ -35,6 +37,9 @@ The index below is by **use case** ("I want to do X — which tool?"). Some tool
 ### [Comparing or reproducing requests](tools/comparing/)
 - [`network_diff`](tools/comparing/network_diff.md) — structural diff of two captured requests.
 - [`network_replay`](tools/comparing/network_replay.md) — emit a runnable curl command (auth headers redacted by default).
+- [`network_replay_as_test`](tools/comparing/network_replay_as_test.md): emit a runnable Dart test that replays a request and asserts its status.
+- [`network_diff_session`](tools/comparing/network_diff_session.md): diff two sessions endpoint by endpoint.
+- [`network_drift`](tools/comparing/network_drift.md): JSON response-shape drift for one endpoint over a session.
 
 ### [Surfacing "what went wrong"](tools/what-went-wrong/)
 - [`alerts_drain`](tools/what-went-wrong/alerts_drain.md) — read AND clear pending alerts. Per-severity breakdown.
@@ -113,12 +118,13 @@ For `--capabilities` / `--disable` startup flags — the tools each capability g
 
 | Capability | Tools |
 |---|---|
-| `http` | `network_list`, `network_get`, `network_body`, `network_clear`, `network_diff`, `network_replay` |
+| `http` | `network_list`, `network_get`, `network_body`, `network_body_outline`, `network_body_query`, `network_clear`, `network_diff`, `network_replay`, `network_replay_as_test`, `network_summarize`, `network_diff_session`, `network_drift`, `network_report` |
 | `sockets` | `socket_list`, `socket_get`, `socket_clear` |
 | `logs` | `logs_tail`, `logs_clear` |
+| `http` or `logs` | `correlate_at` |
 | `alerts` | `alerts_drain`, `alerts_peek`, `alerts_config`, `alerts_clear`, `alert_patterns` |
-| `search` | `network_search` |
+| `search` | `network_search`, `network_correlate` |
 | `sessions` | `session_list`, `session_open`, `session_close`, `session_export`, `session_note`, `session_delete` |
 | `sql` | `network_query` |
-| `admin` | `ignored_hosts`, `redacted_headers`, `db_stats`, `db_vacuum`, `bodies_purge` |
-| _(always on)_ | `network_status`, `network_attach`, `network_detach`, `network_discover_dtd`, `report_issue`, `auto_attach_config`, `usage_stats`, `session_configure` |
+| `admin` | `ignored_hosts`, `capture_allow`, `redacted_headers`, `db_stats`, `db_vacuum`, `bodies_purge` |
+| _(always on)_ | `network_status`, `network_wait_for_app`, `network_attach`, `network_detach`, `network_discover_dtd`, `report_issue`, `auto_attach_config`, `usage_stats`, `session_configure` |
