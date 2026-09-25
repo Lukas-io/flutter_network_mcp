@@ -17,6 +17,7 @@ import '../vm/dtd_probe.dart';
 import 'network_attach.dart' as attach_helper;
 import '../util/suggest.dart';
 import 'result.dart';
+import '../vm/vm_uri.dart';
 
 /// Per-session entry for `network_status.attached[]`. Carries structured
 /// capability health (issue #17) so socket/log degradation shows up as a
@@ -376,8 +377,6 @@ Map<String, Object?> _buildMcpBlock() {
   return block;
 }
 
-/// Returns 1–2 short hints telling the agent what to do given the current
-/// state.
 /// The continuation reattach nextStep, or null. Suppresses a reattach to a VM
 /// no longer reachable (#99): when the app relaunched it points at the new URI,
 /// else it says the app exited instead of suggesting a dead socket. [dead] is
@@ -386,23 +385,28 @@ Map<String, Object?> _buildMcpBlock() {
 String? continuationReattachStep({
   required String? lastUri,
   required String lastApp,
-  required String ageDesc,
   required bool dead,
+  String? attachedAgo,
+  String? exitedAgo,
   String? relaunchUri,
 }) {
   if (lastUri == null) return null;
   if (!dead) {
-    return 'network_attach vmServiceUri:"$lastUri" — reattach to $lastApp '
-        '$ageDesc; previous attachment recorded by 0.7.3 continuation';
+    return 'network_attach vmServiceUri:"$lastUri" — reattach to $lastApp'
+        '${attachedAgo == null ? '' : ' (attached ~$attachedAgo ago)'}; '
+        'previous attachment recorded by 0.7.3 continuation';
   }
   if (relaunchUri != null) {
     return 'network_attach vmServiceUri:"$relaunchUri" — $lastApp exited and '
         'relaunched at a new URI';
   }
-  return '$lastApp has exited$ageDesc; relaunch it and network_attach, or '
-      'network_wait_for_app to block until it is back';
+  return '$lastApp has exited${exitedAgo == null ? '' : ' ~$exitedAgo ago'}; '
+      'relaunch it and network_attach, or network_wait_for_app to block until '
+      'it is back';
 }
 
+/// Returns 1–2 short hints telling the agent what to do given the current
+/// state.
 List<String> _suggestNextSteps(
   SessionRegistry registry,
   Session session,
@@ -459,27 +463,34 @@ List<String> _suggestNextSteps(
     final lastUri = last['vmServiceUri'] as String?;
     final lastApp = last['appName'] as String? ?? 'previous app';
     final attachedAtMs = last['attachedAtMs'] as int?;
-    final ageDesc = attachedAtMs == null
-        ? ''
-        : ' (~${_formatAgo(attachedAtMs)} ago)';
     if (lastUri != null) {
       final knownUris = <String>{
         for (final a in (knownApps ?? const []))
-          if ((a as Map)['uri'] is String) a['uri'] as String,
+          if ((a as Map)['uri'] is String)
+            canonicalVmServiceUri(a['uri'] as String),
       };
-      final inRegistryDead =
-          registry.dead.any((d) => d.vmServiceUri == lastUri);
+      final died = registry.dead
+          .where((d) =>
+              canonicalVmServiceUri(d.vmServiceUri) ==
+              canonicalVmServiceUri(lastUri))
+          .firstOrNull;
       // DTD discovery listing live apps but not this URI is authoritative that
-      // the app is gone; an empty discovery cannot tell, so we do not infer
-      // death from it.
-      final absentFromLiveDtd =
-          knownUris.isNotEmpty && !knownUris.contains(lastUri);
+      // the app is gone; an empty discovery, or one where a DTD failed to
+      // answer, cannot tell, so we do not infer death from it.
+      final probesFailed =
+          (out['dtdProbeErrors'] as List?)?.isNotEmpty ?? false;
+      final absentFromLiveDtd = !probesFailed &&
+          knownUris.isNotEmpty &&
+          !knownUris.contains(canonicalVmServiceUri(lastUri));
       final lastIdentity = appSessionIdentity(lastApp);
       String? relaunchUri;
       for (final a in (knownApps ?? const [])) {
         final m = a as Map;
         final uri = m['uri'] as String?;
-        if (uri == null || uri == lastUri) continue;
+        if (uri == null ||
+            canonicalVmServiceUri(uri) == canonicalVmServiceUri(lastUri)) {
+          continue;
+        }
         if (appSessionIdentity(m['name'] as String?) == lastIdentity) {
           relaunchUri = uri;
           break;
@@ -488,8 +499,11 @@ List<String> _suggestNextSteps(
       final step = continuationReattachStep(
         lastUri: lastUri,
         lastApp: lastApp,
-        ageDesc: ageDesc,
-        dead: inRegistryDead || absentFromLiveDtd,
+        attachedAgo: attachedAtMs == null ? null : _formatAgo(attachedAtMs),
+        exitedAgo: died == null
+            ? null
+            : _formatAgo(died.diedAt.millisecondsSinceEpoch),
+        dead: died != null || absentFromLiveDtd,
         relaunchUri: relaunchUri,
       );
       if (step != null) steps.add(step);

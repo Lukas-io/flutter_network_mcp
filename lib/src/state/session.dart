@@ -8,6 +8,7 @@ import '../vm/log_stream.dart';
 import '../vm/native_log_source.dart';
 import '../vm/vm_client.dart';
 import 'log_buffer.dart';
+import '../vm/vm_uri.dart';
 
 /// Process-lifetime singleton owning the DTD connection and exposing
 /// backwards-compat getters for the per-attach resources that have moved
@@ -264,7 +265,7 @@ class SessionRegistry {
   int get attachedCount => _attached.length;
 
   AttachedSession? attachedByUri(String vmServiceUri) =>
-      _attached[vmServiceUri];
+      _attached[canonicalVmServiceUri(vmServiceUri)];
 
   AttachedSession? attachedById(int sessionId) {
     for (final s in _attached.values) {
@@ -327,7 +328,7 @@ class SessionRegistry {
   /// Evicts [s] as dead: stops its capture, ends its DB row, frees its slot,
   /// and remembers it so reads and status can explain what happened.
   void markDead(AttachedSession s, String reason) {
-    if (!_attached.containsKey(s.vmServiceUri)) return;
+    if (!_attached.containsKey(canonicalVmServiceUri(s.vmServiceUri))) return;
     io.stderr.writeln(
       'flutter_network_mcp: session ${s.id} (${s.appName ?? s.vmServiceUri}) '
       'is dead — $reason. Slot freed; capture preserved as history.',
@@ -386,9 +387,9 @@ class SessionRegistry {
   Future<void> heartbeatOnce(
       {Duration timeout = const Duration(seconds: 3)}) async {
     for (final s in List<AttachedSession>.from(_attached.values)) {
-      if (!_attached.containsKey(s.vmServiceUri)) continue;
+      if (!_attached.containsKey(canonicalVmServiceUri(s.vmServiceUri))) continue;
       final ok = await s.vm.isResponsive(timeout: timeout);
-      if (!ok && _attached.containsKey(s.vmServiceUri)) {
+      if (!ok && _attached.containsKey(canonicalVmServiceUri(s.vmServiceUri))) {
         markDead(s, 'no response to getVersion within ${timeout.inSeconds}s');
       }
     }
@@ -397,13 +398,14 @@ class SessionRegistry {
   /// Adds an attached session. Throws [StateError] when a session for the
   /// same vmServiceUri is already registered.
   void register(AttachedSession session) {
-    if (_attached.containsKey(session.vmServiceUri)) {
+    final key = canonicalVmServiceUri(session.vmServiceUri);
+    if (_attached.containsKey(key)) {
       throw StateError(
         'Already attached to ${session.vmServiceUri} '
-        '(session id ${_attached[session.vmServiceUri]!.id}).',
+        '(session id ${_attached[key]!.id}).',
       );
     }
-    _attached[session.vmServiceUri] = session;
+    _attached[key] = session;
     // RC4: the app dying must end the session, not leave a zombie attach
     // that reads report as healthy ("drive the app to generate traffic").
     session.vm.onUnexpectedDisconnect = () => _onAppDied(session);
@@ -434,7 +436,7 @@ class SessionRegistry {
   /// session's resources first (today that happens via [detachOne]).
   /// No-op when not present.
   void unregister(String vmServiceUri) {
-    _attached.remove(vmServiceUri);
+    _attached.remove(canonicalVmServiceUri(vmServiceUri));
   }
 
   /// Tears down one attached session's resources (capture writer, log
