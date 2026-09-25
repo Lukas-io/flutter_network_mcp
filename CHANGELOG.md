@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed: license is now Apache-2.0
+
+- flutter_network_mcp moves from MIT to the Apache License 2.0, which adds an explicit patent grant. A NOTICE file names the copyright holder.
+
 ### Added: WebSocket capture with nothing added to the app
 
 - `ws_list` lists the app's WebSocket connections: url, state (`connecting`, `open`, `closed`, `failed`, `error`), connect time, duration, who closed it with which code and reason, and messages and bytes each way. `ws_get` returns one connection's event timeline (time since start, direction, text / binary / ping / pong / close / error, size), paged with `afterId`.
