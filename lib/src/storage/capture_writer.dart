@@ -11,6 +11,7 @@ import '../util/body_decoder.dart';
 import '../vm/vm_client.dart';
 import 'captures_db.dart';
 import 'db_cap.dart';
+import 'ws_timeline_ingestor.dart';
 import '../util/searchable_text.dart';
 
 /// Periodically polls the VM service and writes HTTP + socket data into the
@@ -62,6 +63,17 @@ class CaptureWriter {
 
   CaptureFilter _captureFilter = CaptureFilter.empty();
 
+  late WsTimelineIngestor _wsIngestor = WsTimelineIngestor(_dao);
+
+  /// Timeline micros the next WebSocket read starts at; null reads the whole recorder buffer, catching connections opened before attach.
+  int? _wsOriginMicros;
+  bool _wsStreamRecorded = false;
+
+  /// Socket count and total bytes from the last socket poll; null when unknown.
+  String? _socketActivity;
+  String? _socketActivityAtWsRead;
+  int _wsTrailingReads = 0;
+
   bool get isRunning => _timer != null;
 
   void start(VmClient vm, int sessionId) {
@@ -70,6 +82,11 @@ class CaptureWriter {
     _sessionId = sessionId;
     _lastCursorPerIsolate.clear();
     _ticksSinceRescan = 0;
+    _wsOriginMicros = null;
+    _wsStreamRecorded = false;
+    _socketActivity = null;
+    _socketActivityAtWsRead = null;
+    _wsIngestor = WsTimelineIngestor(_dao);
     _refreshIgnoredHosts();
     _timer = Timer.periodic(pollInterval, (_) => _tick());
     unawaited(_tick());
@@ -168,6 +185,9 @@ class CaptureWriter {
       if (CapabilityConfig.instance.isEnabled(Category.sockets)) {
         await _pollSockets(vm, sid);
       }
+      if (CapabilityConfig.instance.isEnabled(Category.websockets)) {
+        await _pollWebSockets(vm, sid);
+      }
       if (CapabilityConfig.instance.isEnabled(Category.http)) {
         await _backfillBodies(vm, sid);
       }
@@ -246,15 +266,84 @@ class CaptureWriter {
   }
 
   Future<void> _pollSockets(VmClient vm, int sid) async {
+    var count = 0;
+    var bytes = 0;
+    var complete = vm.httpProfilingIsolates.isNotEmpty;
     for (final iso in vm.httpProfilingIsolates) {
       try {
         final profile = await vm.getSocketProfileForIsolate(iso.id);
         for (final s in profile.sockets) {
           _dao.upsertSocket(sid, s, isolateId: iso.id);
+          count++;
+          bytes += s.readBytes + s.writeBytes;
         }
       } catch (_) {
+        complete = false;
       }
     }
+    _socketActivity = complete ? '$count:$bytes' : null;
+  }
+
+  /// Reads new `WebSocket.*` events from the VM timeline; each poll re-reads a short overlap so late-flushed events are not missed (re-delivery is de-duplicated).
+  Future<void> _pollWebSockets(VmClient vm, int sid, {bool force = false}) async {
+    if (!CapabilityConfig.instance.isEnabled(Category.http)) {
+      await _maybeRescanIsolates(vm);
+    }
+    if (vm.webSocketTimelineSupported == null) {
+      final isolates = vm.httpProfilingIsolates;
+      if (isolates.isNotEmpty) {
+        await vm.checkWebSocketTimelineSupport(isolates.first.id);
+      }
+    }
+    if (vm.webSocketTimelineSupported == false) return;
+    if (!_wsStreamRecorded) {
+      _wsStreamRecorded = await vm.recordDartTimelineStream();
+      if (!_wsStreamRecorded) return;
+    }
+    if (!force && _wsOriginMicros != null && _socketsQuietSinceWsRead()) return;
+    final activity = _socketActivity;
+    try {
+      final beforeUs = DateTime.now().microsecondsSinceEpoch;
+      final nowMicros = await vm.timelineNowMicros();
+      final afterUs = DateTime.now().microsecondsSinceEpoch;
+      final origin = _wsOriginMicros ?? 0;
+      final events = await vm.webSocketTimelineEvents(origin, nowMicros);
+      if (events.isNotEmpty) {
+        _wsIngestor.ingest(
+          sid,
+          events,
+          clockOffsetUs: (beforeUs + afterUs) ~/ 2 - nowMicros,
+        );
+      }
+      _wsOriginMicros = nowMicros - _wsOverlapUs;
+      _socketActivityAtWsRead = activity;
+    } catch (e) {
+      io.stderr.writeln('CaptureWriter _pollWebSockets failed: $e');
+    }
+  }
+
+  /// Reads the newest WebSocket events now so a tool call sees traffic from the last poll interval.
+  Future<void> refreshWebSockets() async {
+    final vm = _vm;
+    final sid = _sessionId;
+    if (vm == null || sid == null) return;
+    if (!CapabilityConfig.instance.isEnabled(Category.websockets)) return;
+    await _pollWebSockets(vm, sid, force: true);
+  }
+
+  /// How far back each timeline read reaches past the previous read's end.
+  static const int _wsOverlapUs = 500 * 1000;
+
+  /// True when socket byte counters have not moved since the last timeline read and its one trailing read is done; every WebSocket message moves them, and skipping the read saves re-reading Flutter's frame events.
+  bool _socketsQuietSinceWsRead() {
+    final activity = _socketActivity;
+    if (activity == null || activity != _socketActivityAtWsRead) {
+      _wsTrailingReads = 1;
+      return false;
+    }
+    if (_wsTrailingReads == 0) return true;
+    _wsTrailingReads--;
+    return false;
   }
 
   /// Grace window before a response-incomplete request becomes eligible for a

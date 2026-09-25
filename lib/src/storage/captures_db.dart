@@ -209,6 +209,7 @@ class CapturesDao {
       'SELECT s.id, s.started_at, s.ended_at, s.app_name, s.vm_service_uri, s.isolate_id, s.project_path, s.note, '
       '(SELECT COUNT(*) FROM http_requests h WHERE h.session_id=s.id) AS http_count, '
       '(SELECT COUNT(*) FROM socket_events sk WHERE sk.session_id=s.id) AS socket_count, '
+      '(SELECT COUNT(*) FROM websocket_connections w WHERE w.session_id=s.id) AS websocket_count, '
       '(SELECT COUNT(*) FROM log_records l WHERE l.session_id=s.id) AS log_count '
       'FROM sessions s$where ORDER BY started_at DESC LIMIT ?',
       [...params, limit],
@@ -230,6 +231,7 @@ class CapturesDao {
       'SELECT s.*, '
       '(SELECT COUNT(*) FROM http_requests h WHERE h.session_id=s.id) AS http_count, '
       '(SELECT COUNT(*) FROM socket_events sk WHERE sk.session_id=s.id) AS socket_count, '
+      '(SELECT COUNT(*) FROM websocket_connections w WHERE w.session_id=s.id) AS websocket_count, '
       '(SELECT COUNT(*) FROM log_records l WHERE l.session_id=s.id) AS log_count, '
       '(SELECT COUNT(*) FROM alerts a WHERE a.session_id=s.id) AS alert_count '
       'FROM sessions s WHERE s.id=?',
@@ -544,6 +546,258 @@ class CapturesDao {
     );
     if (rows.isEmpty) return null;
     return _rowToMap(rows.first);
+  }
+
+  /// Records a `WebSocket.Connect` begin; a later end or a re-delivery never overwrites what is known.
+  void wsConnectStarted(
+    int sessionId, {
+    required String connKey,
+    required String? isolateId,
+    required String? uri,
+    required int startedUs,
+  }) {
+    _db.execute(
+      'INSERT INTO websocket_connections(session_id, conn_key, isolate_id, uri, connect_started_us, state) '
+      "VALUES (?,?,?,?,?,'connecting') "
+      'ON CONFLICT(session_id, conn_key) DO UPDATE SET '
+      '  uri=COALESCE(uri, excluded.uri), '
+      '  connect_started_us=COALESCE(connect_started_us, excluded.connect_started_us)',
+      [sessionId, connKey, isolateId, uri, startedUs],
+    );
+  }
+
+  /// Records a `WebSocket.Connect` end: `open` on success, `failed` with [error] otherwise.
+  void wsConnectFinished(
+    int sessionId, {
+    required String connKey,
+    required String? isolateId,
+    required int endUs,
+    String? error,
+    int? httpStatus,
+  }) {
+    final state = error == null ? 'open' : 'failed';
+    _db.execute(
+      'INSERT INTO websocket_connections(session_id, conn_key, isolate_id, opened_us, closed_us, error, http_status, state) '
+      'VALUES (?,?,?,?,?,?,?,?) '
+      'ON CONFLICT(session_id, conn_key) DO UPDATE SET '
+      '  opened_us=COALESCE(opened_us, excluded.opened_us), '
+      '  closed_us=COALESCE(closed_us, excluded.closed_us), '
+      '  error=COALESCE(error, excluded.error), '
+      '  http_status=COALESCE(http_status, excluded.http_status), '
+      "  state=CASE WHEN state='connecting' THEN excluded.state ELSE state END",
+      [
+        sessionId,
+        connKey,
+        isolateId,
+        error == null ? endUs : null,
+        error == null ? null : endUs,
+        error,
+        httpStatus,
+        state,
+      ],
+    );
+  }
+
+  /// The row already bound to dart:io's per-isolate [connectionId], if any.
+  String? wsConnKeyFor(int sessionId, String? isolateId, int connectionId) {
+    final rows = _db.select(
+      'SELECT conn_key FROM websocket_connections '
+      'WHERE session_id=? AND isolate_id IS ? AND connection_id=? LIMIT 1',
+      [sessionId, isolateId, connectionId],
+    );
+    return rows.isEmpty ? null : rows.first['conn_key'] as String;
+  }
+
+  /// Binds [connectionId] to a still unbound connect on [isolateId] that opened by [firstSeenUs]. dart:io numbers WebSockets consecutively in the order their connects finish, so the gap to the nearest bound number picks the connect; without one the earliest waiting connect is taken and marked `inferred`.
+  ({String connKey, bool inferred})? wsBindConnection(
+    int sessionId, {
+    required String? isolateId,
+    required int connectionId,
+    required int firstSeenUs,
+  }) {
+    Map<String, Object?>? bound(String op, String order) {
+      final rows = _db.select(
+        'SELECT connection_id, opened_us FROM websocket_connections '
+        'WHERE session_id=? AND isolate_id IS ? AND connection_id $op ? '
+        'ORDER BY connection_id $order LIMIT 1',
+        [sessionId, isolateId, connectionId],
+      );
+      return rows.isEmpty ? null : _rowToMap(rows.first);
+    }
+
+    final lower = bound('<', 'DESC');
+    final upper = bound('>', 'ASC');
+    final lowerOpened = lower?['opened_us'] as int?;
+    final upperOpened = upper?['opened_us'] as int?;
+    final candidates = _db
+        .select(
+          'SELECT conn_key FROM websocket_connections '
+          "WHERE session_id=? AND isolate_id IS ? AND connection_id IS NULL AND state='open' "
+          'AND opened_us <= ? AND opened_us > ? AND opened_us < ? ORDER BY opened_us, id',
+          [
+            sessionId,
+            isolateId,
+            firstSeenUs,
+            lowerOpened ?? -1,
+            upperOpened ?? firstSeenUs + 1,
+          ],
+        )
+        .map((r) => r['conn_key'] as String)
+        .toList();
+    if (candidates.isEmpty) return null;
+    final gap = lowerOpened == null
+        ? null
+        : connectionId - (lower!['connection_id'] as int) - 1;
+    final byGap = gap != null && gap >= 0 && gap < candidates.length;
+    final inferred = candidates.length > 1 && !byGap;
+    final key = candidates[byGap ? gap : 0];
+    _db.execute(
+      'UPDATE websocket_connections SET connection_id=?, uri_inferred=? '
+      'WHERE session_id=? AND conn_key=? AND connection_id IS NULL',
+      [connectionId, inferred ? 1 : 0, sessionId, key],
+    );
+    if (_db.updatedRows == 1) return (connKey: key, inferred: inferred);
+    final raced = wsConnKeyFor(sessionId, isolateId, connectionId);
+    return raced == null ? null : (connKey: raced, inferred: false);
+  }
+
+  /// A row for a connection whose connect this capture never saw (opened before attach).
+  void wsConnectionSeen(
+    int sessionId, {
+    required String connKey,
+    required String? isolateId,
+    required int connectionId,
+  }) {
+    _db.execute(
+      'INSERT OR IGNORE INTO websocket_connections(session_id, conn_key, isolate_id, connection_id, state) '
+      "VALUES (?,?,?,?,'open')",
+      [sessionId, connKey, isolateId, connectionId],
+    );
+  }
+
+  /// Stores one message, ping, pong, close or error event; false when another process already stored it.
+  bool insertWsMessage(
+    int sessionId, {
+    required String connKey,
+    required int tsUs,
+    required String kind,
+    String? direction,
+    int? bytes,
+    String? detail,
+    required String dedupKey,
+  }) {
+    _db.execute(
+      'INSERT OR IGNORE INTO websocket_messages(session_id, conn_key, ts_us, direction, kind, bytes, detail, dedup_key) '
+      'VALUES (?,?,?,?,?,?,?,?)',
+      [sessionId, connKey, tsUs, direction, kind, bytes, detail, dedupKey],
+    );
+    return _db.updatedRows == 1;
+  }
+
+  /// Marks the connection closed; the first close seen (app or server) names who closed it.
+  void wsConnectionClosed(
+    int sessionId, {
+    required String connKey,
+    required int tsUs,
+    int? code,
+    String? reason,
+    String? closedBy,
+  }) {
+    _db.execute(
+      'UPDATE websocket_connections SET '
+      '  closed_us=COALESCE(closed_us, ?), close_code=COALESCE(close_code, ?), '
+      '  close_reason=COALESCE(close_reason, ?), closed_by=COALESCE(closed_by, ?), '
+      "  state='closed' "
+      'WHERE session_id=? AND conn_key=?',
+      [tsUs, code, reason, closedBy, sessionId, connKey],
+    );
+  }
+
+  /// Records a transport error on an open connection.
+  void wsConnectionError(int sessionId,
+      {required String connKey, required String error}) {
+    _db.execute(
+      'UPDATE websocket_connections SET error=COALESCE(error, ?), '
+      "state=CASE WHEN state='closed' THEN state ELSE 'error' END "
+      'WHERE session_id=? AND conn_key=?',
+      [error, sessionId, connKey],
+    );
+  }
+
+  static const _wsConnectionColumns = 'c.*, COUNT(m.id) AS events, '
+      "SUM(CASE WHEN m.direction='out' AND m.kind IN ('text','binary') THEN 1 ELSE 0 END) AS sent, "
+      "SUM(CASE WHEN m.direction='in' AND m.kind IN ('text','binary') THEN 1 ELSE 0 END) AS received, "
+      "SUM(CASE WHEN m.direction='out' AND m.kind IN ('text','binary') THEN COALESCE(m.bytes,0) ELSE 0 END) AS bytes_sent, "
+      "SUM(CASE WHEN m.direction='in' AND m.kind IN ('text','binary') THEN COALESCE(m.bytes,0) ELSE 0 END) AS bytes_received, "
+      'MIN(m.ts_us) AS first_us, MAX(m.ts_us) AS last_us';
+
+  /// Connections of a session with message counts and byte totals, newest first.
+  List<Map<String, Object?>> queryWsConnections({
+    required int sessionId,
+    String? uriContains,
+    String? state,
+    int limit = 50,
+  }) {
+    final clauses = <String>['c.session_id = ?'];
+    final params = <Object?>[sessionId];
+    if (uriContains != null && uriContains.isNotEmpty) {
+      clauses.add('LOWER(c.uri) LIKE ?');
+      params.add('%${uriContains.toLowerCase()}%');
+    }
+    if (state != null && state.isNotEmpty) {
+      clauses.add('c.state = ?');
+      params.add(state);
+    }
+    final rows = _db.select(
+      'SELECT $_wsConnectionColumns FROM websocket_connections c '
+      'LEFT JOIN websocket_messages m ON m.session_id=c.session_id AND m.conn_key=c.conn_key '
+      'WHERE ${clauses.join(' AND ')} GROUP BY c.id '
+      'ORDER BY COALESCE(c.connect_started_us, c.opened_us, MIN(m.ts_us)) DESC, c.id DESC LIMIT ?',
+      [...params, limit],
+    );
+    return rows.map(_rowToMap).toList();
+  }
+
+  /// One connection by its row id, with the same totals as [queryWsConnections].
+  Map<String, Object?>? getWsConnection(int sessionId, int id) {
+    final rows = _db.select(
+      'SELECT $_wsConnectionColumns FROM websocket_connections c '
+      'LEFT JOIN websocket_messages m ON m.session_id=c.session_id AND m.conn_key=c.conn_key '
+      'WHERE c.session_id=? AND c.id=? GROUP BY c.id',
+      [sessionId, id],
+    );
+    return rows.isEmpty ? null : _rowToMap(rows.first);
+  }
+
+  /// A connection's events in time order, after [afterId] when paging.
+  List<Map<String, Object?>> queryWsMessages({
+    required int sessionId,
+    required String connKey,
+    String? kind,
+    String? direction,
+    int? afterId,
+    int limit = 100,
+  }) {
+    final clauses = <String>['session_id = ?', 'conn_key = ?'];
+    final params = <Object?>[sessionId, connKey];
+    if (kind != null && kind.isNotEmpty) {
+      clauses.add('kind = ?');
+      params.add(kind);
+    }
+    if (direction != null && direction.isNotEmpty) {
+      clauses.add('direction = ?');
+      params.add(direction);
+    }
+    if (afterId != null) {
+      clauses.add('id > ?');
+      params.add(afterId);
+    }
+    final rows = _db.select(
+      'SELECT id, ts_us, direction, kind, bytes, detail FROM websocket_messages '
+      'WHERE ${clauses.join(' AND ')} ORDER BY ts_us, id LIMIT ?',
+      [...params, limit],
+    );
+    return rows.map(_rowToMap).toList();
   }
 
   /// The new row id, or null when another process already stored this record.
@@ -1489,6 +1743,8 @@ class CapturesDao {
       'http_requests',
       'http_bodies',
       'socket_events',
+      'websocket_connections',
+      'websocket_messages',
       'log_records',
       'alerts',
       'http_search_map',

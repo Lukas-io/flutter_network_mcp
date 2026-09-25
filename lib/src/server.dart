@@ -59,6 +59,8 @@ import 'tools/socket_clear.dart';
 import 'tools/socket_get.dart';
 import 'tools/socket_list.dart';
 import 'tools/usage_stats.dart';
+import 'tools/ws_get.dart';
+import 'tools/ws_list.dart';
 
 /// MCP server exposing Flutter DevTools data via DTD + VM service, with
 /// persistent capture sessions in SQLite, full-text search, proactive alerts,
@@ -125,6 +127,11 @@ base class FlutterNetworkMcpServer extends MCPServer
       _register(socketListTool, socketList);
       _register(socketGetTool, socketGet);
       _register(socketClearTool, socketClear);
+    }
+
+    if (caps.isEnabled(Category.websockets)) {
+      _register(wsListTool, wsList);
+      _register(wsGetTool, wsGet);
     }
 
     if (caps.isEnabled(Category.logs)) {

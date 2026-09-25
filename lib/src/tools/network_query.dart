@@ -25,6 +25,9 @@ final networkQueryTool = Tool(
       'timestamp_ms); '
       'socket_events(session_id, vm_id, address, port, read_bytes, '
       'write_bytes); '
+      'websocket_connections(id, session_id, conn_key, uri, state, opened_us, '
+      'closed_us, close_code, error); '
+      'websocket_messages(session_id, conn_key, ts_us, direction, kind, bytes); '
       'alerts(session_id, ts_ms, severity, kind, title, drained). A failed query '
       'returns the live `schema` map; full guide at resource '
       'flutter-network://docs/tools/power/network_query.md.',

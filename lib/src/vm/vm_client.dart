@@ -264,6 +264,73 @@ class VmClient {
     return _bounded('clearSocketProfile', service.clearSocketProfile(isolateId));
   }
 
+  /// Adds the `Dart` stream to the VM's recorded timeline streams (dart:io writes its WebSocket events there), keeping any streams DevTools already records. False when the VM refuses.
+  Future<bool> recordDartTimelineStream() async {
+    try {
+      final flags =
+          await _bounded('getVMTimelineFlags', service.getVMTimelineFlags());
+      final recorded = flags.recordedStreams ?? const <String>[];
+      if (recorded.contains('Dart')) return true;
+      await _bounded(
+        'setVMTimelineFlags',
+        service.setVMTimelineFlags([...recorded, 'Dart']),
+      );
+      return true;
+    } on Object {
+      return false;
+    }
+  }
+
+  /// Whether the app's dart:io emits WebSocket timeline events (Dart 3.13+); null until [checkWebSocketTimelineSupport] has run.
+  bool? get webSocketTimelineSupported => _webSocketTimelineSupported;
+  bool? _webSocketTimelineSupported;
+
+  /// Looks for dart:io's WebSocket timeline logger class in [isolateId]'s `dart:_http`; unknown (null) when the VM cannot say.
+  Future<bool?> checkWebSocketTimelineSupport(String isolateId) async {
+    try {
+      final isolate = await _bounded('getIsolate', service.getIsolate(isolateId));
+      final http = (isolate.libraries ?? const <LibraryRef>[])
+          .where((l) => l.uri == 'dart:_http')
+          .firstOrNull;
+      if (http?.id == null) return null;
+      final lib = await _bounded(
+        'getObject',
+        service.getObject(isolateId, http!.id!),
+      );
+      if (lib is! Library) return null;
+      return _webSocketTimelineSupported = (lib.classes ?? const <ClassRef>[])
+          .any((c) => c.name == '_WebSocketTimelineLogger');
+    } on Object {
+      return null;
+    }
+  }
+
+  /// The VM timeline clock now, in microseconds.
+  Future<int> timelineNowMicros() async {
+    final t = await _bounded('getVMTimelineMicros', service.getVMTimelineMicros());
+    return t.timestamp ?? 0;
+  }
+
+  /// Raw `WebSocket.*` trace events recorded between [originMicros] and [untilMicros] on the timeline clock.
+  Future<List<Map<String, Object?>>> webSocketTimelineEvents(
+    int originMicros,
+    int untilMicros,
+  ) async {
+    final timeline = await _bounded(
+      'getVMTimeline',
+      service.getVMTimeline(
+        timeOriginMicros: originMicros,
+        timeExtentMicros: untilMicros - originMicros + 1,
+      ),
+    );
+    return [
+      for (final e in timeline.traceEvents ?? const <TimelineEvent>[])
+        if (e.json case final json?
+            when '${json['name']}'.startsWith('WebSocket.'))
+          json.cast<String, Object?>(),
+    ];
+  }
+
   Future<HttpTimelineLoggingState> enableHttpLogging() {
     return enableHttpLoggingForIsolate(_requireIsolate());
   }
@@ -316,6 +383,7 @@ class VmClient {
     _service = null;
     _isolates.clear();
     _connectedUri = null;
+    _webSocketTimelineSupported = null;
     if (svc != null) await svc.dispose();
   }
 

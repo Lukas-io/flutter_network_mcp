@@ -1,7 +1,7 @@
 ---
 tool: socket_list
 description: List dart:io socket statistics (TCP/UDP) — addresses, ports, byte counts, open/closed state.
-when_to_use: When investigating non-HTTP network behavior — WebSocket frames, gRPC, custom TCP, UDP.
+when_to_use: When investigating non-HTTP network behavior — gRPC, custom TCP, UDP, or WebSockets on apps too old for ws_list.
 ---
 
 ## DO NOT USE THIS TOOL WHEN
@@ -14,7 +14,7 @@ when_to_use: When investigating non-HTTP network behavior — WebSocket frames, 
 
 ## Use this when
 
-- A WebSocket connection looks off — see if bytes flow.
+- A WebSocket connection looks off and `ws_list` has nothing (app built before Dart 3.13) — see if bytes flow.
 - Suspected leak — sockets with no `endTimeUs` (still open).
 - gRPC or custom-protocol traffic that doesn't show in HTTP tools.
 

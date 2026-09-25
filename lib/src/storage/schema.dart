@@ -1,6 +1,6 @@
 /// Captures-DB schema version. Bump this AND add a migration block in the
 /// `_migrationFor` switch in `database.dart` whenever a table here changes.
-const int currentVersion = 13;
+const int currentVersion = 14;
 
 const List<String> initialSchema = [
   '''
@@ -163,6 +163,45 @@ const List<String> initialSchema = [
   ''',
   'CREATE UNIQUE INDEX idx_sessions_live_uri ON sessions(vm_service_uri) '
       'WHERE vm_service_uri IS NOT NULL AND ended_at IS NULL',
+  '''
+  CREATE TABLE websocket_connections (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id         INTEGER NOT NULL,
+    conn_key           TEXT NOT NULL,
+    isolate_id         TEXT,
+    connection_id      INTEGER,
+    uri                TEXT,
+    uri_inferred       INTEGER NOT NULL DEFAULT 0,
+    connect_started_us INTEGER,
+    opened_us          INTEGER,
+    closed_us          INTEGER,
+    close_code         INTEGER,
+    close_reason       TEXT,
+    closed_by          TEXT,
+    error              TEXT,
+    http_status        INTEGER,
+    state              TEXT NOT NULL,
+    UNIQUE (session_id, conn_key),
+    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+  )
+  ''',
+  '''
+  CREATE TABLE websocket_messages (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id  INTEGER NOT NULL,
+    conn_key    TEXT NOT NULL,
+    ts_us       INTEGER NOT NULL,
+    direction   TEXT,
+    kind        TEXT NOT NULL,
+    bytes       INTEGER,
+    detail      TEXT,
+    dedup_key   TEXT,
+    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+  )
+  ''',
+  'CREATE INDEX idx_ws_messages_conn ON websocket_messages(session_id, conn_key, ts_us)',
+  'CREATE UNIQUE INDEX idx_ws_messages_dedup ON websocket_messages(session_id, dedup_key) '
+      'WHERE dedup_key IS NOT NULL',
   'CREATE INDEX idx_alerts_drained ON alerts(drained, severity, ts_ms)',
   '''
   CREATE TABLE redacted_headers (
@@ -411,4 +450,47 @@ const List<String> migrationV12toV13 = [
   'CREATE UNIQUE INDEX IF NOT EXISTS idx_logs_dedup '
       'ON log_records(session_id, dedup_key) WHERE dedup_key IS NOT NULL',
   ...migrationV11toV12,
+];
+
+/// v14: WebSocket capture with no app code. dart:io writes a `WebSocket.*` timeline event for each connect, message, ping/pong, close and error (direction, type and size, never contents); the capture writer reads them from the VM timeline into these tables.
+const List<String> migrationV13toV14 = [
+  '''
+    CREATE TABLE IF NOT EXISTS websocket_connections (
+      id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id         INTEGER NOT NULL,
+      conn_key           TEXT NOT NULL,
+      isolate_id         TEXT,
+      connection_id      INTEGER,
+      uri                TEXT,
+      uri_inferred       INTEGER NOT NULL DEFAULT 0,
+      connect_started_us INTEGER,
+      opened_us          INTEGER,
+      closed_us          INTEGER,
+      close_code         INTEGER,
+      close_reason       TEXT,
+      closed_by          TEXT,
+      error              TEXT,
+      http_status        INTEGER,
+      state              TEXT NOT NULL,
+      UNIQUE (session_id, conn_key),
+      FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+    )
+    ''',
+  '''
+    CREATE TABLE IF NOT EXISTS websocket_messages (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id  INTEGER NOT NULL,
+      conn_key    TEXT NOT NULL,
+      ts_us       INTEGER NOT NULL,
+      direction   TEXT,
+      kind        TEXT NOT NULL,
+      bytes       INTEGER,
+      detail      TEXT,
+      dedup_key   TEXT,
+      FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+    )
+    ''',
+  'CREATE INDEX IF NOT EXISTS idx_ws_messages_conn ON websocket_messages(session_id, conn_key, ts_us)',
+  'CREATE UNIQUE INDEX IF NOT EXISTS idx_ws_messages_dedup ON websocket_messages(session_id, dedup_key) '
+      'WHERE dedup_key IS NOT NULL',
 ];
