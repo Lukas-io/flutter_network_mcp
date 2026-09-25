@@ -1,9 +1,17 @@
+import 'dart:io';
+
 import 'package:flutter_network_mcp/src/docs/doc_resources.dart';
+import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 
 /// D6 (audit RC10/F8): the shipped docs must be discoverable as MCP
 /// resources so a fresh agent can read the per-tool guides in-band.
 void main() {
+  test('serves the docs of this checkout, not another installed copy', () {
+    expect(p.canonicalize(DocResources.resolveDocsDir()!.path),
+        p.canonicalize(p.join(Directory.current.path, 'docs')));
+  });
+
   test('discovers the tool guides + response contract as resources', () {
     final resources = DocResources.discover();
     // Running from source (dart test), the repo docs/ is present.
