@@ -87,10 +87,11 @@ FutureOr<CallToolResult> alertPatterns(CallToolRequest request) async {
             'nextSteps': ['Retry with severity:"warning" (or info | error | critical)'],
           });
         }
+        final level = CapturesDao.normalizeSeverity(severity);
         final id = dao.addAlertPattern(
           kind: kind,
           regex: regex,
-          severity: severity,
+          severity: level,
           label: label,
         );
         _refreshDetector(dao);
@@ -102,10 +103,10 @@ FutureOr<CallToolResult> alertPatterns(CallToolRequest request) async {
 
         return jsonResult({
           'action': 'add',
-          'summary': 'Registered alert pattern #$id (kind=$kind, severity=$severity).',
+          'summary': 'Registered alert pattern #$id (kind=$kind, severity=$level).',
           'id': id,
           'kind': kind,
-          'severity': severity,
+          'severity': level,
           if (warnings.isNotEmpty) 'warnings': warnings,
           'nextSteps': const [
             'alerts_drain — wait for matching log records, then drain to confirm fires',

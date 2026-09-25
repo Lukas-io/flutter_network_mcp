@@ -23,7 +23,7 @@ when_to_use: When you want to iterate on a backend fix or reproduce a failing ca
 Reads the request row and request body from the DB (live or history; the VM is not queried, so a request that is not persisted yet is `not_found`). Generates one Dart file:
 
 - `http.Request('<METHOD>', Uri.parse('<url>'))` with the method upper-cased.
-- `request.headers.addAll({...})` with every captured request header. Headers in the redaction set (`authorization`, `cookie`, `proxy-authorization`, `x-api-key`, `x-auth-token`, plus names added via `redacted_headers`) become commented-out lines `// 'Name': '<fill in: redacted>',` unless you pass `redact:false`.
+- `request.headers.addAll({...})` with every captured request header. Headers in the redaction set (`authorization`, `cookie`, `proxy-authorization`, `set-cookie`, `x-api-key`, `x-auth-token`, plus names added via `redacted_headers`) become commented-out lines `// 'Name': '<fill in: redacted>',` unless you pass `redact:false`.
 - `request.body = '...'` when the captured request body is non-empty and decodes as UTF-8. A body over 8192 bytes is cut on a character boundary (never inside a multi-byte character), so text bodies always survive the cut. A body that is not UTF-8 gets no body line, and the reply carries `bodyIsBinary:true` plus a warning.
 - `expect(response.statusCode, <captured status>)`. When no status was captured (in-flight request), it asserts `inInclusiveRange(200, 599)` instead.
 - `expect(response.body, contains('...'))` when `assertBodyContains` is set.
@@ -60,7 +60,7 @@ The body is always the original captured bytes: `session_configure bodyDecryptio
 
 `warnings` (omitted when empty) appears for: redacted auth headers, a request body cut at 8192 bytes (the warning gives the bytes kept), a body that is not UTF-8 and was left out (`bodyIsBinary:true` is also set), no captured status (the test asserts the 200 to 599 range), `redact:false` (do not commit the test as-is), and a scope note (for example an open `session_open` view shadowing live sessions). The second `nextSteps` entry is shortened above.
 
-Errors: `bad_argument` (missing `id`), `not_found` (id not in the session's DB). Scope failures return `error` + `nextSteps` without an `errorKind`.
+Errors: `bad_argument` (missing `id`), `not_found` (id not in the session's DB). Scope failures return `no_session` (nothing attached or opened, or no attached session matches `appNameContains`) or `bad_argument` (several attached sessions match), with `nextSteps`.
 
 ## Pairs well with
 

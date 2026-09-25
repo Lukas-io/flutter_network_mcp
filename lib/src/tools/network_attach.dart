@@ -15,6 +15,7 @@ import '../vm/dtd_probe.dart';
 import '../vm/log_stream.dart';
 import '../vm/native_log_source.dart';
 import '../vm/vm_client.dart';
+import 'error_kind.dart';
 import 'result.dart';
 import '../vm/vm_uri.dart';
 
@@ -78,9 +79,9 @@ final networkAttachTool = Tool(
       ),
       'logBufferSize': Schema.int(
         description:
-            'Per-session log ring capacity (50-10000). Overrides the env '
+            'Per-session log ring capacity (50-20000). Overrides the env '
             'default (2000, or auto_attach_config logBufferSize); raise it '
-            'for chatty apps, up to 20000.',
+            'for chatty apps.',
       ),
       'reattach': Schema.bool(
         description:
@@ -171,7 +172,7 @@ void closeStaleViewAfterAttach(Map<String, Object?> result) {
 /// **Multi-attach (Phase 5):** the old "any attach blocks attach" rule +
 /// force:true escape hatch is replaced by a per-vmServiceUri duplicate
 /// guard. Multiple distinct apps can attach concurrently up to
-/// FLUTTER_NETWORK_MCP_MAX_ATTACH (default 4).
+/// FLUTTER_NETWORK_MCP_MAX_ATTACH (default 8).
 ///
 /// Exported so [networkStatus] can reuse it for `attachIfOne:true`.
 Future<Map<String, Object?>> performAttach({
@@ -199,6 +200,7 @@ Future<Map<String, Object?>> performAttach({
           'Reached max attached sessions ($maxAttach live). Detach one first '
           '(network_detach keep:true frees the slot without ending the '
           'session) or raise FLUTTER_NETWORK_MCP_MAX_ATTACH.',
+      'errorKind': ErrorKind.badArgument.wire,
       'attached': [
         for (final a in registry.attached.values)
           {'sessionId': a.id, 'appName': a.appName},
@@ -219,6 +221,7 @@ Future<Map<String, Object?>> performAttach({
   if (!inFlight.claim(requestKey)) {
     return {
       'error': 'An attach to "$requestKey" is already in progress.',
+      'errorKind': ErrorKind.timeout.wire,
       'nextSteps': const [
         'Wait a moment, then network_status — the session will be listed under attached',
       ],
@@ -331,6 +334,7 @@ Future<Map<String, Object?>> _performAttachLocked({
                   'running in debug mode?'
               : 'No app name contains "$appNameContains" on any running DTD. '
                   'Visible apps: ${allNames.join(', ')}.',
+          'errorKind': ErrorKind.notFound.wire,
           'apps': [
             for (final a in apps)
               {'name': a.name, 'uri': a.uri, 'dtdUri': a.dtdUri.toString()},
@@ -346,6 +350,7 @@ Future<Map<String, Object?>> _performAttachLocked({
         return {
           'error': 'Multiple apps across DTDs match "$appNameContains"; pass a '
               'more specific substring or an explicit `vmServiceUri`.',
+          'errorKind': ErrorKind.badArgument.wire,
           'retryable': false,
           'apps': [
             for (final m in matches)
@@ -374,6 +379,7 @@ Future<Map<String, Object?>> _performAttachLocked({
               'No DTD URI provided and no default configured. Pass '
               '`dtdUri` or `vmServiceUri`, or have the user configure '
               'a default at server startup.',
+          'errorKind': ErrorKind.badArgument.wire,
           'nextSteps': const [
             'Ask the user for the DTD URI (printed in the IDE console after `flutter run`)',
             'Update --dtd-uri in .mcp.json and have the user restart Claude Code',
@@ -385,6 +391,7 @@ Future<Map<String, Object?>> _performAttachLocked({
       if (apps.isEmpty) {
         return {
           'error': 'DTD is up but reports no connected apps yet.',
+          'errorKind': ErrorKind.notFound.wire,
           'nextSteps': [
             'Launch a Flutter app in debug mode',
             'Re-check via network_status',
@@ -404,6 +411,7 @@ Future<Map<String, Object?>> _performAttachLocked({
             'error':
                 'No DTD app name contains "$appNameContains". '
                 'Visible apps: ${apps.map((a) => a.name).join(', ')}.',
+            'errorKind': ErrorKind.notFound.wire,
             'apps': [
               for (final a in apps) {'name': a.name, 'uri': a.uri},
             ],
@@ -419,6 +427,7 @@ Future<Map<String, Object?>> _performAttachLocked({
         return {
           'error': 'DTD has multiple matching apps; pass `appNameContains` or '
               'an explicit `vmServiceUri`.',
+          'errorKind': ErrorKind.badArgument.wire,
           'retryable': false,
           'apps': [
             for (final a in filtered) {'name': a.name, 'uri': a.uri},
@@ -438,6 +447,7 @@ Future<Map<String, Object?>> _performAttachLocked({
     if (!onResolved(resolvedVmServiceUri)) {
       return {
         'error': 'An attach to $resolvedVmServiceUri is already in progress.',
+        'errorKind': ErrorKind.timeout.wire,
         'nextSteps': const [
           'Wait a moment, then network_status — the session will be listed under attached',
         ],
@@ -786,6 +796,7 @@ Future<Map<String, Object?>> _performAttachLocked({
     final isZombie = msg.contains('did not respond to getVersion');
     return {
       'error': 'Attach failed: $msg',
+      'errorKind': attachFailureKind(e).wire,
       'nextSteps': isZombie
           ? const [
               'Restart the Flutter app to spawn a fresh DTD/DDS',
@@ -796,6 +807,27 @@ Future<Map<String, Object?>> _performAttachLocked({
             ],
     };
   }
+}
+
+ErrorKind attachFailureKind(Object e) {
+  if (e is VmRpcTimeoutException || e is TimeoutException) {
+    return ErrorKind.unresponsiveVm;
+  }
+  if (e is FormatException || e is ArgumentError) return ErrorKind.badArgument;
+  final msg = e.toString();
+  if (msg.contains('did not respond to getVersion')) {
+    return ErrorKind.unresponsiveVm;
+  }
+  if (msg.contains('No running isolate exposes')) return ErrorKind.notFound;
+  if (e is io.SocketException ||
+      e is io.WebSocketException ||
+      e is io.HttpException ||
+      msg.contains('WebSocketChannelException') ||
+      msg.contains('Connection refused') ||
+      msg.contains('Connection closed')) {
+    return ErrorKind.unresponsiveVm;
+  }
+  return ErrorKind.internal;
 }
 
 /// Builds an onboarding hint asking the agent to PROMPT the user about

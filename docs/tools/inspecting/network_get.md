@@ -39,7 +39,7 @@ For byte-exact paging of the full untruncated payload, use `network_body` (which
 
 Header values longer than `headerTruncateBytes` become `{value, truncated, totalLength}` objects so a 4 KB JWT doesn't drown the payload. At most 64 headers are shown per side; the rest are counted in `_omitted`.
 
-**Redaction (default on).** With `redact` unset or `true`, auth-like headers (`authorization`, `cookie`, `proxy-authorization`, `x-api-key`, `x-auth-token`, plus names added via `redacted_headers`) show as the plain string `"<redacted>"`. Pass `redact:false` to see real values when debugging auth.
+**Redaction (default on).** With `redact` unset or `true`, auth-like headers (`authorization`, `cookie`, `proxy-authorization`, `set-cookie`, `x-api-key`, `x-auth-token`, plus names added via `redacted_headers`) show as the plain string `"<redacted>"`. Pass `redact:false` to see real values when debugging auth.
 
 **Body decryption.** When `session_configure bodyDecryption:{...}` is on, each body sub-object is decrypted before decoding and carries `decrypted:true` (its `mimeType` becomes `application/json` when the plaintext starts with `{` or `[`, else `text/plain; charset=utf-8`). A body that does not fit the scheme is returned as captured with `decrypted:false` and `decryptionFailed:"<reason>"`; this is never an error. `totalSize` then counts plaintext bytes.
 
@@ -112,7 +112,7 @@ Errors (each carries `nextSteps`):
 - `not_found`: the id is in neither the live VM profile nor the DB (live), or not in the viewed session (history).
 - `unresponsive_vm`: no HTTP-profiling isolates are known, or the live fetch failed for a reason other than an unknown id and the request is not persisted either. The reply includes `id` and `triedIsolates`.
 - `internal`: the history read threw.
-- Scope failures (not attached and nothing opened, ambiguous `appNameContains`, several sessions and no default) return an `error` with `nextSteps` (and `attached` / `matches` where relevant) but no `errorKind`.
+- Scope failures return an `error` with `nextSteps` (and `attached` / `matches` where relevant) and an `errorKind`: `no_session` (not attached and nothing opened, or no attached session matches `appNameContains`) or `bad_argument` (several match).
 
 ```json
 // Missing id

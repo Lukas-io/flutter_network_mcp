@@ -22,13 +22,13 @@ when_to_use: Right after `network_status`, when the question is "is anything wro
 
 1. Resolves the session like the other read tools (`sessionId`, else `appNameContains`, else the `session_open` view, else the sole or default attached session).
 2. Reads the newest 10 000 `http_requests` rows of that session from the capture DB (whole session by default, or requests that started within `sinceMs` of now). A live request is included once the capture writer has persisted it (~2s tick).
-3. Groups them with the same digest as `network_summarize`: one bucket per `(method, host, pathTemplate)`, with count, p95 latency and error rate. Error rate counts status >= 400 and rows with no status code (transport errors, and requests still in flight).
+3. Groups them with the same digest as `network_summarize`: one bucket per `(method, host, pathTemplate)`, with count, p95 latency and error rate. Error rate counts status >= 400 and transport errors (no status code, but the request ended or carries an error) over the completed requests. Requests still in flight are not errors and are left out of the rate.
 4. `errorHotspots`: endpoints with an error rate above zero, sorted by impact (`errorRate x count`), top 3.
 5. `slowestEndpoints`: endpoints with a p95 latency, sorted by p95 desc, top 3.
 6. When the alerts capability is on, counts the session's pending alerts.
 7. Picks one headline and its next steps, in this order:
    - No requests: `No HTTP captured for session N yet.` (live app) or `No HTTP captured in session N (its capture is complete).`, with a state-aware hint (drive the app, or the capture is final) and, for a live app, `network_status`.
-   - Any error hotspot: `Top problem: <endpoint> is failing <pct>% of <n> call(s).`, then `network_list statusMin:400 hostContains:"<host>"`, `alerts_drain` (when alerts are pending), and `network_drift hostContains:"<host>"`.
+   - Any error hotspot: `Top problem: <endpoint> is failing <pct>% of <n> call(s).`, then `network_list statusMin:400 hostContains:"<host>"`, `alerts_drain` (when alerts are pending), and `network_drift hostContains:"<host>"`. When the endpoint has no host (a relative URL), `hostContains` is left out of both.
    - No errors, and the slowest p95 is over 1000 ms: `No errors; slowest endpoint <endpoint> at <p95>ms p95.`, then `network_summarize` and `alerts_drain` (when alerts are pending).
    - Otherwise: `Healthy: <n> request(s) across <m> endpoint(s), no error hotspots.`, then `alerts_drain` when alerts are pending, else `network_summarize`.
 
@@ -74,7 +74,8 @@ Errors:
 | Cause | `errorKind` |
 |---|---|
 | The DB read failed (`network_report query failed: ...`), with `network_status` and `network_summarize` as next steps | `internal` |
-| No session could be resolved, or `appNameContains` matched none / several | none (error with `nextSteps`) |
+| No session could be resolved, or `appNameContains` matched no attached session | `no_session` |
+| `appNameContains` matched several attached sessions | `bad_argument` |
 | The call ran past the per-tool deadline | `timeout` |
 
 ## Pairs well with

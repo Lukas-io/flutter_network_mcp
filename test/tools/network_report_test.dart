@@ -81,4 +81,35 @@ void main() {
     expect(res.isError, isFalse);
     expect(res.structuredContent!['summary'].toString(), contains('No HTTP'));
   });
+
+  test('an endpoint with no host routes without a bogus hostContains', () async {
+    for (var i = 0; i < 3; i++) {
+      req('GET', '', '/relative', 500, 20);
+    }
+    final res = await networkReport(CallToolRequest(
+      name: 'network_report',
+      arguments: {'sessionId': sid},
+    ));
+    final steps = (res.structuredContent!['nextSteps'] as List).join(' ');
+    expect(steps, contains('network_list statusMin:400'));
+    expect(steps, isNot(contains('hostContains')));
+  });
+
+  test('requests still in flight are not error hotspots', () async {
+    req('GET', 'api.x', '/ping', 200, 10);
+    for (var i = 0; i < 3; i++) {
+      CapturesDatabase.instance.raw.execute(
+        'INSERT INTO http_requests(session_id, vm_id, method, url, host, path, '
+        'start_us) VALUES (?,?,?,?,?,?,?)',
+        [sid, 'v${vm++}', 'GET', 'https://api.x/ping', 'api.x', '/ping', 1000],
+      );
+    }
+    final res = await networkReport(CallToolRequest(
+      name: 'network_report',
+      arguments: {'sessionId': sid},
+    ));
+    final sc = res.structuredContent!;
+    expect(sc['errorHotspots'], isEmpty);
+    expect(sc['summary'].toString().toLowerCase(), contains('healthy'));
+  });
 }

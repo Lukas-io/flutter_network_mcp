@@ -43,7 +43,7 @@ Resolves the target session like the read tools (`sessionId`, else `appNameConta
 
 With an empty buffer the summary says it "was already empty". `streamActive: false` means the log stream is not running, so the buffer will not refill.
 
-Errors: a session that is not attached here returns `no_session` (nextSteps `network_attach` / `session_delete`). Scope failures (nothing attached, no `appNameContains` match, several matches) return an error with `nextSteps` but no `errorKind`.
+Errors: a session that is not attached here returns `no_session` (nextSteps `network_attach` / `session_delete`). Scope failures return `no_session` (nothing attached or opened, or no attached session matches `appNameContains`) or `bad_argument` (several attached sessions match), with `nextSteps`.
 
 ## Pairs well with
 

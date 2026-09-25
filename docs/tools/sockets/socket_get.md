@@ -58,7 +58,7 @@ History (a `session_open` view, or an explicit `sessionId` not attached here): s
 
 Null timing fields (`startTimeUs` in history, `endTimeUs`, `lastReadTimeUs`, `lastWriteTimeUs`) and a null `isolateId` are omitted. The `network_list hostContains:` nextStep needs the http capability and a known address; the re-call hint appears only while the socket is open.
 
-Errors: missing `id` returns `bad_argument`. Socket profiling off for a live session returns `capability_disabled`. An id found neither live nor in the DB returns `not_found` (history, or live with `triedIsolates`); in live mode, when every isolate read failed and there is no DB copy, it returns `unresponsive_vm` with `triedIsolates`. Scope failures (nothing attached or opened, no `appNameContains` match, several matches) return an error with `nextSteps` but no `errorKind`.
+Errors: missing `id` returns `bad_argument`. Socket profiling off for a live session returns `capability_disabled`. An id found neither live nor in the DB returns `not_found` (history, or live with `triedIsolates`); in live mode, when every isolate read failed and there is no DB copy, it returns `unresponsive_vm` with `triedIsolates`. Scope failures return `no_session` (nothing attached or opened, or no attached session matches `appNameContains`) or `bad_argument` (several attached sessions match), with `nextSteps`.
 
 ## Pairs well with
 

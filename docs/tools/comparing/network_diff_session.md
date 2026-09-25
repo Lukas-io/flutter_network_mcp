@@ -25,7 +25,7 @@ Reads up to the 10,000 newest requests of each session from the DB and groups th
 - `goneEndpoints`: endpoints only in the baseline.
 - `changed`: endpoints in both where the error rate moved by 0.1 or more, or p95 latency more than doubled or more than halved (only when both p95 values exist and the baseline p95 is above 0). Sorted by the largest error-rate change first.
 
-A request counts as an error when its status is 400 or above, or when it has no status (in flight or failed).
+A request counts as an error when its status is 400 or above, or when it has no status and ended or carries an error. A request still in flight is not an error and is left out of the error rate.
 
 The baseline must have captured HTTP: a baseline id that does not exist, or one with no captured requests, returns a `not_found` error instead of a diff (an empty baseline would report every current endpoint as new). A current session with no captured requests still returns the diff, with a warning that every baseline endpoint reads as gone.
 
@@ -64,9 +64,9 @@ The baseline must have captured HTTP: a baseline id that does not exist, or one 
 }
 ```
 
-`newEndpoints` and `goneEndpoints` entries have the same shape as `network_summarize` endpoints (`statusDist` uses the key `error` for requests with no status). The `network_summarize` step appears only when `changed` is non-empty, the `network_list` step only when `newEndpoints` is non-empty. The `nextSteps` wording above is shortened. `scope` describes the current session (the one resolved from `sessionId` / `appNameContains` / the open view); a scope note (for example an open `session_open` view shadowing live sessions) is also copied to `warnings`.
+`newEndpoints` and `goneEndpoints` entries have the same shape as `network_summarize` endpoints (`statusDist` uses the key `error` for failed requests with no status and `inFlight` for requests that have not ended). The `network_summarize` step appears only when `changed` is non-empty, the `network_list` step only when `newEndpoints` is non-empty. The `nextSteps` wording above is shortened. `scope` describes the current session (the one resolved from `sessionId` / `appNameContains` / the open view); a scope note (for example an open `session_open` view shadowing live sessions) is also copied to `warnings`.
 
-Errors: `bad_argument` (missing `baselineSessionId`, or it equals the current session), `not_found` (the baseline does not exist or has no captured requests; `nextSteps` point at `session_list` to pick another), `internal` (the DB query failed). Scope failures return `error` + `nextSteps` without an `errorKind`.
+Errors: `bad_argument` (missing `baselineSessionId`, or it equals the current session), `not_found` (the baseline does not exist or has no captured requests; `nextSteps` point at `session_list` to pick another), `internal` (the DB query failed). Scope failures return `no_session` (nothing attached or opened, or no attached session matches `appNameContains`) or `bad_argument` (several attached sessions match), with `nextSteps`.
 
 ## Pairs well with
 
