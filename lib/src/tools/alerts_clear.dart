@@ -4,6 +4,7 @@ import 'package:dart_mcp/server.dart';
 
 import '../storage/captures_db.dart';
 import '../util/scope.dart';
+import 'alerts_drain.dart' show invalidSeverityMin;
 import 'error_kind.dart';
 import 'result.dart';
 
@@ -43,6 +44,8 @@ FutureOr<CallToolResult> alertsClear(CallToolRequest request) async {
   scope!;
   final sessionId = scope.sessionId;
   final severityMin = args['severityMin'] as String?;
+  final badSeverity = invalidSeverityMin(severityMin, 'alerts_clear');
+  if (badSeverity != null) return badSeverity;
   final drainedOnly = (args['drainedOnly'] as bool?) ?? true;
   final confirm = (args['confirm'] as bool?) ?? false;
 

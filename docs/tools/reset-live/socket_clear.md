@@ -18,7 +18,7 @@ when_to_use: Before triggering a specific action when you want an isolated socke
 
 ## How it works
 
-Resolves the target session like `network_clear` (`sessionId`, else `appNameContains`, else the `session_open` view, else the sole attached session, else a default pick among several attached). The target must be attached to this server with socket profiling enabled. Calls `ext.dart.io.clearSocketProfile` on each of the session's profiling isolates (or only `isolateId`). A failed isolate is listed in `failed` and counted in `warnings`; `cleared` is still `true`, so check `clearedIsolates`.
+Resolves the target session like `network_clear` (`sessionId`, else `appNameContains`, else the `session_open` view, else the sole attached session, else a default pick among several attached). The target must be attached to this server with socket profiling enabled. Calls `ext.dart.io.clearSocketProfile` on each of the session's profiling isolates (or only `isolateId`). A failed isolate is listed in `failed` and counted in `warnings`; while another one was cleared the reply carries `partial:true` and the summary says how many of the isolates were cleared. When no isolate was cleared the call fails instead (see Errors).
 
 ## Args
 
@@ -32,7 +32,7 @@ Resolves the target session like `network_clear` (`sessionId`, else `appNameCont
 {
   "cleared": true,
   "scope": {"sessionId": 14, "appName": "eats_mobile", "isLive": true},
-  "summary": "Live VM socket profile cleared for session 14 (eats_mobile): 1 isolate(s). Persistent DB is untouched (socket_events rows remain queryable).",
+  "summary": "Live VM socket profile cleared for session 14 (eats_mobile): 1 of 1 isolate(s). Persistent DB is untouched (socket_events rows remain queryable).",
   "liveSessionId": 14,
   "clearedIsolates": ["isolates/1234"],
   "warnings": ["The persistent DB is NOT cleared. Use session_delete for DB-side removal."],
@@ -41,9 +41,9 @@ Resolves the target session like `network_clear` (`sessionId`, else `appNameCont
 }
 ```
 
-`failed: [{isolateId, error}]` appears only when an isolate could not be cleared.
+`failed: [{isolateId, error}]` and `partial:true` appear only when an isolate could not be cleared.
 
-Errors: a session that is not attached here returns `no_session` (nextSteps `network_attach` / `session_delete`); socket profiling off returns `capability_disabled` (nextSteps `network_status`, re-attach). Scope failures (nothing attached, no `appNameContains` match, several matches) return an error with `nextSteps` but no `errorKind`.
+Errors: a session that is not attached here returns `no_session` (nextSteps `network_attach` / `session_delete`); socket profiling off returns `capability_disabled` (nextSteps `network_status`, re-attach). When no isolate was cleared, the call returns `cleared:false` and `errorKind` `not_found` (no isolates known, or the VM does not know that isolate id) or `unresponsive_vm` (every clear failed otherwise), with `failed` when any clear was attempted. Scope failures return `no_session` (nothing attached or opened, or no attached session matches `appNameContains`) or `bad_argument` (several attached sessions match), with `nextSteps`.
 
 ## Pairs well with
 

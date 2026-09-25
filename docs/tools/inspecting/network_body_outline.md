@@ -103,7 +103,7 @@ Non-JSON body:
 
 The `bytes` annotation is the point: in the example, 113781 of 113827 bytes live in `data`, so that's the branch to page — not `pagination`.
 
-Errors: `bad_argument` (missing `id`, `which` not request/response), `not_found` / `unresponsive_vm` (same body-fetch failures as `network_body`), `internal` (unexpected failure). Scope failures return `error` + `nextSteps` without an `errorKind`.
+Errors: `bad_argument` (missing `id`, `which` not request/response), `not_found` / `unresponsive_vm` (same body-fetch failures as `network_body`), `internal` (unexpected failure). Scope failures return `no_session` (nothing attached or opened, or no attached session matches `appNameContains`) or `bad_argument` (several attached sessions match), with `nextSteps`.
 
 ## Pairs well with
 

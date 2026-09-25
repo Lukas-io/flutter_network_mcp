@@ -6,20 +6,14 @@ import '../storage/captures_db.dart';
 import 'error_kind.dart';
 import 'result.dart';
 
-const _builtins = <String>[
-  'authorization',
-  'cookie',
-  'proxy-authorization',
-  'x-api-key',
-  'x-auth-token',
-];
+const _builtins = CapturesDao.builtInRedactedHeaders;
 
 final redactedHeadersTool = Tool(
   name: 'redacted_headers',
   description:
       'Manage the list of header names that network_replay redacts. The '
       'built-in set always applies (authorization, cookie, '
-      'proxy-authorization, x-api-key, x-auth-token); this tool ADDS '
+      'proxy-authorization, set-cookie, x-api-key, x-auth-token); this tool ADDS '
       'project-specific names (e.g. X-Tenant-Key). Matched case-insensitively.',
   inputSchema: Schema.object(
     properties: {
@@ -33,7 +27,7 @@ final redactedHeadersTool = Tool(
 FutureOr<CallToolResult> redactedHeaders(CallToolRequest request) async {
   final args = request.arguments ?? const <String, Object?>{};
   final action = (args['action'] as String?) ?? 'list';
-  final name = args['name'] as String?;
+  final name = (args['name'] as String?)?.trim();
   final reason = args['reason'] as String?;
   final dao = CapturesDao();
 
@@ -102,9 +96,9 @@ FutureOr<CallToolResult> redactedHeaders(CallToolRequest request) async {
           return errorResult(
             '"$lower" is a built-in default and cannot be removed.',
             kind: ErrorKind.badArgument,
-            extra: const {
+            extra: {
               'nextSteps': [
-                'Built-ins (authorization, cookie, proxy-authorization, x-api-key, x-auth-token) are always redacted by design',
+                'Built-ins (${_builtins.join(", ")}) are always redacted by design',
                 'Use network_replay redact:false to bypass redaction entirely (local debugging only)',
               ],
             },

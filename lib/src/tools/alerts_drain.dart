@@ -43,6 +43,8 @@ FutureOr<CallToolResult> alertsDrain(CallToolRequest request) async {
   scope!;
   final sessionId = scope.sessionId;
   final severityMin = args['severityMin'] as String?;
+  final badSeverity = invalidSeverityMin(severityMin, 'alerts_drain');
+  if (badSeverity != null) return badSeverity;
   final limitRaw = (args['limit'] as int?) ?? 50;
   final limit = limitRaw <= 0 ? 50 : (limitRaw > 200 ? 200 : limitRaw);
 
@@ -68,6 +70,21 @@ FutureOr<CallToolResult> alertsDrain(CallToolRequest request) async {
       ],
     });
   }
+}
+
+CallToolResult? invalidSeverityMin(String? severityMin, String tool) {
+  if (severityMin == null || CapturesDao.isSeverity(severityMin)) return null;
+  return errorResult(
+    'Unknown severityMin "$severityMin". Expected one of: '
+    '${CapturesDao.severities.join(", ")}.',
+    kind: ErrorKind.badArgument,
+    extra: {
+      'nextSteps': [
+        '$tool severityMin:"warning"',
+        '$tool without severityMin for every severity',
+      ],
+    },
+  );
 }
 
 /// Shared builder for drain + peek responses so the shape stays consistent.

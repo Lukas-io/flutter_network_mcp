@@ -798,6 +798,7 @@ class CapturesDao {
     int? tsMs,
   }) {
     final ts = tsMs ?? DateTime.now().millisecondsSinceEpoch;
+    final level = normalizeSeverity(severity);
 
     final existing = _db.select(
       'SELECT id, severity, last_source_id FROM alerts '
@@ -817,8 +818,8 @@ class CapturesDao {
           sourceId != null && sourceId == (row['last_source_id'] as String?);
       final existingSeverity = row['severity'] as String;
       final escalated =
-          _severityRank(severity) > _severityRank(existingSeverity)
-              ? severity
+          _severityRank(level) > _severityRank(existingSeverity)
+              ? level
               : existingSeverity;
       _db.execute(
         'UPDATE alerts SET '
@@ -835,8 +836,8 @@ class CapturesDao {
     // `critical` is for the first crash of a session; every later crash
     // signature is an error. 280 "critical" rows in one report devalued
     // the word for hours.
-    var effectiveSeverity = severity;
-    if (severity == 'critical' && kind == 'flutter_error') {
+    var effectiveSeverity = level;
+    if (level == 'critical' && kind == 'flutter_error') {
       final prior = _db.select(
         'SELECT 1 FROM alerts WHERE session_id = ? AND kind = ? LIMIT 1',
         [sessionId, kind],
@@ -1023,8 +1024,19 @@ class CapturesDao {
     return rows.map(_rowToMap).toList();
   }
 
+  static const List<String> severities = ['info', 'warning', 'error', 'critical'];
+
+  /// [s] trimmed and lowercased; throws [ArgumentError] for an unknown severity.
+  static String normalizeSeverity(String s) {
+    final n = s.trim().toLowerCase();
+    _severityRank(n);
+    return n;
+  }
+
+  static bool isSeverity(String s) => severities.contains(s.trim().toLowerCase());
+
   static int _severityRank(String s) {
-    switch (s.toLowerCase()) {
+    switch (s.trim().toLowerCase()) {
       case 'info':
         return 1;
       case 'warning':
@@ -1039,7 +1051,7 @@ class CapturesDao {
   }
 
   static String _severityRankSql(String col, String op, int rank) {
-    return '(CASE $col '
+    return '(CASE lower($col) '
         '''WHEN 'critical' THEN 4 '''
         '''WHEN 'error' THEN 3 '''
         '''WHEN 'warning' THEN 2 '''
@@ -1597,18 +1609,23 @@ class CapturesDao {
     return rows.map(_rowToMap).toList();
   }
 
+  static const List<String> builtInRedactedHeaders = [
+    'authorization',
+    'cookie',
+    'proxy-authorization',
+    'set-cookie',
+    'x-api-key',
+    'x-auth-token',
+  ];
+
   /// Returns the lowercase set of header names that should be redacted.
   /// Always includes the built-in defaults.
   Set<String> redactedHeaderSet() {
-    final defaults = {
-      'authorization',
-      'cookie',
-      'proxy-authorization',
-      'x-api-key',
-      'x-auth-token',
-    };
     final extra = _db.select('SELECT name FROM redacted_headers');
-    return {...defaults, ...extra.map((r) => r['name'] as String)};
+    return {
+      ...builtInRedactedHeaders,
+      ...extra.map((r) => r['name'] as String),
+    };
   }
 
   int addAlertPattern({
@@ -1620,11 +1637,11 @@ class CapturesDao {
     if (kind.trim().isEmpty || regex.trim().isEmpty) {
       throw ArgumentError('kind and regex are required');
     }
-    _severityRank(severity);
+    final normalized = normalizeSeverity(severity);
     RegExp(regex, multiLine: true);
     _db.execute(
       'INSERT INTO alert_patterns(kind, regex, severity, label, added_at) VALUES (?,?,?,?,?)',
-      [kind.trim(), regex, severity, label, DateTime.now().millisecondsSinceEpoch],
+      [kind.trim(), regex, normalized, label, DateTime.now().millisecondsSinceEpoch],
     );
     return _db.lastInsertRowId;
   }

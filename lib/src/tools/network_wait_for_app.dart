@@ -66,7 +66,10 @@ FutureOr<CallToolResult> networkWaitForApp(
         '${result['error']}',
         kind: ErrorKind.badArgument,
         extra: {
-          ...result..remove('error')..remove('retryable'),
+          ...result
+            ..remove('error')
+            ..remove('errorKind')
+            ..remove('retryable'),
           'waitedMs': waited(),
           'polls': polls,
         },
