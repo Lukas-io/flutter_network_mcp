@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io' as io;
 
 import 'package:crypto/crypto.dart';
 
@@ -25,8 +24,7 @@ import 'telemetry_env.dart';
 /// 2. **HTTPS POST** (only when [kCollectorEndpoint] is non-empty):
 ///    fire-and-forget with a 3s deadline. All errors swallowed.
 ///
-/// Opt-out: `FLUTTER_NETWORK_MCP_NO_TELEMETRY=true` short-circuits
-/// the whole path — no audit write, no network attempt.
+/// Opt-in: nothing happens (no audit write, no network attempt) unless the user sets `FLUTTER_NETWORK_MCP_TELEMETRY=on`.
 ///
 /// **Privacy-first by design**: see [buildTelemetryPayload] for the full
 /// schema. No PII, no source paths, no captured app data.
@@ -38,10 +36,7 @@ class TelemetryReporter {
     required StackTrace stack,
   }) async {
     try {
-      final env = io.Platform.environment;
-      if (env['FLUTTER_NETWORK_MCP_NO_TELEMETRY']?.toLowerCase() == 'true') {
-        return;
-      }
+      if (sharingOffReason() != null) return;
       final dataDir = resolveCandidateDataDir();
       if (dataDir == null) return;
 
@@ -112,7 +107,7 @@ Map<String, Object?> buildTelemetryPayload({
     if (errorMessage.isNotEmpty) 'errorMessage': errorMessage,
     'stackHead': stackHead,
     'signature': signature,
-    'machineHash': machineHash(dataDir),
+    'machineHash': installId(dataDir),
     'reportedAt': DateTime.now().toUtc().toIso8601String(),
   };
 }

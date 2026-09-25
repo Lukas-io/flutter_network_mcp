@@ -46,8 +46,13 @@ void main() {
       ];
 
   group('buildUsagePayload (pure, privacy-safe rollup)', () {
+    late Directory dataDir;
+    setUp(
+        () => dataDir = Directory.systemTemp.createTempSync('usage_payload_'));
+    tearDown(() => dataDir.deleteSync(recursive: true));
+
     test('carries kind, version, machineHash, window, aggregates', () {
-      final p = buildUsagePayload(rows: sampleRows(), dataDir: '/tmp/x');
+      final p = buildUsagePayload(rows: sampleRows(), dataDir: dataDir.path);
       expect(p['kind'], 'usage_rollup');
       expect(p['version'], isA<String>());
       expect((p['machineHash'] as String).length, 24);
@@ -64,15 +69,16 @@ void main() {
         () {
       final s = sampleRows();
       final shuffled = [s[2], s[0], s[1]];
-      final w = buildUsagePayload(rows: shuffled, dataDir: '/x')['window']
-          as Map<String, Object?>;
+      final w =
+          buildUsagePayload(rows: shuffled, dataDir: dataDir.path)['window']
+              as Map<String, Object?>;
       expect(w['toEventId'], 3);
       expect(w['firstEventMs'], 1000);
       expect(w['lastEventMs'], 2000);
     });
 
     test('raw correlation ids never leak into the payload', () {
-      final p = buildUsagePayload(rows: sampleRows(), dataDir: '/x');
+      final p = buildUsagePayload(rows: sampleRows(), dataDir: dataDir.path);
       final json = jsonEncode(p);
       expect(json, isNot(contains('corrOne')));
       expect(json, isNot(contains('corrTwo')));
@@ -82,8 +88,7 @@ void main() {
   });
 
   group('telemetry_env identity + opt-out', () {
-    test('telemetryDisabled honors true / 1 / yes / on (case-insensitive)',
-        () {
+    test('telemetryDisabled honors true / 1 / yes / on (case-insensitive)', () {
       for (final v in ['true', '1', 'yes', 'on', 'TRUE', ' On ']) {
         expect(
           telemetryDisabled({'FLUTTER_NETWORK_MCP_NO_TELEMETRY': v}),
@@ -98,14 +103,43 @@ void main() {
       expect(telemetryDisabled({}), isFalse);
     });
 
-    test('machineHash is stable, 24 hex chars, and dataDir-specific', () {
-      final a = machineHash('/home/a');
-      final b = machineHash('/home/a');
-      final c = machineHash('/home/b');
-      expect(a, b);
-      expect(a, isNot(c));
-      expect(a.length, 24);
-      expect(RegExp(r'^[0-9a-f]+$').hasMatch(a), isTrue);
+    test('the install id is random, stable and never derived from the path',
+        () {
+      final one = Directory.systemTemp.createTempSync('install_id_');
+      final two = Directory.systemTemp.createTempSync('install_id_');
+      addTearDown(() {
+        one.deleteSync(recursive: true);
+        two.deleteSync(recursive: true);
+      });
+      final a = installId(one.path);
+      expect(a, matches(RegExp(r'^[0-9a-f]{24}$')));
+      expect(installId(one.path), a);
+      expect(installId(two.path), isNot(a));
+    });
+
+    test('sharing is off unless opted in, and DO_NOT_TRACK always wins', () {
+      expect(sharingOffReason(env: {}),
+          contains('FLUTTER_NETWORK_MCP_TELEMETRY=on'));
+      expect(sharingOffReason(env: {'FLUTTER_NETWORK_MCP_TELEMETRY': 'on'}),
+          isNull);
+      expect(
+          sharingOffReason(env: {
+            'FLUTTER_NETWORK_MCP_TELEMETRY': 'on',
+            'DO_NOT_TRACK': '1'
+          }),
+          contains('DO_NOT_TRACK'));
+      expect(
+          sharingOffReason(env: {
+            'FLUTTER_NETWORK_MCP_TELEMETRY': 'on',
+            'FLUTTER_NETWORK_MCP_NO_USAGE': 'true'
+          }, usage: true),
+          contains('NO_USAGE'));
+      expect(
+          sharingOffReason(env: {
+            'FLUTTER_NETWORK_MCP_TELEMETRY': 'on',
+            'FLUTTER_NETWORK_MCP_NO_USAGE': 'true'
+          }),
+          isNull);
     });
   });
 
@@ -117,7 +151,7 @@ void main() {
       dir = Directory.systemTemp.createTempSync('usage_ship_test_');
       CapturesDatabase.open(dataDir: dir.path);
       dao = CapturesDao();
-      UsageReporter.envForTest = {}; // never opted out, regardless of shell
+      UsageReporter.envForTest = {'FLUTTER_NETWORK_MCP_TELEMETRY': 'on'};
       // Force audit-log-only so tests never POST to the real (baked)
       // collector, regardless of kCollectorEndpoint.
       UsageReporter.endpointForTest = '';
@@ -206,12 +240,24 @@ void main() {
       expect(auditFile().existsSync(), isFalse);
     });
 
-    test('opt-out short-circuits the ship', () async {
+    test('without the opt-in nothing is sent or written', () async {
       seed(3);
-      UsageReporter.envForTest = {'FLUTTER_NETWORK_MCP_NO_USAGE': 'true'};
+      UsageReporter.envForTest = {};
       final r = await UsageReporter.ship(dataDir: dir.path);
       expect(r.shipped, isFalse);
-      expect(r.message, contains('disabled'));
+      expect(r.message, contains('FLUTTER_NETWORK_MCP_TELEMETRY=on'));
+      expect(auditFile().existsSync(), isFalse);
+    });
+
+    test('the opt-out wins over the opt-in', () async {
+      seed(3);
+      UsageReporter.envForTest = {
+        'FLUTTER_NETWORK_MCP_TELEMETRY': 'on',
+        'FLUTTER_NETWORK_MCP_NO_USAGE': 'true',
+      };
+      final r = await UsageReporter.ship(dataDir: dir.path);
+      expect(r.shipped, isFalse);
+      expect(r.message, contains('NO_USAGE'));
       expect(auditFile().existsSync(), isFalse);
     });
   });
