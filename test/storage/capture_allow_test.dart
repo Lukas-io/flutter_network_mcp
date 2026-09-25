@@ -4,6 +4,8 @@ import 'package:flutter_network_mcp/src/storage/captures_db.dart';
 import 'package:flutter_network_mcp/src/storage/database.dart';
 import 'package:test/test.dart';
 
+import '../support/schema_rollback.dart';
+
 /// #64 follow-up: persistent capture allowlist (the capture_allow tool) +
 /// its v9 -> v10 migration.
 void main() {
@@ -47,6 +49,7 @@ void main() {
     // A real v9 DB predates both capture_allow (v10) and redirects_json
     // (v11), so drop the column too — else replaying 10->11 re-adds it.
     raw.execute('ALTER TABLE http_requests DROP COLUMN redirects_json');
+    rollBackV13(raw);
     raw.execute("UPDATE _meta SET value='9' WHERE key='schema_version'");
     CapturesDatabase.instance.close();
 

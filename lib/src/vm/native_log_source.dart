@@ -4,6 +4,7 @@ import 'dart:io' as io;
 
 import '../state/log_buffer.dart';
 import '../storage/captures_db.dart';
+import 'log_stream.dart' show logDedupHash;
 
 /// The device's own log for the attached app — `simctl log stream` on an iOS
 /// simulator, `adb logcat` on Android — so native SDK output (analytics,
@@ -89,6 +90,7 @@ class NativeLogSource {
             level: rec.level,
             logger: rec.logger,
             message: rec.message,
+            dedupKey: 'native:${logDedupHash(line)}',
           );
         } catch (_) {/* DB may be closing */}
       }

@@ -54,9 +54,10 @@ class CapturesDatabase {
         Directory(dir).createSync(recursive: true);
         final dbPath = p.join(dir, 'captures.db');
         final db = sql.sqlite3.open(dbPath);
-        db.execute('PRAGMA foreign_keys = ON');
-        db.execute('PRAGMA journal_mode = WAL');
+        // First, so the pragmas and migration below wait out another server process instead of failing on its lock.
         db.execute('PRAGMA busy_timeout = 5000');
+        db.execute('PRAGMA foreign_keys = ON');
+        _enableWal(db);
         _migrate(db);
 
         if (dataDir == null && dir != candidates.first) {
@@ -85,34 +86,38 @@ class CapturesDatabase {
     return raw == 'true' || raw == '1' || raw == 'yes' || raw == 'on';
   }
 
+  /// Switching a new file to WAL needs an exclusive lock and SQLite does not wait for it, so retry while another server process is creating the schema.
+  static void _enableWal(sql.Database db) {
+    final deadline = DateTime.now().add(const Duration(seconds: 5));
+    while (true) {
+      try {
+        db.execute('PRAGMA journal_mode = WAL');
+        return;
+      } on sql.SqliteException catch (e) {
+        if (e.extendedResultCode & 0xff != 5 || DateTime.now().isAfter(deadline)) {
+          rethrow;
+        }
+        sleep(const Duration(milliseconds: 50));
+      }
+    }
+  }
+
+  /// Each step reads the version inside an IMMEDIATE transaction, so server processes starting together on one DB apply it once instead of racing.
   static void _migrate(sql.Database db) {
     db.execute('CREATE TABLE IF NOT EXISTS _meta (key TEXT PRIMARY KEY, value TEXT)');
-    final row = db.select("SELECT value FROM _meta WHERE key='schema_version'");
-    int version = 0;
-    if (row.isNotEmpty) {
-      version = int.tryParse(row.first['value'] as String? ?? '0') ?? 0;
-    }
-    if (version == 0) {
-      db.execute('BEGIN');
+    while (true) {
+      db.execute('BEGIN IMMEDIATE');
       try {
-        for (final stmt in initialSchema) {
-          db.execute(stmt);
+        final row = db.select("SELECT value FROM _meta WHERE key='schema_version'");
+        final version = row.isEmpty
+            ? 0
+            : int.tryParse(row.first['value'] as String? ?? '0') ?? 0;
+        if (version >= currentVersion) {
+          db.execute('COMMIT');
+          return;
         }
-        db.execute(
-          "INSERT OR REPLACE INTO _meta(key,value) VALUES ('schema_version','$currentVersion')",
-        );
-        db.execute('COMMIT');
-      } catch (e) {
-        db.execute('ROLLBACK');
-        rethrow;
-      }
-      return;
-    }
-    while (version < currentVersion) {
-      db.execute('BEGIN');
-      try {
-        final next = version + 1;
-        final stmts = _migrationFor(version, next);
+        final next = version == 0 ? currentVersion : version + 1;
+        final stmts = version == 0 ? initialSchema : _migrationFor(version, next);
         for (final stmt in stmts) {
           db.execute(stmt);
         }
@@ -120,7 +125,6 @@ class CapturesDatabase {
           "INSERT OR REPLACE INTO _meta(key,value) VALUES ('schema_version','$next')",
         );
         db.execute('COMMIT');
-        version = next;
       } catch (e) {
         db.execute('ROLLBACK');
         rethrow;
@@ -140,6 +144,7 @@ class CapturesDatabase {
     if (from == 9 && to == 10) return migrationV9toV10;
     if (from == 10 && to == 11) return migrationV10toV11;
     if (from == 11 && to == 12) return migrationV11toV12;
+    if (from == 12 && to == 13) return migrationV12toV13;
     throw StateError('No migration defined for $from → $to.');
   }
 
