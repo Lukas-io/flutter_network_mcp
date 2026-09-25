@@ -1,0 +1,1296 @@
+{
+  "alert_patterns": {
+    "type": "object",
+    "properties": {
+      "action": {
+        "type": "string",
+        "description": "\"list\" (default) | \"add\" | \"remove\"."
+      },
+      "kind": {
+        "type": "string",
+        "description": "Alert kind label (required for add). Free text; surfaces in alerts_drain.kind."
+      },
+      "regex": {
+        "type": "string",
+        "description": "Dart RegExp source (multiLine). Required for add. Validated at compile time."
+      },
+      "severity": {
+        "type": "string",
+        "description": "\"info\" | \"warning\" | \"error\" | \"critical\". Required for add."
+      },
+      "label": {
+        "type": "string",
+        "description": "Optional alert title; defaults to the first matching log line."
+      },
+      "id": {
+        "type": "integer",
+        "description": "Pattern id (required for remove)."
+      }
+    }
+  },
+  "alerts_clear": {
+    "type": "object",
+    "properties": {
+      "sessionId": {
+        "type": "integer",
+        "description": "Session to clear. Omit to auto-resolve (the sole attached, or the opened). Cross-session bulk: use network_query."
+      },
+      "appNameContains": {
+        "type": "string",
+        "description": "Pick the session by app-name substring instead of sessionId."
+      },
+      "severityMin": {
+        "type": "string",
+        "description": "\"info\" | \"warning\" | \"error\" | \"critical\"."
+      },
+      "drainedOnly": {
+        "type": "boolean",
+        "description": "Only delete alerts already returned by alerts_drain. Default true."
+      },
+      "confirm": {
+        "type": "boolean",
+        "description": "Required when drainedOnly:false (deleting undrained alerts is destructive)."
+      }
+    }
+  },
+  "alerts_config": {
+    "type": "object",
+    "properties": {
+      "get": {
+        "type": "boolean",
+        "description": "True (default when `set` not given) to read current config."
+      },
+      "set": {
+        "type": "object",
+        "description": "Settings to update. Missing fields are left unchanged.",
+        "properties": {
+          "slowThresholdMs": {
+            "type": "integer",
+            "description": "http_slow trigger threshold in ms (>0)."
+          },
+          "retentionDays": {
+            "type": "integer",
+            "description": "Auto-expire alerts from non-attached sessions older than this many days (keeps the pending banner recent). 0 = keep forever. Env default FLUTTER_NETWORK_MCP_ALERT_RETENTION_DAYS (14). Applies to the next hourly sweep; per-process."
+          },
+          "rules": {
+            "type": "object",
+            "description": "Per-rule enable flags. Omitted rules keep their current state.",
+            "properties": {
+              "http_5xx": {
+                "type": "boolean"
+              },
+              "http_4xx": {
+                "type": "boolean"
+              },
+              "http_error": {
+                "type": "boolean"
+              },
+              "http_slow": {
+                "type": "boolean"
+              },
+              "log_keyword": {
+                "type": "boolean"
+              },
+              "flutter_error": {
+                "type": "boolean"
+              },
+              "http_anomaly": {
+                "type": "boolean"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "alerts_drain": {
+    "type": "object",
+    "properties": {
+      "sessionId": {
+        "type": "integer",
+        "description": "Session to read from. Omit to auto-resolve (the sole attached session, or the one you opened)."
+      },
+      "appNameContains": {
+        "type": "string",
+        "description": "Pick the session by app-name substring instead of sessionId."
+      },
+      "severityMin": {
+        "type": "string",
+        "description": "\"info\" | \"warning\" | \"error\" | \"critical\". Default: any."
+      },
+      "limit": {
+        "type": "integer",
+        "description": "Max alerts (default 50, cap 200)."
+      }
+    }
+  },
+  "alerts_peek": {
+    "type": "object",
+    "properties": {
+      "sessionId": {
+        "type": "integer",
+        "description": "Session to read from. Omit to auto-resolve (the sole attached session, or the one you opened)."
+      },
+      "appNameContains": {
+        "type": "string",
+        "description": "Pick the session by app-name substring instead of sessionId."
+      },
+      "severityMin": {
+        "type": "string",
+        "description": "\"info\" | \"warning\" | \"error\" | \"critical\". Default: any."
+      },
+      "limit": {
+        "type": "integer",
+        "description": "Max alerts (default 20, cap 200)."
+      }
+    }
+  },
+  "auto_attach_config": {
+    "type": "object",
+    "properties": {
+      "action": {
+        "type": "string",
+        "description": "\"list\" (default), \"add\", \"remove\", \"clear\", \"set\" (persist logBufferSize / nativeLogs for every attach, auto or manual)."
+      },
+      "logBufferSize": {
+        "type": "integer",
+        "description": "With action:\"set\": log ring capacity for every attach (50–20000). Default 2000."
+      },
+      "nativeLogs": {
+        "type": "boolean",
+        "description": "With action:\"set\": also stream the device's native log (simctl log stream / adb logcat) into every attach."
+      },
+      "app": {
+        "type": "string",
+        "description": "Allowlist pattern (case-insensitive substring of the app name, e.g. \"eats_mobile\"). Required for add/remove."
+      },
+      "deny": {
+        "type": "string",
+        "description": "Denylist pattern to add alongside app (rare)."
+      }
+    }
+  },
+  "bodies_purge": {
+    "type": "object",
+    "properties": {
+      "sessionId": {
+        "type": "integer",
+        "description": "Restrict to a session id."
+      },
+      "olderThanMs": {
+        "type": "integer",
+        "description": "Ms-since-epoch; purge bodies of requests older than this."
+      },
+      "confirm": {
+        "type": "boolean",
+        "description": "Required true to purge; default false (dry-run)."
+      }
+    }
+  },
+  "capture_allow": {
+    "type": "object",
+    "properties": {
+      "action": {
+        "type": "string",
+        "description": "\"list\" (default) | \"add\" | \"remove\"."
+      },
+      "pattern": {
+        "type": "string",
+        "description": "Host or host/path glob (required for add/remove). No scheme, no port. Examples: \"api.example.com\", \"api.example.com/stock/*\"."
+      },
+      "reason": {
+        "type": "string",
+        "description": "Optional reason shown in list output."
+      }
+    }
+  },
+  "correlate_at": {
+    "type": "object",
+    "properties": {
+      "tsMs": {
+        "type": "integer",
+        "description": "Anchor timestamp (ms since epoch), e.g. a log entry's timestampMs."
+      },
+      "windowMs": {
+        "type": "integer",
+        "description": "Half-width window in ms (anchor +/- windowMs). Default 1000, cap 30000."
+      },
+      "sessionId": {
+        "type": "integer",
+        "description": "Session to read from. Omit to auto-resolve (the sole attached session, or the one you opened)."
+      },
+      "appNameContains": {
+        "type": "string",
+        "description": "Pick the session by app-name substring instead of sessionId."
+      },
+      "isolateId": {
+        "type": "string",
+        "description": "Restrict both sides to one isolate. Omit to merge all."
+      },
+      "limit": {
+        "type": "integer",
+        "description": "Max items per side (logs and requests). Default 20, cap 100."
+      }
+    },
+    "required": [
+      "tsMs"
+    ]
+  },
+  "db_stats": {
+    "type": "object",
+    "properties": {}
+  },
+  "db_vacuum": {
+    "type": "object",
+    "properties": {}
+  },
+  "ignored_hosts": {
+    "type": "object",
+    "properties": {
+      "action": {
+        "type": "string",
+        "description": "\"list\" (default) | \"add\" | \"remove\"."
+      },
+      "host": {
+        "type": "string",
+        "description": "Host or host/path glob (required for add/remove). No scheme, no port. Examples: \"analytics.example.com\", \"dev.example.com/socket.io/*\"."
+      },
+      "reason": {
+        "type": "string",
+        "description": "Optional reason shown in list output."
+      }
+    }
+  },
+  "logs_clear": {
+    "type": "object",
+    "properties": {
+      "sessionId": {
+        "type": "integer",
+        "description": "Attached session to clear. Omit when exactly one is attached."
+      },
+      "appNameContains": {
+        "type": "string",
+        "description": "Pick the session by app-name substring instead of sessionId."
+      }
+    }
+  },
+  "logs_tail": {
+    "type": "object",
+    "properties": {
+      "sessionId": {
+        "type": "integer",
+        "description": "Session to read from. Omit to auto-resolve (the sole attached session, or the one you opened)."
+      },
+      "appNameContains": {
+        "type": "string",
+        "description": "Pick the session by app-name substring instead of sessionId."
+      },
+      "since": {
+        "type": "integer",
+        "description": "Cursor (a prior nextCursor). Omit for the most recent up to limit."
+      },
+      "levelMin": {
+        "type": "integer",
+        "description": "Min severity (logging scale: WARNING 900, SEVERE 1200). Logging records only, not stdout/stderr."
+      },
+      "loggerContains": {
+        "type": "string",
+        "description": "Case-insensitive substring on the logger name."
+      },
+      "messageContains": {
+        "type": "array",
+        "description": "Substring(s) on the message body, OR-matched. One tag or a list, e.g. [\"EventTracker\",\"KycTier\"]. Use when loggers are unnamed.",
+        "items": {
+          "type": "string"
+        }
+      },
+      "source": {
+        "type": "string",
+        "description": "\"logging\" | \"stdout\" | \"stderr\" | \"native\" (device log, when the attach requested nativeLogs). Omit for all."
+      },
+      "isolateId": {
+        "type": "string",
+        "description": "Restrict to one isolate (id from network_status). Omit to merge all isolates."
+      },
+      "limit": {
+        "type": "integer",
+        "description": "Max records (default 100, cap 500)."
+      },
+      "messageTruncateBytes": {
+        "type": "integer",
+        "description": "Cut each message at this many characters (default 2048, 64-65536). A cut record carries truncated:true and totalLength."
+      },
+      "maxTokens": {
+        "type": "integer",
+        "description": "Token budget for this response; keeps the newest records that fit and reports budget.dropped. Overrides the session_configure maxResponseTokens default."
+      }
+    }
+  },
+  "network_attach": {
+    "type": "object",
+    "properties": {
+      "dtdUri": {
+        "type": "string",
+        "description": "DTD WebSocket URI; overrides the default."
+      },
+      "vmServiceUri": {
+        "type": "string",
+        "description": "VM service URI; bypasses DTD. Takes priority over dtdUri and appNameContains."
+      },
+      "appNameContains": {
+        "type": "string",
+        "description": "Case-insensitive substring of the app name (from network_status.knownApps). Use when several apps are connected."
+      },
+      "logBufferSize": {
+        "type": "integer",
+        "description": "Per-session log ring capacity (50-20000). Overrides the env default (2000, or auto_attach_config logBufferSize); raise it for chatty apps."
+      },
+      "reattach": {
+        "type": "boolean",
+        "description": "Reuse an existing session id across a hot restart (same package+device) instead of starting a new one. Pair with appNameContains."
+      },
+      "nativeLogs": {
+        "type": "boolean",
+        "description": "Also stream the device's native log for this app (simctl log stream / adb logcat) into logs_tail as source:\"native\", so native SDK output is readable. Default: auto_attach_config nativeLogs (false)."
+      }
+    }
+  },
+  "network_body": {
+    "type": "object",
+    "properties": {
+      "id": {
+        "type": "string",
+        "description": "Request id from network_list / network_search."
+      },
+      "which": {
+        "type": "string",
+        "description": "\"request\" or \"response\"."
+      },
+      "sessionId": {
+        "type": "integer",
+        "description": "Session to read from. Omit to auto-resolve (the sole attached session, or the one you opened)."
+      },
+      "appNameContains": {
+        "type": "string",
+        "description": "Pick the session by app-name substring instead of sessionId."
+      },
+      "isolateId": {
+        "type": "string",
+        "description": "Restrict to one isolate (id from network_status). Omit to auto-resolve."
+      },
+      "offset": {
+        "type": "integer",
+        "description": "Byte offset to start at. Default 0."
+      },
+      "length": {
+        "type": "integer",
+        "description": "Bytes to read (default 16384, cap 262144)."
+      },
+      "decode": {
+        "type": "string",
+        "description": "\"auto\" (default — utf8 for text/json/xml content types, base64 for binary), \"utf8\" (force, accepts malformed), or \"base64\"."
+      }
+    },
+    "required": [
+      "id",
+      "which"
+    ]
+  },
+  "network_body_outline": {
+    "type": "object",
+    "properties": {
+      "id": {
+        "type": "string",
+        "description": "Request id from network_list / network_search."
+      },
+      "which": {
+        "type": "string",
+        "description": "\"response\" (default) or \"request\"."
+      },
+      "sessionId": {
+        "type": "integer",
+        "description": "Session to read from. Omit to auto-resolve (the sole attached session, or the one you opened)."
+      },
+      "appNameContains": {
+        "type": "string",
+        "description": "Pick the session by app-name substring instead of sessionId."
+      },
+      "isolateId": {
+        "type": "string",
+        "description": "Restrict to one isolate (id from network_status). Omit to auto-resolve."
+      },
+      "maxDepth": {
+        "type": "integer",
+        "description": "How deep to descend before collapsing a branch. Default 6."
+      },
+      "maxKeys": {
+        "type": "integer",
+        "description": "Max object keys to expand per node (rest reported as omittedKeys). Default 60."
+      },
+      "headBytes": {
+        "type": "integer",
+        "description": "For non-JSON bodies, how many leading bytes to preview. Default 512, cap 4096."
+      }
+    },
+    "required": [
+      "id"
+    ]
+  },
+  "network_body_query": {
+    "type": "object",
+    "properties": {
+      "id": {
+        "type": "string",
+        "description": "Request id from network_list / network_search."
+      },
+      "which": {
+        "type": "string",
+        "description": "\"response\" (default) or \"request\"."
+      },
+      "grep": {
+        "type": "string",
+        "description": "Regex to match against the decoded text body. Returns matches with offsets + context."
+      },
+      "jsonPath": {
+        "type": "string",
+        "description": "Path to extract from a JSON body: $.a.b, a[0].b, a[*].b (wildcard across an array/map). No filter predicates — use grep for value matching."
+      },
+      "ignoreCase": {
+        "type": "boolean",
+        "description": "Case-insensitive grep. Default false."
+      },
+      "maxMatches": {
+        "type": "integer",
+        "description": "Cap on returned matches. Default 20."
+      },
+      "context": {
+        "type": "integer",
+        "description": "Chars of context around each grep match. Default 80."
+      },
+      "sessionId": {
+        "type": "integer",
+        "description": "Session to read from. Omit to auto-resolve."
+      },
+      "appNameContains": {
+        "type": "string",
+        "description": "Pick the session by app-name substring instead of sessionId."
+      },
+      "isolateId": {
+        "type": "string",
+        "description": "Restrict to one isolate. Omit to auto-resolve."
+      }
+    },
+    "required": [
+      "id"
+    ]
+  },
+  "network_clear": {
+    "type": "object",
+    "properties": {
+      "sessionId": {
+        "type": "integer",
+        "description": "Attached session to clear. Omit when exactly one is attached."
+      },
+      "appNameContains": {
+        "type": "string",
+        "description": "Pick the session by app-name substring instead of sessionId."
+      },
+      "isolateId": {
+        "type": "string",
+        "description": "Clear only this isolate. Omit to clear all."
+      }
+    }
+  },
+  "network_correlate": {
+    "type": "object",
+    "properties": {
+      "sessionIds": {
+        "type": "array",
+        "description": "REQUIRED. Session ids to correlate across (from network_status or session_list). Cap 8.",
+        "items": {
+          "type": "integer"
+        }
+      },
+      "pattern": {
+        "type": "string",
+        "description": "REQUIRED. Substring to match (a correlation id, shared URL fragment, error string)."
+      },
+      "which": {
+        "type": "string",
+        "description": "Match \"url\" | \"request\" | \"response\" | \"any\" (default)."
+      },
+      "timeWindowMs": {
+        "type": "integer",
+        "description": "Only return pairs whose start times are within this many ms of each other (try 1000-5000). Omit for all pairs."
+      },
+      "limit": {
+        "type": "integer",
+        "description": "Max pairs (default 20, cap 100), tightest first."
+      },
+      "perSessionLimit": {
+        "type": "integer",
+        "description": "Max raw matches per session before pairing (default 100, cap 500)."
+      }
+    },
+    "required": [
+      "sessionIds",
+      "pattern"
+    ]
+  },
+  "network_detach": {
+    "type": "object",
+    "properties": {
+      "sessionId": {
+        "type": "integer",
+        "description": "Attached session to detach. Omit when exactly one is attached. Ignored when all:true."
+      },
+      "appNameContains": {
+        "type": "string",
+        "description": "Pick the session by app-name substring instead of sessionId."
+      },
+      "all": {
+        "type": "boolean",
+        "description": "Detach every attached session."
+      },
+      "keep": {
+        "type": "boolean",
+        "description": "Free the slot but do NOT end the DB session, so it stays open for a later reattach. Default false."
+      }
+    }
+  },
+  "network_diff": {
+    "type": "object",
+    "properties": {
+      "idA": {
+        "type": "string",
+        "description": "First request id."
+      },
+      "idB": {
+        "type": "string",
+        "description": "Second request id."
+      },
+      "sessionId": {
+        "type": "integer",
+        "description": "Session to read from. Omit to auto-resolve (the sole attached session, or the one you opened)."
+      },
+      "appNameContains": {
+        "type": "string",
+        "description": "Pick the session by app-name substring instead of sessionId."
+      },
+      "maxBodyLines": {
+        "type": "integer",
+        "description": "Max body lines to diff (default 200, cap 1000)."
+      },
+      "maxLineLength": {
+        "type": "integer",
+        "description": "Max chars per diffed line (default 2000, cap 8000)."
+      }
+    },
+    "required": [
+      "idA",
+      "idB"
+    ]
+  },
+  "network_diff_session": {
+    "type": "object",
+    "properties": {
+      "baselineSessionId": {
+        "type": "integer",
+        "description": "The OLDER run to compare against (id from session_list)."
+      },
+      "sessionId": {
+        "type": "integer",
+        "description": "The NEWER/current session. Omit to auto-resolve (the live attached session, or the one you opened)."
+      },
+      "appNameContains": {
+        "type": "string",
+        "description": "Pick the current session by app-name substring."
+      },
+      "minCount": {
+        "type": "integer",
+        "description": "Ignore endpoints with fewer than this many requests on each side. Default 1."
+      }
+    },
+    "required": [
+      "baselineSessionId"
+    ]
+  },
+  "network_discover_dtd": {
+    "type": "object",
+    "properties": {
+      "cwdMatch": {
+        "type": "boolean",
+        "description": "Restrict to DTDs whose workspaceRoot matches the cwd. Default true."
+      },
+      "includeStale": {
+        "type": "boolean",
+        "description": "Include dead-pid candidates (stale discovery files). Default false."
+      },
+      "limit": {
+        "type": "integer",
+        "description": "Max candidates (default 5, cap 20). Best-first."
+      }
+    }
+  },
+  "network_drift": {
+    "type": "object",
+    "properties": {
+      "hostContains": {
+        "type": "string",
+        "description": "Host substring to match."
+      },
+      "pathContains": {
+        "type": "string",
+        "description": "Path substring to narrow to one endpoint."
+      },
+      "sessionId": {
+        "type": "integer",
+        "description": "Session to read. Omit to auto-resolve."
+      },
+      "appNameContains": {
+        "type": "string",
+        "description": "Pick the session by app-name substring."
+      },
+      "sinceMs": {
+        "type": "integer",
+        "description": "Time window in ms. Omit or 0 for the whole session."
+      },
+      "limit": {
+        "type": "integer",
+        "description": "Max responses to decode (default 100, cap 1000). Sampled from BOTH ends of the window so the oldest shape is always compared."
+      }
+    }
+  },
+  "network_get": {
+    "type": "object",
+    "properties": {
+      "id": {
+        "type": "string",
+        "description": "Request id from network_list / network_search."
+      },
+      "sessionId": {
+        "type": "integer",
+        "description": "Session to read from. Omit to auto-resolve (the sole attached session, or the one you opened)."
+      },
+      "appNameContains": {
+        "type": "string",
+        "description": "Pick the session by app-name substring instead of sessionId."
+      },
+      "isolateId": {
+        "type": "string",
+        "description": "Restrict to one isolate (id from network_status). Omit to merge all isolates."
+      },
+      "includeBodies": {
+        "type": "boolean",
+        "description": "Include request/response bodies. Default true."
+      },
+      "bodyTruncateBytes": {
+        "type": "integer",
+        "description": "Max bytes per body (default 4096, cap 262144; 0 = cap). Truncated bodies set truncated:true; fetch more with network_body."
+      },
+      "headerTruncateBytes": {
+        "type": "integer",
+        "description": "Max chars per header VALUE before each long value becomes a {value,truncated,totalLength} object (default 256, max 4096)."
+      },
+      "includeEvents": {
+        "type": "boolean",
+        "description": "Include the request lifecycle events array (HttpProfileRequest.events). Default false — events are rarely useful and add bulk."
+      },
+      "redact": {
+        "type": "boolean",
+        "description": "Redact auth-like headers (authorization, cookie, x-api-key, + the redacted_headers list). Default TRUE — the agent transcript is not a safe place for live tokens. Pass false to debug auth."
+      }
+    },
+    "required": [
+      "id"
+    ]
+  },
+  "network_list": {
+    "type": "object",
+    "properties": {
+      "sessionId": {
+        "type": "integer",
+        "description": "Session to read from. Omit to auto-resolve (the sole attached session, or the one you opened)."
+      },
+      "appNameContains": {
+        "type": "string",
+        "description": "Pick the session by app-name substring instead of sessionId."
+      },
+      "since": {
+        "type": "integer",
+        "description": "Microsecond cursor. Omit for incremental (new since last call); 0 for everything this session captured (served from the DB, including live sessions). Pass a prior nextCursor to page."
+      },
+      "before": {
+        "type": "integer",
+        "description": "History-mode cursor: only requests STARTED BEFORE this µs timestamp (newest-first, so this pages OLDER — pass a prior nextCursor). Ignored on live incremental reads."
+      },
+      "method": {
+        "type": "array",
+        "description": "Filter by HTTP method(s), e.g. [\"GET\",\"POST\"].",
+        "items": {
+          "type": "string"
+        }
+      },
+      "hostContains": {
+        "type": "string",
+        "description": "Case-insensitive substring on the request host."
+      },
+      "statusMin": {
+        "type": "integer",
+        "description": "Min status code (e.g. 400 for errors)."
+      },
+      "statusMax": {
+        "type": "integer",
+        "description": "Max status code."
+      },
+      "isolateId": {
+        "type": "string",
+        "description": "Restrict to one isolate (id from network_status). Omit to merge all isolates."
+      },
+      "limit": {
+        "type": "integer",
+        "description": "Max requests (default 50, cap 200)."
+      },
+      "maxTokens": {
+        "type": "integer",
+        "description": "Token budget for this response; trims the requests array newest-first to fit and reports budget.dropped. Overrides the session_configure maxResponseTokens default."
+      }
+    }
+  },
+  "network_query": {
+    "type": "object",
+    "properties": {
+      "sql": {
+        "type": "string",
+        "description": "A single SELECT / WITH...SELECT (no semicolons)."
+      }
+    },
+    "required": [
+      "sql"
+    ]
+  },
+  "network_replay": {
+    "type": "object",
+    "properties": {
+      "id": {
+        "type": "string",
+        "description": "Request id from network_list / network_search."
+      },
+      "sessionId": {
+        "type": "integer",
+        "description": "Session to read from. Omit to auto-resolve (the sole attached session, or the one you opened)."
+      },
+      "appNameContains": {
+        "type": "string",
+        "description": "Pick the session by app-name substring instead of sessionId."
+      },
+      "redact": {
+        "type": "boolean",
+        "description": "Mask auth-like headers with <redacted> (default TRUE — the emitted curl can end up in an agent transcript or a pasted issue). Set redact:false to include the real token when reproducing an auth flow locally."
+      },
+      "bodyTruncateBytes": {
+        "type": "integer",
+        "description": "Max body bytes in the curl (default 4096, cap 262144; 0 = cap)."
+      }
+    },
+    "required": [
+      "id"
+    ]
+  },
+  "network_replay_as_test": {
+    "type": "object",
+    "properties": {
+      "id": {
+        "type": "string",
+        "description": "Request id from network_list / network_search."
+      },
+      "sessionId": {
+        "type": "integer",
+        "description": "Session to read. Omit to auto-resolve."
+      },
+      "appNameContains": {
+        "type": "string",
+        "description": "Pick the session by app-name substring."
+      },
+      "assertBodyContains": {
+        "type": "string",
+        "description": "Optional: also assert the response body contains this."
+      },
+      "redact": {
+        "type": "boolean",
+        "description": "Mask auth-like headers (default true)."
+      }
+    },
+    "required": [
+      "id"
+    ]
+  },
+  "network_report": {
+    "type": "object",
+    "properties": {
+      "sessionId": {
+        "type": "integer",
+        "description": "Session to read. Omit to auto-resolve."
+      },
+      "appNameContains": {
+        "type": "string",
+        "description": "Pick the session by app-name substring."
+      },
+      "sinceMs": {
+        "type": "integer",
+        "description": "Window in ms. Default 0 (whole session)."
+      }
+    }
+  },
+  "network_search": {
+    "type": "object",
+    "properties": {
+      "query": {
+        "type": "string",
+        "description": "Text to search for; phrase-matched by default."
+      },
+      "sessionId": {
+        "type": "integer",
+        "description": "Session to read from. Omit to auto-resolve (the sole attached session, or the one you opened)."
+      },
+      "appNameContains": {
+        "type": "string",
+        "description": "Pick the session by app-name substring instead of sessionId."
+      },
+      "isolateId": {
+        "type": "string",
+        "description": "Restrict to one isolate (id from network_status). Omit to search all isolates."
+      },
+      "which": {
+        "type": "string",
+        "description": "Match \"url\" | \"request\" | \"response\" | \"any\" (default)."
+      },
+      "limit": {
+        "type": "integer",
+        "description": "Max results (default 20, cap 100)."
+      }
+    },
+    "required": [
+      "query"
+    ]
+  },
+  "network_status": {
+    "type": "object",
+    "properties": {
+      "connectDtd": {
+        "type": "boolean",
+        "description": "Open DTD to populate knownApps. Default true; false for a pure state read."
+      },
+      "attachIfOne": {
+        "type": "boolean",
+        "description": "If nothing is attached and exactly one app is visible, attach it (returned under autoAttached). Default false."
+      }
+    }
+  },
+  "network_summarize": {
+    "type": "object",
+    "properties": {
+      "sessionId": {
+        "type": "integer",
+        "description": "Session to read from. Omit to auto-resolve (the sole attached session, or the one you opened)."
+      },
+      "appNameContains": {
+        "type": "string",
+        "description": "Pick the session by app-name substring instead of sessionId."
+      },
+      "sinceMs": {
+        "type": "integer",
+        "description": "Window in ms. Default 3600000 (1h); 0 for the whole session."
+      },
+      "hostContains": {
+        "type": "string",
+        "description": "Case-insensitive host substring."
+      },
+      "limit": {
+        "type": "integer",
+        "description": "Max endpoint rows (default 50, cap 200)."
+      },
+      "minCount": {
+        "type": "integer",
+        "description": "Drop endpoints with fewer than this many requests. Default 1."
+      }
+    }
+  },
+  "network_wait_for_app": {
+    "type": "object",
+    "properties": {
+      "timeoutMs": {
+        "type": "integer",
+        "description": "How long to wait, in ms (1000-300000). Default 30000."
+      },
+      "appNameContains": {
+        "type": "string",
+        "description": "Attach only an app whose name contains this (case-insensitive). Pass it when several apps may register at once."
+      }
+    }
+  },
+  "redacted_headers": {
+    "type": "object",
+    "properties": {
+      "action": {
+        "type": "string",
+        "description": "\"list\" (default) | \"add\" | \"remove\"."
+      },
+      "name": {
+        "type": "string",
+        "description": "Header name (required for add/remove). Case-insensitive."
+      },
+      "reason": {
+        "type": "string",
+        "description": "Optional reason (add only)."
+      }
+    }
+  },
+  "report_issue": {
+    "type": "object",
+    "properties": {
+      "type": {
+        "type": "string",
+        "description": "\"bug\" or \"ux\". Picks the matching label + template."
+      },
+      "title": {
+        "type": "string",
+        "description": "One-line summary. Redacted before submission."
+      },
+      "body": {
+        "type": "string",
+        "description": "Issue body (markdown): what broke, what you expected, the failing tool call. Redacted before submission."
+      },
+      "auto": {
+        "type": "boolean",
+        "description": "File with gh issue create (default true); false only drafts: it returns the redacted issue and a paste-ready URL, filing nothing."
+      }
+    },
+    "required": [
+      "type",
+      "title",
+      "body"
+    ]
+  },
+  "session_close": {
+    "type": "object",
+    "properties": {}
+  },
+  "session_configure": {
+    "type": "object",
+    "properties": {
+      "levelMin": {
+        "type": "integer",
+        "description": "Default logs_tail levelMin."
+      },
+      "loggerContains": {
+        "type": "string",
+        "description": "Default logs_tail loggerContains."
+      },
+      "messageContains": {
+        "type": "array",
+        "description": "Default logs_tail messageContains (OR-matched list).",
+        "items": {
+          "type": "string"
+        }
+      },
+      "source": {
+        "type": "string",
+        "description": "Default logs_tail source (\"logging\" | \"stdout\" | \"stderr\")."
+      },
+      "method": {
+        "type": "array",
+        "description": "Default network_list HTTP method(s).",
+        "items": {
+          "type": "string"
+        }
+      },
+      "hostContains": {
+        "type": "string",
+        "description": "Default network_list hostContains."
+      },
+      "statusMin": {
+        "type": "integer",
+        "description": "Default network_list statusMin."
+      },
+      "statusMax": {
+        "type": "integer",
+        "description": "Default network_list statusMax."
+      },
+      "maxResponseTokens": {
+        "type": "integer",
+        "description": "Per-response token budget. network_list / logs_tail trim their arrays to fit (newest-first) and report budget.dropped. Keeps big reads from flooding the agent context."
+      },
+      "clear": {
+        "type": "boolean",
+        "description": "Reset ALL sticky defaults to none."
+      },
+      "bodyDecryption": {
+        "type": "object",
+        "description": "Decrypt app-encrypted HTTP bodies on read, and let network_search / network_correlate match their plaintext. The key and the plaintext stay in this process's memory; neither is written to the capture DB. Replies show a key fingerprint, never the key. Replay and export keep the original bytes. {off:true} turns it off and drops the plaintext index.",
+        "properties": {
+          "algorithm": {
+            "type": "string",
+            "description": "aes-256-ctr (default) or aes-128-ctr."
+          },
+          "key": {
+            "type": "string",
+            "description": "The app's key."
+          },
+          "keyEncoding": {
+            "type": "string",
+            "description": "utf8 (default), hex or base64."
+          },
+          "encoding": {
+            "type": "string",
+            "description": "How the body holds the payload: hex (default), base64 or raw bytes."
+          },
+          "ivMode": {
+            "type": "string",
+            "description": "prefix (default), suffix, or infused: the IV spliced into the payload at ivOffset."
+          },
+          "ivOffset": {
+            "type": "integer",
+            "description": "infused: where the IV starts. Hex: in hex characters; base64/raw: in decoded bytes."
+          },
+          "ivLength": {
+            "type": "integer",
+            "description": "IV length in the same unit: 32 hex characters or 16 bytes (the default)."
+          },
+          "off": {
+            "type": "boolean",
+            "description": "true turns decryption off."
+          }
+        }
+      }
+    }
+  },
+  "session_delete": {
+    "type": "object",
+    "properties": {
+      "id": {
+        "type": "integer",
+        "description": "Session id to delete."
+      },
+      "confirm": {
+        "type": "boolean",
+        "description": "Required true to delete; default false (dry-run)."
+      }
+    },
+    "required": [
+      "id"
+    ]
+  },
+  "session_export": {
+    "type": "object",
+    "properties": {
+      "id": {
+        "type": "integer",
+        "description": "Session id (from session_list)."
+      },
+      "format": {
+        "type": "string",
+        "description": "\"har\" | \"ndjson\"."
+      },
+      "outPath": {
+        "type": "string",
+        "description": "Absolute path to write to."
+      },
+      "redact": {
+        "type": "boolean",
+        "description": "Mask secret headers, tokens, passwords and keys (headers and bodies). Default true, because exports get shared; pass false only for a file that stays on this machine."
+      }
+    },
+    "required": [
+      "id",
+      "format",
+      "outPath"
+    ]
+  },
+  "session_list": {
+    "type": "object",
+    "properties": {
+      "appNameContains": {
+        "type": "string",
+        "description": "Case-insensitive substring on the app name (DTD identity). The reliable way to scope to one app."
+      },
+      "projectPath": {
+        "type": "string",
+        "description": "Exact cwd at attach. NOT app identity (apps from one dir share it); prefer appNameContains."
+      },
+      "sinceMs": {
+        "type": "integer",
+        "description": "Only sessions started at or after this ms-since-epoch."
+      },
+      "limit": {
+        "type": "integer",
+        "description": "Max sessions (default 20, cap 100)."
+      }
+    }
+  },
+  "session_note": {
+    "type": "object",
+    "properties": {
+      "id": {
+        "type": "integer",
+        "description": "Session id."
+      },
+      "note": {
+        "type": "string",
+        "description": "Free text. Empty string clears any existing note."
+      }
+    },
+    "required": [
+      "id",
+      "note"
+    ]
+  },
+  "session_open": {
+    "type": "object",
+    "properties": {
+      "id": {
+        "type": "integer",
+        "description": "Session id from session_list."
+      }
+    },
+    "required": [
+      "id"
+    ]
+  },
+  "socket_clear": {
+    "type": "object",
+    "properties": {
+      "sessionId": {
+        "type": "integer",
+        "description": "Attached session to clear. Omit when exactly one is attached."
+      },
+      "appNameContains": {
+        "type": "string",
+        "description": "Pick the session by app-name substring instead of sessionId."
+      },
+      "isolateId": {
+        "type": "string",
+        "description": "Clear only this isolate. Omit to clear all."
+      }
+    }
+  },
+  "socket_get": {
+    "type": "object",
+    "properties": {
+      "id": {
+        "type": "string",
+        "description": "Socket id from socket_list."
+      },
+      "sessionId": {
+        "type": "integer",
+        "description": "Session to read from. Omit to auto-resolve (the sole attached session, or the one you opened)."
+      },
+      "appNameContains": {
+        "type": "string",
+        "description": "Pick the session by app-name substring instead of sessionId."
+      },
+      "isolateId": {
+        "type": "string",
+        "description": "Restrict to one isolate (id from network_status). Omit to auto-resolve."
+      }
+    },
+    "required": [
+      "id"
+    ]
+  },
+  "socket_list": {
+    "type": "object",
+    "properties": {
+      "sessionId": {
+        "type": "integer",
+        "description": "Session to read from. Omit to auto-resolve (the sole attached session, or the one you opened)."
+      },
+      "appNameContains": {
+        "type": "string",
+        "description": "Pick the session by app-name substring instead of sessionId."
+      },
+      "isolateId": {
+        "type": "string",
+        "description": "Restrict to one isolate (id from network_status). Omit to merge all isolates."
+      },
+      "limit": {
+        "type": "integer",
+        "description": "Max sockets (default 50, cap 200)."
+      }
+    }
+  },
+  "usage_stats": {
+    "type": "object",
+    "properties": {
+      "sinceMs": {
+        "type": "integer",
+        "description": "Window in ms (e.g. 3600000 = 1h). Omit or 0 for all history."
+      },
+      "topTransitions": {
+        "type": "integer",
+        "description": "How many transitions to return, busiest first. Default 15, cap 100."
+      }
+    }
+  },
+  "ws_get": {
+    "type": "object",
+    "properties": {
+      "id": {
+        "type": "integer",
+        "description": "Connection id from ws_list."
+      },
+      "sessionId": {
+        "type": "integer",
+        "description": "Session to read from. Omit to auto-resolve (the sole attached session, or the one you opened)."
+      },
+      "appNameContains": {
+        "type": "string",
+        "description": "Pick the session by app-name substring instead of sessionId."
+      },
+      "direction": {
+        "type": "string",
+        "description": "\"out\" or \"in\". Omit for both."
+      },
+      "kind": {
+        "type": "string",
+        "description": "Only this event type: text, binary, ping, pong, close or error."
+      },
+      "afterId": {
+        "type": "integer",
+        "description": "Page on: pass the previous reply's nextAfterId."
+      },
+      "limit": {
+        "type": "integer",
+        "description": "Max events, oldest first (default 100, cap 500)."
+      }
+    },
+    "required": [
+      "id"
+    ]
+  },
+  "ws_list": {
+    "type": "object",
+    "properties": {
+      "sessionId": {
+        "type": "integer",
+        "description": "Session to read from. Omit to auto-resolve (the sole attached session, or the one you opened)."
+      },
+      "appNameContains": {
+        "type": "string",
+        "description": "Pick the session by app-name substring instead of sessionId."
+      },
+      "urlContains": {
+        "type": "string",
+        "description": "Only connections whose url contains this (case-insensitive)."
+      },
+      "state": {
+        "type": "string",
+        "description": "Only connections in this state: connecting, open, closed, failed (the connect itself failed) or error."
+      },
+      "limit": {
+        "type": "integer",
+        "description": "Max connections, newest first (default 50, cap 200)."
+      }
+    }
+  }
+}
