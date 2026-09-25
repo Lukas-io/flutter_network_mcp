@@ -6,7 +6,7 @@ when_to_use: When freeing disk space by removing sessions no longer worth keepin
 
 ## DO NOT USE THIS TOOL WHEN
 
-- The session is LIVE — call `network_detach` first. Delete refuses to drop the live one.
+- The session is LIVE: call `network_detach` first. Delete refuses only when the id is this server's sole attached session. It does NOT refuse a session that is one of two or more attached here, or one another server process is still capturing into, so treat any session without `endedMs` in `session_list` as possibly still capturing (a session held only by another process shows `status: "interrupted"`).
 - You want to keep metadata but drop bodies — use `bodies_purge` instead.
 - You're not sure — call without `confirm:true` first for a dry-run that shows what would be deleted (counts included).
 - The user might want it later — consider `session_export id:<n> format:"har"` as a backup first.
@@ -19,12 +19,12 @@ when_to_use: When freeing disk space by removing sessions no longer worth keepin
 
 ## How it works
 
-Two-phase by default. First call (no `confirm:true`): dry-run with full counts so the agent can echo "would delete X http, Y logs, Z sockets". Second call (`confirm:true`): actual `DELETE FROM sessions WHERE id = ?` — cascades via foreign keys to http_requests, http_bodies, socket_events, log_records, alerts. FTS5 rows dropped manually since FTS doesn't honor FK cascades. **Disk space is NOT reclaimed** — run `db_vacuum` afterwards.
+Two-phase by default. First call (no `confirm:true`): dry-run with full counts so the agent can echo "would delete X http, Y logs, Z sockets". Second call (`confirm:true`): actual `DELETE FROM sessions WHERE id = ?`, which cascades via foreign keys to http_requests, http_bodies, socket_events, log_records, alerts, and session_attachments. FTS5 search rows are dropped first by hand since FTS doesn't honor FK cascades. If the deleted session was the one opened with `session_open`, the read pointer reverts to live. **Disk space is NOT reclaimed**: run `db_vacuum` afterwards.
 
 ## Args
 
-- `id` (int, required).
-- `confirm` (bool, default false).
+- `id` (int, required): session id from `session_list`.
+- `confirm` (bool, default false): required true to delete.
 
 ## Returns
 
@@ -50,6 +50,7 @@ Confirmed:
   "summary": "Deleted session 7 (eats_mobile) — 38 http, 12 log(s), 3 socket(s) removed.",
   "deleted": true,
   "sessionId": 7,
+  "appName": "eats_mobile",
   "counts": {"http":38, "sockets":3, "logs":12},
   "warnings": ["Disk space is NOT reclaimed yet — run db_vacuum to compact the file."],
   "nextSteps": [
@@ -58,6 +59,10 @@ Confirmed:
   ]
 }
 ```
+
+`appName`, `endedMs`, and `note` are omitted when null. The confirmed reply's counts are measured just before the delete.
+
+Errors: missing `id` returns `bad_argument`; the id of this server's sole live session returns `bad_argument` with `liveSessionId` and nextSteps to `network_detach` first (checked before the dry-run too); an unknown id returns `not_found`.
 
 ## Pairs well with
 

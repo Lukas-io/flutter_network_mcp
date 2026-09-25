@@ -6,106 +6,135 @@ when_to_use: To find requests by metadata (host, method, status, time range) and
 
 ## DO NOT USE THIS TOOL WHEN
 
-- You need full request data — use `network_get` after picking an id from this list.
-- You're looking for a string inside bodies — use `network_search`. This tool only sees metadata.
-- You already have a specific request id — call `network_get` directly.
-- You want bodies in the result — they're never returned by list. Sizes only.
-- You're polling rapidly without using the cursor — pass `since:<prior nextCursor>` to get only new activity. Cursor is incremental by default already.
-- You expect this to also drain alerts — it doesn't. Call `alerts_drain` separately (the success `nextSteps` points there when alerts capability is on).
+- You need full request data. Use `network_get` after picking an id from this list.
+- You're looking for a string inside bodies. Use `network_search`; this tool only sees metadata.
+- You already have a specific request id. Call `network_get` directly.
+- You want bodies in the result. They are never returned by list, only sizes.
+- You want the shape of the session (which endpoints, how often, how slow). `network_summarize` gives one row per endpoint instead of one row per request.
+- You expect this to drain alerts. It doesn't. When alerts are pending for the session, every reply carries a `pendingAlerts` block; call `alerts_drain` to read them.
 
 ## Use this when
 
-- The user asks "what requests has the app made?" — start here, page down with `since:nextCursor`.
+- The user asks "what requests has the app made?". Start here; a live read is incremental, so the next call returns only what is new.
 - Looking for failures: `statusMin:400`.
 - Looking for traffic to a specific service: `hostContains:"api.example"`.
-- Reviewing a past session: `session_open id:<n>` first, then `network_list` (it auto-switches to history mode).
-- Periodic polling — leave `since` unset and the cursor advances on its own.
+- Reviewing a past session: pass `sessionId:<n>`, or `session_open id:<n>` first, then `network_list` (it reads history).
+- Periodic polling of a live session: leave `since` unset and the stored cursor advances on its own.
 
 ## How it works
 
-Live mode (no `session_open`): calls `getHttpProfile` on the VM service with `updatedSince` = `since` arg ?? session's stored cursor. Sorts newest-first, applies filters in-process, returns up to `limit` summaries. Updates the session cursor so the next call without `since` is automatically incremental.
+The session comes from `sessionId`, else `appNameContains` (must match exactly one attached app), else the session opened with `session_open`, else the sole attached session. With several attached sessions and no scope arg, it picks the one attached from this project directory, else the most recently used one, and reports the choice in `scope.pickedBy` and the other candidates in `scope.others`.
 
-History mode (after `session_open`): runs an indexed SQL query against `http_requests` for the viewed session.
+Sticky defaults from `session_configure` (`method`, `hostContains`, `statusMin`, `statusMax`, `maxResponseTokens`) fill any of those args you omit. An arg you pass, even `null`, wins.
 
-In both modes, the response includes:
-- `summary` — one-line synthesis the agent can echo to the user.
-- `count` (returned) + `totalScanned` (live only, pre-filter count).
-- `nextCursor` — pass back as `since` for the next page.
-- `warnings: []` — only present when something is off (empty profile, all-filtered, filter-dropout >5×).
-- `nextSteps` — 1–3 concrete actions, filtered against active capabilities.
-- `requests[]` — newest-first summaries.
+**Live read** (`source:"live"`): used when the session is live-attached and you pass neither `since:0` nor `before`. Calls `getHttpProfile` on every HTTP-profiling isolate (or only `isolateId`) with `updatedSince` = your `since`, else the session's stored cursor. Merges the isolates newest-first, applies the filters in-process and stops at `limit`. Every live read moves the stored cursor to the profile timestamp, so the next call without `since` returns only requests updated after it. Rows beyond `limit` in one read are not returned by the next incremental call; read them from the DB with `since:0` or `before`. A profile fetch that fails for one isolate is skipped without a warning, so if every isolate fails the live read comes back empty; `since:0` reads the DB instead.
+
+**History read** (`source:"history"`): used for a non-live scope (after `session_open`, an ended session, or an explicit historical `sessionId`), and for a live session when you pass `since:0` (or any value <= 0) or `before`. Runs an indexed SQL query over `http_requests`, newest-first by start time. `since` keeps rows that started after it; `before` keeps rows that started before it. This is how you page OLDER: pass the reply's `nextCursor` as `before`.
+
+**Live DB fallback** (`source:"live-db-fallback"`): when the live read throws as a whole, the reply is the persisted DB snapshot for the session with two warnings saying so. If the DB read fails too, the tool errors with `errorKind:"unresponsive_vm"`.
+
+`maxTokens` (or the sticky `maxResponseTokens`) trims `requests` newest-first to fit an estimated token budget (JSON length / 4), always keeping at least one row, and reports `budget:{maxTokens, dropped}`.
 
 ## Args
 
-- `since` (int, optional) — microsecond cursor. Omit for incremental behavior in live mode. Pass `0` to fetch everything.
-- `method` (string[], optional) — `["GET","POST"]`.
-- `hostContains` (string, optional) — case-insensitive substring on host.
-- `statusMin` / `statusMax` (int, optional) — inclusive bounds.
-- `limit` (int, default 50, hard cap 200).
+- `sessionId` (int, optional). Session to read. Omit to auto-resolve.
+- `appNameContains` (string, optional). Pick the attached session by app-name substring instead of `sessionId`.
+- `since` (int, optional). Microsecond cursor. Omit for the incremental live read. `0` (or negative) returns everything the session captured, served from the DB even for a live session. A positive value reads requests updated (live) or started (history) after it.
+- `before` (int, optional). Microsecond start time; only requests that started before it (history path, pages older). Passing it on a live session also switches to the history path.
+- `method` (string[], optional). `["GET","POST"]`, case-insensitive.
+- `hostContains` (string, optional). Case-insensitive substring on host.
+- `statusMin` / `statusMax` (int, optional). Inclusive bounds. A request with no status yet is excluded when either bound is set.
+- `isolateId` (string, optional). Restrict to one isolate (id from `network_status`). Omit to merge all isolates.
+- `limit` (int, default 50, cap 200). Values <= 0 fall back to 50.
+- `maxTokens` (int, optional). Token budget for this reply; overrides the sticky `maxResponseTokens`.
 
 ## Returns
 
 ```json
 {
   "source": "live",
+  "scope": {"sessionId": 14, "appName": "my_app", "isLive": true},
   "sessionId": 14,
-  "summary": "5 request(s) from session 14 (live, newest-first) — incremental since last call.",
+  "summary": "5 request(s) from session 14 (live, my_app), newest-first (new since your last call).",
   "count": 5,
   "totalScanned": 5,
   "nextCursor": 1700000000000000,
   "nextSteps": [
-    "network_get id:\"abc\" — full headers + body for the top match",
-    "network_search query:\"...\" — find requests by body/url content",
-    "alerts_drain — surface anything the detector flagged"
+    "network_get id:\"abc\" ...",
+    "network_search query:\"...\" ..."
   ],
   "requests": [
     {"id":"abc","method":"POST","uri":"...","host":"...","path":"...",
      "startTimeMs":...,"endTimeMs":...,"durationMs":124,"isComplete":true,
-     "statusCode":200,"responseContentLength":4521,
-     "responseContentType":"application/json"}
+     "statusCode":200,"reasonPhrase":"OK","requestContentLength":312,
+     "responseContentLength":4521,"responseContentType":"application/json",
+     "isolateId":"isolates/123"}
   ]
 }
 ```
 
-Null-valued fields are omitted per-request to keep payloads tight.
+Top-level fields:
+
+- `source`: `live`, `history` or `live-db-fallback`.
+- `scope`: which session was read (`sessionId`, `appName`, `isLive`, and `note` / `pickedBy` / `others` when relevant). A scope note (for example an open `session_open` view shadowing live sessions) is also copied to `warnings`.
+- `count`: rows returned. `totalScanned` (live only): rows the profile returned before filtering.
+- `nextCursor`. Live: the profile timestamp, pass it back as `since`. History: the oldest start time in the batch when the page was full (pass it as `before` to page older), else `null`. Fallback: same as history, present only when the page was full.
+- `newestInBatch` (history only): newest start time in the batch, for `since` paging.
+- `partial: true` (live only): some rows could not be read and were skipped.
+- `budget`: present when a token budget applied.
+- `warnings`: only when something is off (empty profile, filters excluded everything, filters dropped over 80% of scanned rows, rows skipped, budget trim, scope note).
+- `nextSteps`: 1 to 5 concrete calls; the `network_search` hint appears only when the search capability is on.
+- `pendingAlerts`: added automatically when alerts are pending for the session.
+
+Per-request fields (null values are omitted): `id`, `method`, `uri`, `host`, `path`, `startTimeMs`, `endTimeMs`, `durationMs`, `statusCode`, `reasonPhrase`, `requestContentLength` / `responseContentLength`, `responseContentType`, `isolateId`, `hasError`. Live rows also carry `isComplete` and, for a failed request, `error`.
 
 `requestContentLength` / `responseContentLength` are real byte counts (`0` = no body). A chunked / unknown-length message is reported as `requestSizeKnown: false` / `responseSizeKnown: false` instead of a misleading `-1` (#62); `network_get` on that id resolves the true size once the body is read.
+
+Empty reads say why: `No HTTP captured yet in ...` (nothing ever), `No NEW HTTP since your last call ...` (incremental read, pass `since:0`), `N request(s) scanned, 0 matched filters.` (filters), and in history `No requests in session N match the given filters/cursor.`
 
 Error shapes:
 
 ```json
-// Not attached and no history opened
-{"error":"Not attached and no session opened — nothing to list.",
- "nextSteps":["network_status — see DTD apps and pick what to attach to",
-              "network_attach — connect to a live app",
-              "session_open id:<n> — read a past session from the DB instead"]}
+// Nothing attached and no session opened (no errorKind field)
+{"error":"Not attached and no session opened for viewing. Call network_attach to capture live, or session_open id:<N> to read from a historical session, or pass sessionId:<N> directly.",
+ "nextSteps":["network_status ...", "network_attach ...", "session_list ..."]}
 
-// VM service call failed (e.g. mid-detach)
-{"error":"getHttpProfile failed: ...",
- "nextSteps":["network_status — check VM service connection and zombie state",
-              "network_detach then network_attach — full reset"]}
+// Live read failed and the DB fallback failed too
+{"error":"Live read failed and the DB fallback also failed. Live: ... DB: ...",
+ "errorKind":"unresponsive_vm",
+ "sessionId":14,
+ "nextSteps":["network_search query:\"...\" ...", "network_query sql:\"...\" ...", "network_status ..."]}
+
+// History query failed
+{"error":"history query failed: ...", "errorKind":"internal", "sessionId":14,
+ "nextSteps":["Verify the session still exists via session_list",
+              "session_close if the viewed session was deleted"]}
 ```
+
+When the last attached app exited, the not-attached error names that session and adds `session_open id:<n>` as the first next step. `appNameContains` matching no attached session, or several, also errors without an `errorKind` and lists the candidates. A call that runs past the per-tool deadline returns `errorKind:"timeout"`.
 
 ## Pairs well with
 
-- `network_get` — drill into a specific id.
-- `network_body` — when `network_get` reports truncated bodies.
-- `network_search` — content match instead of metadata.
-- `alerts_drain` — see what the detector flagged from this batch.
-- `network_query` — when filtering needs are more structural than these args allow.
+- `network_get`: drill into a specific id.
+- `network_body`: when `network_get` reports truncated bodies.
+- `network_search`: content match instead of metadata.
+- `network_summarize`: one row per endpoint instead of per request.
+- `alerts_drain`: see what the detector flagged.
+- `session_configure`: set sticky filters or a token budget once.
+- `network_query`: when filtering needs are more structural than these args allow.
 
 ## Example
 
 ```
 > network_list statusMin:500 limit:5
-< {summary:"0 requests scanned, 0 matched filters.",
-   warnings:["Capture profile is empty — drive the app to generate traffic, then re-call."],
-   nextSteps:["Drive the app...", "Drop filters and pass since:0 to re-scan from the start"]}
+< {source:"live", summary:"No HTTP captured yet in session 14 (live, my_app).",
+   warnings:["Capture profile is empty. Drive the app to generate traffic, then re-call."],
+   nextSteps:["Drive the app to generate traffic, then call network_list again", "Drop filters to widen the match"]}
 > # user drives the app
 > network_list statusMin:500 limit:5
-< {summary:"3 request(s) from session 14 (live)...",
+< {summary:"3 request(s) from session 14 (live, my_app), newest-first (new since your last call).",
    requests:[{id:"x1", statusCode:503, host:"api.example.com"}, ...],
    nextCursor:1700000123456789,
-   nextSteps:["network_get id:\"x1\" ...", "network_search ...", "alerts_drain ..."]}
+   nextSteps:["network_get id:\"x1\" ...", "network_search ..."]}
 > network_get id:"x1"
 ```
