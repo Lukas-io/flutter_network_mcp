@@ -15,27 +15,28 @@ const String _kIssueNewBase =
 final reportIssueTool = Tool(
   name: 'report_issue',
   description:
-      'File a GitHub issue against this MCP from an agent turn. type "bug" '
-      '(wrong output / crash) or "ux" (awkward / confusing / slow). Posts via '
-      'gh CLI if available, else returns a paste-ready URL. Titles and bodies '
-      'are path-redacted before submission.',
+      'File an issue in this MCP\'s PUBLIC GitHub repo. type "bug" (wrong '
+      'output / crash) or "ux" (awkward / confusing / slow). Only with the '
+      'user\'s go-ahead: call with auto:false first to get the drafted issue '
+      'without filing, show it to the user, and file only after they approve. '
+      'Paths and secrets (tokens, keys, passwords) are redacted.',
   inputSchema: Schema.object(
     properties: {
       'type': Schema.string(
         description: '"bug" or "ux". Picks the matching label + template.',
       ),
       'title': Schema.string(
-        description: 'One-line summary. Path-redacted before submission.',
+        description: 'One-line summary. Redacted before submission.',
       ),
       'body': Schema.string(
         description:
             'Issue body (markdown): what broke, what you expected, the '
-            'failing tool call. Path-redacted.',
+            'failing tool call. Redacted before submission.',
       ),
       'auto': Schema.bool(
         description:
-            'Try gh issue create (default true); false returns a paste-ready '
-            'URL.',
+            'File with gh issue create (default true); false only drafts: it '
+            'returns the redacted issue and a paste-ready URL, filing nothing.',
       ),
     },
     required: ['type', 'title', 'body'],
@@ -65,8 +66,8 @@ FutureOr<CallToolResult> reportIssue(CallToolRequest request) async {
     return errorResult('report_issue: `body` is required.', kind: ErrorKind.badArgument);
   }
 
-  final title = redactPath(titleRaw);
-  final body = redactPath(bodyRaw);
+  final title = redactForSharing(titleRaw);
+  final body = redactForSharing(bodyRaw);
   final labels = _labelsForType(type);
 
   if (auto && _isGhInstalled()) {

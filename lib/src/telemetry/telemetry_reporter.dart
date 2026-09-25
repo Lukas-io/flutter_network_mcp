@@ -96,7 +96,8 @@ Map<String, Object?> buildTelemetryPayload({
   required String dataDir,
 }) {
   final errorClass = error.runtimeType.toString();
-  final errorMessage = _truncate(error.toString(), kErrorMessageMaxChars);
+  final errorMessage =
+      _truncate(redactForSharing(error.toString()), kErrorMessageMaxChars);
   final stackHead = redactStackHead(stack, maxFrames: kStackHeadFrames);
   final signature = _signature(errorClass, stackHead);
   final commitShort = shortCommit();

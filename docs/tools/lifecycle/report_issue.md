@@ -1,6 +1,6 @@
 ---
 tool: report_issue
-description: File a GitHub issue against this MCP from inside an agent turn. Two types — "bug" (code issue, wrong output, crash) and "ux" (works but feels awkward / confusing / slow / unclear). Path-redacted before submission.
+description: File an issue in this MCP's public GitHub repo, only with the user's approval. Two types: "bug" (wrong output, crash) and "ux" (awkward, confusing, slow, unclear). Paths and secrets are redacted before submission.
 when_to_use: When something breaks or feels off and the agent has enough context to describe it. Don't wait for the user to ask — file proactively. See the `instructions` directive in the MCP server.
 ---
 
@@ -21,7 +21,7 @@ when_to_use: When something breaks or feels off and the agent has enough context
 
 ## How it works
 
-1. Path redactor (same one used by telemetry stack frames) runs over `title` + `body`. Strips `/Users/<name>/StudioProjects/<x>/...` to `<project:X>/...`, `/Users/<name>/...` to `<home>/...`, plus Windows equivalents. Defense-in-depth — agents should still avoid putting filesystem paths in issue text.
+1. Redaction runs over `title` and `body`: home directories on macOS, Linux and Windows become `<home>`, anything between home and `lib/`, `test/` or `bin/` becomes `<project>`, and bearer tokens, JWTs, long hex keys and `password=`-style values are masked. It is a safety net; agents should still keep paths and secrets out of issue text. Call with `auto:false` first to draft without filing and show the user.
 2. Labels picked by `type`: `bug` → `[bug, agent-filed]`; `ux` → `[ux-friction, agent-filed]`. The `agent-filed` label lets the maintainer triage agent-vs-human reports.
 3. If `gh` CLI is installed AND `auto:true` (default): the tool shells `gh issue create --repo Lukas-io/flutter_network_mcp --title ... --body ... --label ...` and returns the URL of the filed issue. Labels the repo does not have (checked with `gh label list`) are left off and listed in `droppedLabels`, and if `gh` still reports a missing label it retries once with no labels, so a label never blocks the filing. If `gh issue create` fails, the reply falls back to the paste-ready link below, with the exit code and stderr under `warnings`.
 4. Else: returns a paste-ready GitHub deep link with `title=`, `body=`, `labels=` query parameters. The user opens the URL in a browser and the new-issue form arrives pre-filled.
