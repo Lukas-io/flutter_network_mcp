@@ -133,4 +133,25 @@ void main() {
         hasLength(1));
     expect(dao.searchIndexSize(sid), 1, reason: 'same rowid, no duplicate');
   });
+
+  test('a request body is indexed by its own content type, not the response\'s', () {
+    final raw = CapturesDatabase.instance.raw;
+    raw.execute(
+      'INSERT INTO http_requests(session_id, vm_id, url, host, path, content_type, '
+      'request_headers_json, response_headers_json, start_us) VALUES (?,?,?,?,?,?,?,?,?)',
+      [
+        sid, 'upload', 'http://api.test/avatar', 'api.test', '/avatar', 'image/png',
+        jsonEncode({'content-type': ['application/json']}),
+        jsonEncode({'content-type': ['image/png']}),
+        1,
+      ],
+    );
+    raw.execute(
+      'INSERT INTO http_bodies(session_id, vm_id, which, bytes, size) VALUES (?,?,?,?,?)',
+      [sid, 'upload', 'request', Uint8List.fromList(utf8.encode('{"caption":"sunset"}')), 20],
+    );
+    dao.repairSearchIndex();
+    expect(dao.searchRequests(query: 'sunset', sessionId: sid, which: 'request'),
+        hasLength(1));
+  });
 }
