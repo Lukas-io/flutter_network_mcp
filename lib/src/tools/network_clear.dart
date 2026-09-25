@@ -76,6 +76,8 @@ FutureOr<CallToolResult> networkClear(CallToolRequest request) async {
     }
   }
   attached.lastHttpCursor = null;
+  attached.httpCursorByIsolate.clear();
+  attached.unreturnedHttp.clear();
   final liveSid = scope.sessionId;
   return jsonResult({
     'cleared': true,

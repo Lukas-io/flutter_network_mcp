@@ -23,6 +23,8 @@ when_to_use: When network_get reports `truncated:true`, OR when you need a speci
 Live mode: re-fetches the request via VM service (the `isolateId` you pass, else the isolate recorded in the DB, else every HTTP-profiling isolate) and slices. If the live fetch fails but the body is persisted, it slices the DB copy instead: `source:"live-db-fallback"` plus a warning.
 History mode: reads the `http_bodies` BLOB and slices.
 
+`mimeType` (and the `auto` decode choice) comes from the `content-type` header of the side you asked for: `which:"request"` uses the request's header, `which:"response"` the response's. In history, a response with no stored headers falls back to the row's recorded content type.
+
 Slices are byte-exact (no semantic truncation). `offset` and the returned range refer to the raw body bytes. Returns `nextOffset` when more bytes remain; it is omitted on the last chunk.
 
 No bytes for the body: a normal (non-error) reply with `totalSize:0` and a `bodyStatus`: `empty` (the message had no body), `pending` (not backfilled yet: retry in ~2s, or the session ended first and the bytes are gone), or `unavailable` (lost before capture, with `fetchAttempts` + `reason`). `pending` and `unavailable` add a warning.
