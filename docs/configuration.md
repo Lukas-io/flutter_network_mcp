@@ -29,6 +29,7 @@ Every setting is a command-line flag or an environment variable. Flags go in the
 | `FLUTTER_NETWORK_MCP_POLL_MS` | 2000 | How often captured traffic is read from the app (50 to 60000). |
 | `FLUTTER_NETWORK_MCP_LOG_BUFFER` | 2000 | Log records kept in memory per session (50 to 20000). `FLUTTER_NETWORK_MCP_LOG_BUFFER_SIZE` is an alias. |
 | `FLUTTER_NETWORK_MCP_ALERT_RETENTION_DAYS` | 14 | Alerts from sessions that are no longer attached expire after this many days. `0` keeps them. |
+| `FLUTTER_NETWORK_MCP_NO_MIGRATION_BACKUP` | off | Skip the automatic copy (`captures.db.pre-v<N>.bak`) made before a schema upgrade. The copy is kept 14 days, and a newer one replaces it. |
 
 ### Connecting to apps
 

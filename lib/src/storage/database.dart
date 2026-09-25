@@ -58,10 +58,12 @@ class CapturesDatabase {
         db.execute('PRAGMA busy_timeout = 5000');
         db.execute('PRAGMA foreign_keys = ON');
         _enableWal(db);
+        _backupBeforeMigration(db, dir);
+        _pruneStaleBackups(dir);
         try {
           _migrate(db);
         } on NewerDatabaseError {
-          db.dispose();
+          db.close();
           rethrow;
         }
 
@@ -84,6 +86,82 @@ class CapturesDatabase {
       '${errors.join('\n')}\n'
       'Pass --data-dir <writable path> or set FLUTTER_NETWORK_MCP_DATA_DIR.',
     );
+  }
+
+  /// How long the automatic pre-migration backup is kept.
+  static const backupRetention = Duration(days: 14);
+
+  static final RegExp _backupName = RegExp(r'^captures\.db\.pre-v\d+\.bak$');
+
+  static int _storedVersion(sql.Database db) {
+    try {
+      final row = db.select("SELECT value FROM _meta WHERE key='schema_version'");
+      return row.isEmpty ? 0 : int.tryParse(row.first['value'] as String? ?? '') ?? 0;
+    } on sql.SqliteException {
+      return 0;
+    }
+  }
+
+  /// Before upgrading an existing database, copies it to `captures.db.pre-v<N>.bak` so a migration that completes but damages data can be undone; the newest backup replaces older ones.
+  static void _backupBeforeMigration(sql.Database db, String dir) {
+    final off = Platform.environment['FLUTTER_NETWORK_MCP_NO_MIGRATION_BACKUP']
+        ?.trim()
+        .toLowerCase();
+    if (off == 'true' || off == '1' || off == 'yes' || off == 'on') return;
+    final version = _storedVersion(db);
+    if (version == 0 || version >= currentVersion) return;
+    final target = p.join(dir, 'captures.db.pre-v$version.bak');
+    if (File(target).existsSync()) return;
+    final partial = '$target.partial-$pid';
+    stderr.writeln(
+      'flutter_network_mcp: backing up captures.db before upgrading it from '
+      'schema v$version to v$currentVersion...',
+    );
+    final watch = Stopwatch()..start();
+    try {
+      db.execute("VACUUM INTO '${partial.replaceAll("'", "''")}'");
+      if (File(target).existsSync()) {
+        File(partial).deleteSync();
+      } else {
+        File(partial).renameSync(target);
+      }
+    } on Object catch (e) {
+      try {
+        File(partial).deleteSync();
+      } on Object {
+        // Nothing was written.
+      }
+      stderr.writeln(
+        'flutter_network_mcp: backup before the upgrade failed ($e); '
+        'upgrading without one.',
+      );
+      return;
+    }
+    stderr.writeln(
+      'flutter_network_mcp: backup written to $target in '
+      '${watch.elapsedMilliseconds} ms.',
+    );
+    for (final f in Directory(dir).listSync()) {
+      if (f is File && f.path != target && _backupName.hasMatch(p.basename(f.path))) {
+        f.deleteSync();
+      }
+    }
+  }
+
+  /// Deletes automatic pre-migration backups older than [backupRetention].
+  static void _pruneStaleBackups(String dir) {
+    try {
+      final cutoff = DateTime.now().subtract(backupRetention);
+      for (final f in Directory(dir).listSync()) {
+        if (f is File &&
+            _backupName.hasMatch(p.basename(f.path)) &&
+            f.statSync().modified.isBefore(cutoff)) {
+          f.deleteSync();
+        }
+      }
+    } on Object {
+      // A backup that cannot be listed or removed is left for the user.
+    }
   }
 
   static bool _noPersistFromEnv() {
