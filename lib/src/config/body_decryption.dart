@@ -226,12 +226,4 @@ class BodyDecryptionConfig {
   BodyDecryptionConfig._();
 
   static BodyDecryption? active;
-
-  /// Sessions whose search index already holds plaintext for [active].
-  static final Set<int> reindexedSessions = {};
-
-  static void set(BodyDecryption? config) {
-    active = config;
-    reindexedSessions.clear();
-  }
 }
