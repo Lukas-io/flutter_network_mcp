@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed: error kinds, validation and descriptions
+
+- Scope errors now carry `errorKind`: `no_session` when nothing is attached or opened, or no attached session matches `appNameContains`; `bad_argument` when several match.
+- Every `network_attach` error carries `errorKind` (`bad_argument`, `not_found`, `unresponsive_vm`, `timeout` for an attach already in progress, or `internal`); `network_status attachIfOne` passes it through in `autoAttached`.
+- `logs_tail` honours `session_configure maxResponseTokens` and takes its own `maxTokens`, keeping the newest records and reporting `budget.dropped`.
+- An unknown `severityMin` on `alerts_drain` / `alerts_peek` / `alerts_clear` is `bad_argument`, not `internal`. Alert and pattern severities are stored lowercase and `severityMin` compares case-insensitively, so custom `"ERROR"` alerts pass the filter.
+- `alerts_config` reports `applied` and `rejected` (with reasons) instead of dropping bad values silently, fails with `bad_argument` when nothing in `set` is valid, and no longer throws on a non-object `set`.
+- `network_summarize`, `network_report` and `network_diff_session` no longer count in-flight requests as errors (`statusDist.inFlight`, left out of `errorRate`).
+- `network_report` leaves out `hostContains` for an endpoint with no host instead of passing its path.
+- `network_clear` / `socket_clear` fail with `cleared:false` when no isolate was cleared, and mark a partial clear with `partial:true`.
+- `set-cookie` is a built-in redacted header, so `session_export redact:true` masks response cookies; `redacted_headers` trims the name before the built-in check.
+- `network_correlate` nextSteps name the earlier request of a pair as the likely originator instead of the first session listed.
+- Descriptions: `network_query` names real columns, `auto_attach_config` lists `set` among valid actions, `network_attach logBufferSize` says 50-20000, `network_replay` no longer calls `redact:false` the default.
+
 ### Added: body decryption for app-encrypted bodies (#110, #111)
 
 - `session_configure bodyDecryption:{...}` sets an AES-CTR scheme (`aes-256-ctr` or `aes-128-ctr`; key as utf8, hex or base64; payload as hex, base64 or raw; IV as prefix, suffix, or infused at `ivOffset`). Hex offsets count hex characters; base64 and raw offsets count decoded bytes. `{off:true}` or `clear:true` turns it off.

@@ -25,7 +25,7 @@ Resolves the session like the other read tools (`sessionId`, else `appNameContai
 
 1. Each row is bucketed by `(method.upper, host, pathTemplate(path))`.
 2. `pathTemplate` collapses dynamic id segments: pure-integer → `N`, 8+ hex chars → `H`, full 8-4-4-4-12 UUID → `UUID`. Mixed-content segments (`abc-123`) stay verbatim. Query strings + fragments are stripped.
-3. Per bucket: count, status code histogram (with a synthetic `error` key for rows with no status code: transport errors, and requests still in flight), p50/p95 latency in ms from the rows that have a duration (`null` when none do), error rate as `(status >= 400 + no status) / count`, rounded to 4 decimals.
+3. Per bucket: count, status code histogram (a synthetic `error` key counts transport errors: no status code, but the request ended or carries an error; an `inFlight` key counts requests with no status that have not ended), p50/p95 latency in ms from the rows that have a duration (`null` when none do), error rate as `(status >= 400 + transport errors) / (count - inFlight)`, rounded to 4 decimals (0 when nothing has completed).
 4. Buckets with fewer than `minCount` requests are dropped. The rest are sorted by count desc and trimmed to `limit` (default 50, hard cap 200).
 
 If the raw-row cap is hit, the response includes `rawRowsCapHit: true` (and the summary says so); narrow `hostContains` or shorten `sinceMs`.
@@ -84,7 +84,7 @@ If the raw-row cap is hit, the response includes `rawRowsCapHit: true` (and the 
 
 When nothing matches, the summary reads `No HTTP requests captured over <window>.` followed by a note that only dart:io traffic is captured, and the single next step depends on the session state: drive the app and re-run (live), or a statement that the capture is complete (ended, interrupted, or the app exited).
 
-Errors: `errorKind:"internal"` with `network_summarize query failed: ...` when the DB read fails. Scope failures (nothing attached and no session opened, `appNameContains` matching none or several) return an error with `nextSteps` and no `errorKind`.
+Errors: `errorKind:"internal"` with `network_summarize query failed: ...` when the DB read fails. Scope failures return `no_session` (nothing attached or opened, or no attached session matches `appNameContains`) or `bad_argument` (several attached sessions match), with `nextSteps`.
 
 ## Pairs well with
 

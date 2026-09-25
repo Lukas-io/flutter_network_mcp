@@ -271,18 +271,7 @@ FutureOr<CallToolResult> networkCorrelate(CallToolRequest request) async {
 
   final nextSteps = <String>[];
   if (cappedPairs.isNotEmpty) {
-    final first = cappedPairs.first;
-    final reqs = first['requests'] as List;
-    final r0 = reqs[0] as Map;
-    final r1 = reqs[1] as Map;
-    nextSteps.add(
-      'network_get sessionId:${r0['sessionId']} id:"${r0['id']}" — full '
-      'detail on the originator (${first['spanMs']}ms before its pair)',
-    );
-    nextSteps.add(
-      'network_get sessionId:${r1['sessionId']} id:"${r1['id']}" — full '
-      'detail on the receiver',
-    );
+    nextSteps.addAll(pairInspectSteps(cappedPairs.first));
     if (cappedPairs.length > 1) {
       nextSteps.add(
         'network_correlate timeWindowMs:<smaller> — narrow if too many '
@@ -339,4 +328,27 @@ FutureOr<CallToolResult> networkCorrelate(CallToolRequest request) async {
     if (warnings.isNotEmpty) 'warnings': warnings,
     'nextSteps': nextSteps,
   });
+}
+
+/// network_get steps for [pair]'s two requests, labelled by start time rather than list order.
+List<String> pairInspectSteps(Map<String, Object?> pair) {
+  final reqs = pair['requests'] as List;
+  final a = reqs[0] as Map<String, Object?>;
+  final b = reqs[1] as Map<String, Object?>;
+  final span = pair['spanMs'];
+  String step(Map<String, Object?> r, String label) =>
+      'network_get sessionId:${r['sessionId']} id:"${r['id']}" for the $label';
+  if (span == 0) {
+    return [
+      step(a, 'request from session ${a['sessionId']} (same start time as its pair)'),
+      step(b, 'request from session ${b['sessionId']}'),
+    ];
+  }
+  final aFirst = (a['startTimeMs'] as int) < (b['startTimeMs'] as int);
+  final earlier = aFirst ? a : b;
+  final later = aFirst ? b : a;
+  return [
+    step(earlier, 'earlier request (${span}ms before its pair, likely the originator)'),
+    step(later, 'later request (likely the receiver)'),
+  ];
 }

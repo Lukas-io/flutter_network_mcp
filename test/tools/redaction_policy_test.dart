@@ -7,6 +7,7 @@ import 'package:flutter_network_mcp/src/storage/database.dart';
 import 'package:flutter_network_mcp/src/tools/network_diff.dart';
 import 'package:flutter_network_mcp/src/tools/network_get.dart';
 import 'package:flutter_network_mcp/src/tools/network_replay.dart';
+import 'package:flutter_network_mcp/src/tools/redacted_headers.dart';
 import 'package:flutter_network_mcp/src/tools/session_export.dart';
 import 'package:test/test.dart';
 
@@ -33,7 +34,10 @@ void main() {
         'VALUES (?,?,?,?,?,?,?,?,?,?)',
         [sid, vmId, 'GET', 'https://api.x/a', 'api.x', '/a', status, 1000,
           jsonEncode({'authorization': secret, 'accept': 'application/json'}),
-          jsonEncode({'content-type': 'application/json'})],
+          jsonEncode({
+            'content-type': 'application/json',
+            'set-cookie': 'sid=SESSION-COOKIE-456',
+          })],
       );
     }
     insert('r1', 200);
@@ -101,5 +105,43 @@ void main() {
         name: 'session_export',
         arguments: {'id': sid, 'format': 'har', 'outPath': out}));
     expect(File(out).readAsStringSync(), contains('SUPER-SECRET'));
+  });
+
+  test('HAR export redact:true masks response cookies', () async {
+    final out = '${dir.path}/cookies.har';
+    await sessionExport(CallToolRequest(
+        name: 'session_export',
+        arguments: {'id': sid, 'format': 'har', 'outPath': out,
+          'redact': true}));
+    expect(File(out).readAsStringSync(), isNot(contains('SESSION-COOKIE')));
+  });
+
+  test('network_replay redact:false warning does not call it the default',
+      () async {
+    final res = await networkReplay(CallToolRequest(
+        name: 'network_replay',
+        arguments: {'sessionId': sid, 'id': 'r1', 'redact': false}));
+    final warnings = (res.structuredContent!['warnings'] as List).join(' ');
+    expect(warnings, contains('NOT redacted'));
+    expect(warnings, isNot(contains('the default')));
+  });
+
+  group('redacted_headers trims the name before the built-in check', () {
+    Future<CallToolResult> call(String action, String name) async =>
+        redactedHeaders(CallToolRequest(
+            name: 'redacted_headers',
+            arguments: {'action': action, 'name': name}));
+
+    test('adding a padded built-in is a no-op, not a stored extra', () async {
+      final r = await call('add', '  Authorization ');
+      expect(r.structuredContent!['inserted'], isFalse);
+      expect(dao.listRedactedHeaders(), isEmpty);
+    });
+
+    test('removing a padded built-in is refused', () async {
+      final r = await call('remove', ' Cookie ');
+      expect(r.isError, isTrue);
+      expect(r.structuredContent!['errorKind'], 'bad_argument');
+    });
   });
 }

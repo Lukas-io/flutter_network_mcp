@@ -25,7 +25,7 @@ Reads up to the 10,000 newest requests of each session from the DB and groups th
 - `goneEndpoints`: endpoints only in the baseline.
 - `changed`: endpoints in both where the error rate moved by 0.1 or more, or p95 latency more than doubled or more than halved (only when both p95 values exist and the baseline p95 is above 0). Sorted by the largest error-rate change first.
 
-A request counts as an error when its status is 400 or above, or when it has no status (in flight or failed).
+A request counts as an error when its status is 400 or above, or when it has no status and ended or carries an error. A request still in flight is not an error and is left out of the error rate.
 
 The baseline session id is not checked: an id with no captured requests gives an empty baseline, so every current endpoint is reported as new. Confirm the id with `session_list` if the result looks like that.
 
@@ -63,9 +63,9 @@ The baseline session id is not checked: an id with no captured requests gives an
 }
 ```
 
-`newEndpoints` and `goneEndpoints` entries have the same shape as `network_summarize` endpoints (`statusDist` uses the key `error` for requests with no status). The `network_summarize` step appears only when `changed` is non-empty, the `network_list` step only when `newEndpoints` is non-empty. The `nextSteps` wording above is shortened. There is no `scope` block; `currentSessionId` names the session that was resolved.
+`newEndpoints` and `goneEndpoints` entries have the same shape as `network_summarize` endpoints (`statusDist` uses the key `error` for failed requests with no status and `inFlight` for requests that have not ended). The `network_summarize` step appears only when `changed` is non-empty, the `network_list` step only when `newEndpoints` is non-empty. The `nextSteps` wording above is shortened. There is no `scope` block; `currentSessionId` names the session that was resolved.
 
-Errors: `bad_argument` (missing `baselineSessionId`, or it equals the current session), `internal` (the DB query failed). Scope failures return `error` + `nextSteps` without an `errorKind`.
+Errors: `bad_argument` (missing `baselineSessionId`, or it equals the current session), `internal` (the DB query failed). Scope failures return `no_session` (nothing attached or opened, or no attached session matches `appNameContains`) or `bad_argument` (several attached sessions match), with `nextSteps`.
 
 ## Pairs well with
 

@@ -90,12 +90,21 @@ Already attached (success, nothing new started):
 }
 ```
 
-Errors carry `error` and `nextSteps`, and no `errorKind`. Answers that retrying cannot change (several matching apps, session cap reached) also carry `retryable:false`.
+Errors carry `error`, `errorKind` and `nextSteps`. Answers that retrying cannot change (several matching apps, session cap reached) also carry `retryable:false`.
+
+| Cause | `errorKind` |
+|---|---|
+| Session cap reached; several apps match; no DTD URI given or configured; a malformed URI | `bad_argument` |
+| No app name matches; the DTD has no apps yet; the VM has no isolate with dart:io HTTP profiling | `not_found` |
+| The VM service or DTD refused the connection, the VM did not answer `getVersion()` within 5s, or an RPC timed out | `unresponsive_vm` |
+| An attach to the same target is already in progress (wait, then `network_status`) | `timeout` |
+| Anything else | `internal` |
 
 Error (several matching apps):
 ```json
 {
   "error": "Multiple apps across DTDs match \"eats\"; pass a more specific substring or an explicit `vmServiceUri`.",
+  "errorKind": "bad_argument",
   "retryable": false,
   "apps": [{"name":"...", "uri":"ws://...", "dtdUri":"ws://..."}],
   "nextSteps": ["network_attach appNameContains:\"<unique substring>\"",
@@ -107,6 +116,7 @@ Error (session cap reached):
 ```json
 {
   "error": "Reached max attached sessions (8 live). Detach one first (network_detach keep:true frees the slot without ending the session) or raise FLUTTER_NETWORK_MCP_MAX_ATTACH.",
+  "errorKind": "bad_argument",
   "attached": [{"sessionId": 14, "appName": "..."}],
   "maxAttach": 8,
   "retryable": false,
@@ -118,6 +128,7 @@ Error (zombie DTD):
 ```json
 {
   "error": "Attach failed: Bad state: VM service at ws://... accepted the connection but did not respond to getVersion() within 5s. The DTD/DDS instance is likely stale — restart the Flutter app to spawn a fresh one.",
+  "errorKind": "unresponsive_vm",
   "nextSteps": ["Restart the Flutter app to spawn a fresh DTD/DDS",
                 "Re-check via network_status (new DTD URI will auto-populate knownApps)"]
 }

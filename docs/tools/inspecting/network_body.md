@@ -64,7 +64,7 @@ Body decryption: when `session_configure bodyDecryption:{...}` is on, the body i
 
 On the last chunk `nextOffset` is absent and `nextSteps` offer `network_replay` and `network_diff` instead. `warnings` appears for: a live-to-DB fallback, and an `offset` past `totalSize` (clamped to the end).
 
-Errors: `bad_argument` (missing `id`, `which` not request/response, bad `decode`), `not_found` (unknown id in the viewed session, or unknown to both the live VM and the DB), `unresponsive_vm` (no HTTP-profiling isolates, or the live fetch failed and nothing is persisted), `internal` (unexpected failure). Scope failures return `error` + `nextSteps` without an `errorKind`.
+Errors: `bad_argument` (missing `id`, `which` not request/response, bad `decode`), `not_found` (unknown id in the viewed session, or unknown to both the live VM and the DB), `unresponsive_vm` (no HTTP-profiling isolates, or the live fetch failed and nothing is persisted), `internal` (unexpected failure). Scope failures return `no_session` (nothing attached or opened, or no attached session matches `appNameContains`) or `bad_argument` (several attached sessions match), with `nextSteps`.
 
 ## Pairs well with
 

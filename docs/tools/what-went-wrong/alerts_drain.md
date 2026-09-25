@@ -84,8 +84,8 @@ Resolves one session (explicit `sessionId`, then `appNameContains`, then the `se
 Per-alert `detail`/`sourceKind`/`sourceId` are omitted when null; `breakdown` is omitted when nothing was returned. `priorOccurrences` only lists OTHER sessions (up to 3, newest first). Alert `kind` values: `http_5xx`, `http_4xx`, `http_error`, `http_slow`, `log_keyword`, `flutter_error`, `http_anomaly` (0.7.3+, baseline-relative latency regression), `http_anomaly_errors` (0.7.3+, baseline-relative error-rate spike), plus any user-defined kinds via `alert_patterns`. The `http_anomaly` rule toggle in `alerts_config` covers both anomaly kinds. The dedup fields (0.6.3+: `occurrenceCount`, `firstSeenMs`, `lastSeenMs`, `lastSourceId`, `signature`) are always present on new rows; legacy rows (pre-v5 migration) default `occurrenceCount` to 1 and omit `lastSourceId` / `signature`.
 
 Errors:
-- Scope errors (nothing attached and no session opened, `appNameContains` matching zero or several attached sessions) come back with `error` and `nextSteps` (plus `attached` / `matches` lists) but currently no `errorKind`.
-- An unknown `severityMin` value fails as `errorKind: "internal"` with `alerts_drain failed: Invalid argument(s): Unknown severity "<value>".`. Fix the value and retry. Any other DB failure is also `internal`.
+- Scope errors come back with `error`, `nextSteps` (plus `attached` / `matches` lists) and an `errorKind`: `no_session` when nothing is attached or opened, or no attached session matches `appNameContains`; `bad_argument` when several match.
+- An unknown `severityMin` value fails as `errorKind: "bad_argument"` with `Unknown severityMin "<value>". Expected one of: info, warning, error, critical.`, before anything is drained. Fix the value and retry. A DB failure is `internal`.
 
 ## Pairs well with
 

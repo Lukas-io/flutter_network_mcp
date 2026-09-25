@@ -6,7 +6,7 @@ when_to_use: When the project has custom auth/sensitive headers (X-Tenant-Key, X
 
 ## DO NOT USE THIS TOOL WHEN
 
-- The header is one of the built-in defaults (`authorization`, `cookie`, `proxy-authorization`, `x-api-key`, `x-auth-token`): always redacted. Adding one is a no-op (success with a warning); removing one is refused.
+- The header is one of the built-in defaults (`authorization`, `cookie`, `proxy-authorization`, `set-cookie`, `x-api-key`, `x-auth-token`): always redacted. Adding one is a no-op (success with a warning); removing one is refused.
 - You want to redact bodies: this only affects headers. Bodies cannot be edited in place (`network_query` is read-only); `bodies_purge` deletes stored bodies.
 - You want capture-time redaction: this applies when a tool renders headers. Original header values stay in the DB.
 - Local debugging with `redact:false` on `network_get`, `network_replay` or `network_replay_as_test`: that bypasses redaction entirely; this list is irrelevant.
@@ -18,7 +18,7 @@ when_to_use: When the project has custom auth/sensitive headers (X-Tenant-Key, X
 
 ## How it works
 
-Names are trimmed and lowercased before storing, and matched case-insensitively. Every consumer reads `redactedHeaderSet()` (built-ins + extras) on each call, so changes take effect immediately:
+Names are trimmed and lowercased before storing and before the built-in check, and matched case-insensitively. Every consumer reads `redactedHeaderSet()` (built-ins + extras) on each call, so changes take effect immediately:
 - `network_get`, `network_replay`, `network_replay_as_test`: redact by default; `redact:false` shows real values.
 - `network_diff`: always redacts in the header diff.
 - `session_export`: only when called with `redact:true` (its default is false).
@@ -36,10 +36,10 @@ Extras persist in the DB across restarts. The tool exists only when the `admin` 
 ```json
 // list
 {"action":"list",
- "summary":"6 redacted header name(s): 5 built-in, 1 project-specific.",
- "builtins":["authorization","cookie","proxy-authorization","x-api-key","x-auth-token"],
+ "summary":"7 redacted header name(s): 6 built-in, 1 project-specific.",
+ "builtins":["authorization","cookie","proxy-authorization","set-cookie","x-api-key","x-auth-token"],
  "extras":[{"name":"x-tenant-key", "addedMs":..., "reason":"internal"}],
- "total":6,
+ "total":7,
  "nextSteps":[...]}
 
 // add

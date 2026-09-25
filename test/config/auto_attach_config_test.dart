@@ -1,7 +1,9 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:dart_mcp/server.dart';
 import 'package:flutter_network_mcp/src/config/auto_attach_config.dart';
+import 'package:flutter_network_mcp/src/tools/auto_attach_config_tool.dart';
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 
@@ -116,5 +118,14 @@ void main() {
       final loaded = AutoAttachConfig.loadFromFile();
       expect(loaded.allowed, ['good']);
     });
+  });
+
+  test('an unknown action names every valid action, set included', () async {
+    final r = await autoAttachConfig(CallToolRequest(
+        name: 'auto_attach_config', arguments: const {'action': 'nope'}));
+    expect(r.isError, isTrue);
+    expect(r.structuredContent!['errorKind'], 'bad_argument');
+    expect(r.structuredContent!['error'],
+        contains('list | add | remove | clear | set'));
   });
 }

@@ -78,8 +78,8 @@ With body decryption on (`session_configure bodyDecryption:{...}`), step 2 searc
   ],
   "warnings": ["..."],
   "nextSteps": [
-    "network_get sessionId:14 id:\"req-1\" ... (412ms before its pair)",
-    "network_get sessionId:15 id:\"req-2\" ..."
+    "network_get sessionId:14 id:\"req-1\" for the earlier request (412ms before its pair, likely the originator)",
+    "network_get sessionId:15 id:\"req-2\" for the later request (likely the receiver)"
   ]
 }
 ```
@@ -87,7 +87,7 @@ With body decryption on (`session_configure bodyDecryption:{...}`), step 2 searc
 - `appName` appears only for sessions that are attached right now; historical sessions have none.
 - `sessions[].matches` is a preview: at most 10 per session, without snippets or isolate ids. `matchesTotal` is the real count. Full match rows (with `snippet`) are only inside `pairs`.
 - In each pair, `requests[0]` comes from the session listed earlier in `sessionIds` and `requests[1]` from the later one; the order is not by time. `spanMs` is the absolute start-time difference.
-- `nextSteps` label `requests[0]` of the tightest pair as the originator and `requests[1]` as the receiver, following that list order. Check `startTimeMs` to see which one actually came first. A third step suggests a smaller `timeWindowMs` when more than one pair is returned. With matches but no pairs, the step suggests raising or omitting `timeWindowMs`; with no matches, a shorter pattern and `network_search`.
+- `nextSteps` point `network_get` at both requests of the tightest pair, the earlier one (by `startTimeMs`) first as the likely originator and the later one as the likely receiver. When both started at the same millisecond neither is labelled. A third step suggests a smaller `timeWindowMs` when more than one pair is returned. With matches but no pairs, the step suggests raising or omitting `timeWindowMs`; with no matches, a shorter pattern and `network_search`.
 - `warnings` cover: no matches at all, a session that hit `perSessionLimit`, a session with more than 10 matches (preview only), more candidate pairs than `limit`, and a single `sessionIds` entry (`pairs` will be empty).
 
 ## Errors

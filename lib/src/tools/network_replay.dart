@@ -141,8 +141,8 @@ FutureOr<CallToolResult> networkReplay(CallToolRequest request) async {
     }
     if (!redact) {
       warnings.add(
-        'Auth headers are NOT redacted (the default for local repro) — pass '
-        'redact:true before sharing this curl externally.',
+        'Auth headers are NOT redacted (redact:false, for a local auth '
+        'repro). Drop redact:false before sharing this curl externally.',
       );
     }
 
