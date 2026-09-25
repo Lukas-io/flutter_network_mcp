@@ -6,6 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-09-25
+
+### Changed: secrets stay out of the database, exports and SQL (#121)
+
+- Values of secret headers (authorization, cookies, API keys, plus any added with `redacted_headers`) are stored as `<redacted>`. Set `FLUTTER_NETWORK_MCP_STORE_SECRETS=true` to keep them for local replay.
+- **Breaking:** `session_export` now redacts by default (`redact:false` for a local-only file), and masks tokens, JWTs, keys and password fields in body text too.
+- `network_query` masks secret header values (under any column name) and token or password patterns in every text cell.
+- `report_issue` drafts first with `auto:false` and files only with the user's OK; paths on any home layout and secrets are redacted. Crash telemetry messages are redacted too.
+- `network_replay redact:false` names the headers that were masked at capture.
+
+### Changed: telemetry is opt-in (#122)
+
+- **Breaking:** crash reports and usage summaries are sent only when `FLUTTER_NETWORK_MCP_TELEMETRY=on`; `DO_NOT_TRACK` and the existing kill switches always win. Tool usage is still recorded locally.
+- The install id is now random instead of a hash of the data directory. See `docs/telemetry.md`.
+
+### Fixed: an older build no longer writes to a newer database (#123)
+
+- A build whose schema is older than the database exits with code 78 and says to update or use another `--data-dir`, instead of writing to it.
+
+### Docs (#124)
+
+- New `docs/configuration.md` (every flag and environment variable with its default), `SECURITY.md`, and a "Limits today" section in the README. Internal notes left the repo.
+
 ### Added: automatic backup before a schema upgrade
 
 - Before upgrading an existing `captures.db` to a newer schema, the server copies it to `captures.db.pre-v<N>.bak` in the same directory (a consistent snapshot, safe while other server processes have the database open). The newest copy replaces older ones, and copies older than 14 days are deleted at startup. Set `FLUTTER_NETWORK_MCP_NO_MIGRATION_BACKUP=true` to skip it.
