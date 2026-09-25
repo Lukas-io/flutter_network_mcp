@@ -1,15 +1,42 @@
 import 'dart:io';
 
+import 'dart:async';
+
 import 'package:dart_mcp/server.dart';
 import 'package:flutter_network_mcp/src/storage/capture_writer.dart';
 import 'package:flutter_network_mcp/src/storage/captures_db.dart';
 import 'package:flutter_network_mcp/src/storage/database.dart';
 import 'package:flutter_network_mcp/src/tools/body_fetch.dart';
 import 'package:flutter_network_mcp/src/util/scope.dart';
+import 'package:flutter_network_mcp/src/vm/vm_client.dart';
+import 'package:vm_service/vm_service.dart' show HttpProfileRequest;
 import 'package:test/test.dart';
 
 /// #95/#96/#100: bodies stranded when a session ends, plus the honesty of the
 /// messages that report the gap.
+/// A VM whose body fetches never answer, or that has already disconnected.
+class _StuckVm extends VmClient {
+  _StuckVm({this.connected = true});
+  final bool connected;
+  int fetches = 0;
+
+  @override
+  bool get isConnected => connected;
+  @override
+  String? get isolateId => 'iso';
+  @override
+  List<IsolateInfo> get httpProfilingIsolates => const [];
+  @override
+  Future<List<IsolateInfo>> discoverHttpProfilingIsolates() async => const [];
+  @override
+  Future<HttpProfileRequest> getHttpProfileRequestForIsolate(
+      String isolateId, String requestId) {
+    fetches++;
+    if (!connected) throw StateError('VM service is not connected');
+    return Completer<HttpProfileRequest>().future;
+  }
+}
+
 void main() {
   late Directory dir;
   late CapturesDao dao;
@@ -80,6 +107,34 @@ void main() {
       final writer = CaptureWriter();
       await writer.flushPendingBodies();
       await writer.stop(flush: true);
+    });
+
+    test('a VM that never answers cannot hold the flush past its deadline', () async {
+      for (var i = 0; i < 20; i++) {
+        insertReq('r$i');
+      }
+      final vm = _StuckVm();
+      final writer = CaptureWriter()..start(vm, sid);
+      final watch = Stopwatch()..start();
+      await writer.flushPendingBodies(deadline: const Duration(milliseconds: 2500));
+      watch.stop();
+      await writer.stop();
+      expect(watch.elapsed, lessThan(const Duration(milliseconds: 4000)));
+      expect(vm.fetches, lessThanOrEqualTo(4));
+    });
+
+    test('a disconnected VM ends the flush at once instead of spinning', () async {
+      for (var i = 0; i < 20; i++) {
+        insertReq('r$i');
+      }
+      final vm = _StuckVm(connected: false);
+      final writer = CaptureWriter()..start(vm, sid);
+      final watch = Stopwatch()..start();
+      await writer.flushPendingBodies();
+      watch.stop();
+      await writer.stop();
+      expect(watch.elapsed, lessThan(const Duration(milliseconds: 500)));
+      expect(vm.fetches, lessThanOrEqualTo(1));
     });
   });
 }
