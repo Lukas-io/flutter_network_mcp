@@ -117,7 +117,7 @@ Error shapes:
               "session_close if the viewed session was deleted"]}
 ```
 
-When the last attached app exited, the not-attached error names that session and adds `session_open id:<n>` as the first next step. `appNameContains` matching no attached session, or several, also errors without an `errorKind` and lists the candidates. A call that runs past the per-tool deadline returns `errorKind:"timeout"`.
+When the last attached app exited, the not-attached error names that session and adds `session_open id:<n>` as the first next step. `appNameContains` matching no attached session returns `errorKind:"no_session"`, and matching several returns `bad_argument`; both list the candidates. A call that runs past the per-tool deadline returns `errorKind:"timeout"`.
 
 ## Pairs well with
 
