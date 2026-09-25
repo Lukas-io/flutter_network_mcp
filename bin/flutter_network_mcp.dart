@@ -32,9 +32,9 @@ Future<void> main(List<String> args) async {
   //
   // 0.7.1: the handler also fires TelemetryReporter.maybeReport, which
   // writes a tamper-evident audit log + (when configured) POSTs an
-  // anonymized payload to the maintainer's collector. Default-on with
-  // opt-out via FLUTTER_NETWORK_MCP_NO_TELEMETRY=true. See
-  // docs/CRASH_REPORTING.md for the full design.
+  // anonymized payload to the maintainer's collector, only for users who
+  // set FLUTTER_NETWORK_MCP_TELEMETRY=on. See
+  // docs/telemetry.md.
   await runZonedGuarded(() => _runMain(args), (error, stack) {
     io.stderr.writeln(
       'flutter_network_mcp: UNCAUGHT ERROR ($error). The MCP host will see '
@@ -314,8 +314,8 @@ Future<void> _runMain(List<String> args) async {
     ),
   );
 
-  // Background usage-rollup ship (#79 Phase 3). Daily-gated, opt-out via
-  // FLUTTER_NETWORK_MCP_NO_USAGE / NO_TELEMETRY. Folds the events accrued
+  // Background usage-rollup ship (#79 Phase 3). Daily-gated and opt-in
+  // (FLUTTER_NETWORK_MCP_TELEMETRY=on). Folds the events accrued
   // since the last ship into one privacy-safe aggregate, records it to the
   // tamper-evident audit log, and POSTs to the collector when configured.
   // Fire-and-forget: never blocks the MCP-host handshake, never throws.

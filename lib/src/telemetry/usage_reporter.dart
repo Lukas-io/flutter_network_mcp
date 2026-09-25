@@ -33,9 +33,7 @@ import 'telemetry_env.dart';
 /// ([maybeAutoShip], daily-gated) and explicitly via `flutter_network_mcp
 /// usage ship`.
 ///
-/// Opt out with `FLUTTER_NETWORK_MCP_NO_USAGE=true` (usage only) or
-/// `FLUTTER_NETWORK_MCP_NO_TELEMETRY=true` (everything), the same flags
-/// that gate usage capture.
+/// Sends nothing unless the user sets `FLUTTER_NETWORK_MCP_TELEMETRY=on`; `DO_NOT_TRACK`, `FLUTTER_NETWORK_MCP_NO_TELEMETRY` and `FLUTTER_NETWORK_MCP_NO_USAGE` always win.
 class UsageReporter {
   /// Watermark + bookkeeping file in the data dir.
   static const String stateFileName = 'usage-ship-state.json';
@@ -52,7 +50,7 @@ class UsageReporter {
   /// safe to `unawaited(...)` from `main` alongside the update check.
   static Future<void> maybeAutoShip() async {
     try {
-      if (_optedOut()) return;
+      if (_sharingOff() != null) return;
       final dir = resolveCandidateDataDir();
       if (dir == null) return;
       final last = _readState(dir).lastShippedAtMs;
@@ -78,11 +76,12 @@ class UsageReporter {
       return const UsageShipResult(
           shipped: false, message: 'could not resolve a data dir');
     }
-    if (_optedOut()) {
-      return const UsageShipResult(
+    final offReason = _sharingOff();
+    if (!dryRun && offReason != null) {
+      return UsageShipResult(
           shipped: false,
-          message: 'usage telemetry disabled (FLUTTER_NETWORK_MCP_NO_USAGE / '
-              'NO_TELEMETRY)');
+          message: 'not sent: sharing is $offReason. --dry-run shows what '
+              'would be sent.');
     }
     if (!CapturesDatabase.isOpen) {
       try {
@@ -196,11 +195,8 @@ class UsageReporter {
 
   static String get _endpoint => _endpointOverride ?? kCollectorEndpoint;
 
-  static bool _optedOut() {
-    final env = _envOverride ?? io.Platform.environment;
-    return telemetryDisabled(env) ||
-        truthyEnv(env['FLUTTER_NETWORK_MCP_NO_USAGE']);
-  }
+  static String? _sharingOff() =>
+      sharingOffReason(env: _envOverride ?? io.Platform.environment, usage: true);
 
   static _ShipState _readState(String dataDir) {
     try {
@@ -275,7 +271,7 @@ Map<String, Object?> buildUsagePayload({
     'isAot': isAotBuild,
     'os': osDescriptor(),
     'dart': dartVersion(),
-    'machineHash': machineHash(dataDir),
+    'machineHash': installId(dataDir),
     'window': {
       'firstEventMs': firstMs,
       'lastEventMs': lastMs,
