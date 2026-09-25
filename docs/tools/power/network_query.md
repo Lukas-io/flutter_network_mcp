@@ -20,7 +20,7 @@ when_to_use: When structured tools can't express the question — joins across t
 
 ## How it works
 
-Trims whitespace and trailing semicolons. Rejects a statement that does not start with `SELECT` or `WITH ` (case-insensitive). Rejects any remaining `;`, even one inside a string literal. Wraps your statement in `SELECT * FROM (...) LIMIT 500` so the row cap applies regardless of your own LIMIT. BLOB cells return `{type:"blob", size:N}` to avoid dumping bytes. String cells over 2048 characters return `{value, truncated:true, totalLength}` with the first 2048 characters.
+Trims whitespace and trailing semicolons. Rejects a statement that does not start with `SELECT` or `WITH ` (case-insensitive). Rejects any remaining `;`, even one inside a string literal. Wraps your statement in `SELECT * FROM (...) LIMIT 500` so the row cap applies regardless of your own LIMIT. BLOB cells return `{type:"blob", size:N}` to avoid dumping bytes. String cells over 2048 characters return `{value, truncated:true, totalLength}` with the first 2048 characters. Every string cell is masked before it is returned: a JSON header map (under any column name) has the values of redacted headers replaced with `<redacted>`, and bearer tokens, JWTs, long hex keys and `password=`-style values are masked in any text.
 
 The query runs against the whole capture DB. Unlike the other read tools it ignores `session_open` and the attached session (the reply says `scope:"all-sessions"`), so filter on `session_id` yourself. It sees only what is on disk: `http_bodies.bytes` holds bodies as captured, and plaintext from `session_configure bodyDecryption` (kept in memory only) is not queryable here.
 

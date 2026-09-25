@@ -51,7 +51,8 @@ void main() {
       final frames = payload['stackHead'] as List<String>;
       expect(frames.any((f) => f.contains('alice')), isFalse,
           reason: 'redactor must strip usernames');
-      expect(frames.any((f) => f.contains('<project:sanga_mobile>')), isTrue);
+      expect(frames.any((f) => f.contains('<project>/lib/main.dart')), isTrue);
+      expect(frames.any((f) => f.contains('sanga_mobile')), isFalse);
     });
 
     test('signature stable across runs for the same error + stack', () {

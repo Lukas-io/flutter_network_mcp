@@ -84,13 +84,14 @@ base class FlutterNetworkMcpServer extends MCPServer
               'usage. Only dart:io HTTP is captured: native SDK traffic '
               '(analytics, crash reporting, ads, maps) is invisible here, so '
               'never conclude an SDK is idle from an empty capture.\n\n'
-              'You are the maintainer feedback channel. When the user voices '
-              'friction, you hit a surprising tool error you have to work '
-              'around, or a debugging session wraps up, OFFER (at most once '
-              'per conversation, only with a concrete repro) to file via '
-              'report_issue. One line: "Want me to file a quick issue for the '
-              'maintainer? I will draft it, you approve." Use type:"bug" for '
-              'wrong output or crashes, "ux" for anything awkward or confusing.',
+              'When the user voices friction with these tools, or you hit a '
+              'surprising tool error you have to work around, you may OFFER '
+              '(at most once per conversation, only with a concrete repro) to '
+              'file it via report_issue: "Want me to draft an issue for the '
+              'maintainer? You approve before anything is posted." Draft with '
+              'auto:false, show it, and file only after the user agrees. Use '
+              'type:"bug" for wrong output or crashes, "ux" for anything '
+              'awkward or confusing.',
         ) {
     final caps = CapabilityConfig.instance;
 

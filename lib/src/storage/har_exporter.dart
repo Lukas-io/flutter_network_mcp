@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import '../util/body_decoder.dart';
 import 'captures_db.dart';
+import '../util/secret_redactor.dart';
 import 'database.dart';
 
 /// Exports a session to HAR 1.2 (JSON) or NDJSON. Returns the path written.
@@ -17,7 +18,9 @@ class HarExporter {
     required String outPath,
     required String format,
     Set<String> redactNames = const {},
+    bool redactBodies = false,
   }) async {
+    _redactBodies = redactBodies;
     if (format != 'har' && format != 'ndjson') {
       throw ArgumentError('format must be "har" or "ndjson", got "$format".');
     }
@@ -124,6 +127,11 @@ class HarExporter {
     };
   }
 
+  /// Masks tokens, passwords and keys in exported body text when the export is redacted.
+  bool _redactBodies = false;
+
+  String _bodyText(String text) => _redactBodies ? redactSecrets(text) : text;
+
   Map<String, Object?> _postData(Uint8List body, String? mimeType) {
     final decoded = decodeBody(body, mimeType, maxBytes: -1, semantic: false);
     if (decoded == null) {
@@ -135,7 +143,7 @@ class HarExporter {
     if (decoded.encoding == 'utf8') {
       return {
         'mimeType': mimeType ?? 'application/octet-stream',
-        'text': decoded.value,
+        'text': _bodyText(decoded.value),
       };
     }
     return {
@@ -160,7 +168,7 @@ class HarExporter {
     return {
       'size': decoded.totalSize,
       'mimeType': mimeType ?? '',
-      if (decoded.encoding == 'utf8') 'text': decoded.value,
+      if (decoded.encoding == 'utf8') 'text': _bodyText(decoded.value),
       if (decoded.encoding == 'base64') ...{
         'text': decoded.value,
         'encoding': 'base64',
@@ -266,7 +274,7 @@ Future<String> exportSession({
   required int sessionId,
   required String outPath,
   required String format,
-  bool redact = false,
+  bool redact = true,
 }) {
   CapturesDatabase.instance;
   return HarExporter(CapturesDao()).export(
@@ -274,5 +282,6 @@ Future<String> exportSession({
     outPath: outPath,
     format: format,
     redactNames: redact ? CapturesDao().redactedHeaderSet() : const {},
+    redactBodies: redact,
   );
 }

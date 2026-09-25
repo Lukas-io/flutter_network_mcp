@@ -5,6 +5,7 @@ import 'package:dart_mcp/server.dart';
 
 import '../config/capabilities.dart';
 import '../storage/captures_db.dart';
+import '../util/secret_redactor.dart';
 import '../util/body_decoder.dart';
 import '../util/scope.dart';
 import 'error_kind.dart';
@@ -98,12 +99,14 @@ FutureOr<CallToolResult> networkReplay(CallToolRequest request) async {
     final buf = StringBuffer()..write("curl -X '$method'");
     int headerCount = 0;
     int redactedCount = 0;
+    final maskedAtCapture = <String>[];
     if (headers != null) {
       for (final e in headers.entries) {
         final name = e.key;
         final value = e.value is List
             ? (e.value as List).join(', ')
             : (e.value?.toString() ?? '');
+        if (value == redactedValue) maskedAtCapture.add(name);
         final isRedacted = redactedSet.contains(name.toLowerCase());
         if (isRedacted) redactedCount++;
         final shown = isRedacted ? '<redacted>' : value;
@@ -148,6 +151,13 @@ FutureOr<CallToolResult> networkReplay(CallToolRequest request) async {
         'Auth headers are NOT redacted (redact:false, for a local auth '
         'repro). Drop redact:false before sharing this curl externally.',
       );
+      if (maskedAtCapture.isNotEmpty) {
+        warnings.add(
+          '${maskedAtCapture.join(', ')} were masked when captured, so the curl '
+          'carries <redacted> for them. To keep secret header values for local '
+          'replay, set FLUTTER_NETWORK_MCP_STORE_SECRETS=true before capturing.',
+        );
+      }
     }
 
     final nextSteps = <String>[];
