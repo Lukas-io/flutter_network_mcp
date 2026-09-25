@@ -7,6 +7,7 @@ import '../config/body_decryption.dart';
 import '../util/searchable_text.dart';
 import 'captures_db.dart';
 import 'database.dart';
+import '../util/body_decoder.dart';
 
 /// Search over decrypted bodies (#105), held in this process's memory only so plaintext never reaches the capture DB. Built per session on first search and topped up on later ones; dropped when the key changes or decryption is turned off.
 class PlaintextIndex {
@@ -59,7 +60,8 @@ class PlaintextIndex {
     final seen = _indexed.putIfAbsent(sessionId, () => {});
     var n = 0;
     for (final row in raw.select(
-      'SELECT vm_id, isolate_id, url, content_type, start_us, bodies_fetched '
+      'SELECT vm_id, isolate_id, url, content_type, request_headers_json, '
+      'response_headers_json, start_us, bodies_fetched '
       'FROM http_requests WHERE session_id=?',
       [sessionId],
     )) {
@@ -71,8 +73,8 @@ class PlaintextIndex {
         'SELECT which, bytes FROM http_bodies WHERE session_id=? AND vm_id=?',
         [sessionId, vmId],
       )) {
-        final text = plaintextFor(
-            b['bytes'] as Uint8List?, row['content_type'] as String?, scheme);
+        final text = plaintextFor(b['bytes'] as Uint8List?,
+            storedContentType(_row(row), b['which'] as String), scheme);
         if (b['which'] == 'request') {
           request = text;
         } else {
@@ -192,3 +194,5 @@ String? plaintextFor(Uint8List? bytes, String? contentType, BodyDecryption schem
   if (out.decrypted) return utf8.decode(out.bytes);
   return searchableText(bytes, contentType);
 }
+
+Map<String, Object?> _row(sql.Row r) => {for (final k in r.keys) k: r[k]};
