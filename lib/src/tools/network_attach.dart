@@ -249,7 +249,7 @@ Future<Map<String, Object?>> performAttach({
     final sid = createdSid;
     if (sid != null && registry.attachedById(sid) == null) {
       try {
-        CapturesDao().endSession(sid);
+        CapturesDao().leaveSession(sid);
       } catch (_) {/* best effort */}
     }
   }
@@ -538,14 +538,14 @@ Future<Map<String, Object?>> _performAttachLocked({
     final String? previousVmServiceUri;
     final int reattachCount;
     if (reattachPrior != null) {
-      sid = reattachPrior.id;
       previousVmServiceUri = reattachPrior.vmServiceUri;
       reattachCount = reattachPrior.reattachCount + 1;
-      dao.repointSession(
-        sid,
+      sid = dao.repointSession(
+        reattachPrior.id,
         vmServiceUri: resolvedVmServiceUri,
         isolateId: isolateId,
       );
+      dao.attachProcess(sid);
       // Dispose the stale session's resources (its VM is already gone after
       // the restart, so disconnect is best-effort) and free the old URI key.
       try {
@@ -568,6 +568,7 @@ Future<Map<String, Object?>> _performAttachLocked({
         isolateId: isolateId,
         projectPath: io.Directory.current.path,
       );
+      dao.attachProcess(sid);
       onSessionCreated(sid);
     }
     registry.forgetDead(sid);

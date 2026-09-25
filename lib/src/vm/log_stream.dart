@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io' as io;
 
+import 'package:crypto/crypto.dart' show sha1;
 import 'package:vm_service/vm_service.dart';
 
 import '../alerts/alert_detector.dart';
@@ -66,6 +67,7 @@ class LogStreamSubscriber {
         error: err,
         stack: stack,
         isolateId: isoId,
+        dedupKey: 'logging:$isoId:${record.sequenceNumber}:${record.time}',
       );
     }, onError: _onStreamError));
 
@@ -130,6 +132,7 @@ class LogStreamSubscriber {
       timestampMs: ts,
       message: text,
       isolateId: isoId,
+      dedupKey: '$source:$isoId:$ts:${logDedupHash(text)}',
     );
   }
 
@@ -142,6 +145,7 @@ class LogStreamSubscriber {
     String? error,
     String? stack,
     String? isolateId,
+    String? dedupKey,
   }) {
     final sid = _sessionIdProvider?.call();
     if (sid == null) return;
@@ -156,6 +160,7 @@ class LogStreamSubscriber {
         error: error,
         stackTrace: stack,
         isolateId: isolateId,
+        dedupKey: dedupKey,
       );
       if (rowId != null &&
           CapabilityConfig.instance.isEnabled(Category.alerts)) {
@@ -184,3 +189,7 @@ class LogStreamSubscriber {
     } catch (_) {/* harmless */}
   }
 }
+
+/// Short stable digest of [text] for log dedup keys (identical across server processes).
+String logDedupHash(String text) =>
+    sha1.convert(utf8.encode(text)).toString().substring(0, 16);
