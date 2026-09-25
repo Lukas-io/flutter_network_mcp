@@ -23,7 +23,7 @@ when_to_use: When something breaks or feels off and the agent has enough context
 
 1. Path redactor (same one used by telemetry stack frames) runs over `title` + `body`. Strips `/Users/<name>/StudioProjects/<x>/...` to `<project:X>/...`, `/Users/<name>/...` to `<home>/...`, plus Windows equivalents. Defense-in-depth — agents should still avoid putting filesystem paths in issue text.
 2. Labels picked by `type`: `bug` → `[bug, agent-filed]`; `ux` → `[ux-friction, agent-filed]`. The `agent-filed` label lets the maintainer triage agent-vs-human reports.
-3. If `gh` CLI is installed AND `auto:true` (default): the tool shells `gh issue create --repo Lukas-io/flutter_network_mcp --title ... --body ... --label ...` and returns the URL of the filed issue.
+3. If `gh` CLI is installed AND `auto:true` (default): the tool shells `gh issue create --repo Lukas-io/flutter_network_mcp --title ... --body ... --label ...` and returns the URL of the filed issue. Labels the repo does not have (checked with `gh label list`) are left off and listed in `droppedLabels`, and if `gh` still reports a missing label it retries once with no labels, so a label never blocks the filing. If `gh issue create` fails, the reply falls back to the paste-ready link below, with the exit code and stderr under `warnings`.
 4. Else: returns a paste-ready GitHub deep link with `title=`, `body=`, `labels=` query parameters. The user opens the URL in a browser and the new-issue form arrives pre-filled.
 
 ## Args
@@ -51,7 +51,9 @@ when_to_use: When something breaks or feels off and the agent has enough context
 }
 ```
 
-**Paste-ready fallback (no gh, or auto:false):**
+`droppedLabels` appears (with an extra `nextSteps` line) when some labels were left off.
+
+**Paste-ready fallback (no gh, `auto:false`, or `gh issue create` failed):**
 ```jsonc
 {
   "filed": false,
@@ -67,6 +69,10 @@ when_to_use: When something breaks or feels off and the agent has enough context
   ]
 }
 ```
+
+When the fallback follows a failed `gh issue create`, the reply also has `warnings: ["gh issue create exited <code>: <stderr>"]` and `nextSteps` that suggest the deep link and `gh auth login`.
+
+Errors (`errorKind: bad_argument`): `type` is not `"bug"` or `"ux"`, or `title` / `body` is missing or empty.
 
 ## Pairs well with
 

@@ -22,7 +22,7 @@ when_to_use: After session_delete, bodies_purge, or alerts_clear when you actual
 2. `VACUUM` — rebuilds the database to reclaim freed pages.
 3. `PRAGMA optimize` — incremental SQLite optimizer.
 
-Reports before/after byte sizes and the reclaimed delta in `summary`.
+Reports before/after byte sizes (`page_count * page_size`, the same measure as `db_stats`) and the reclaimed delta in `summary`. Runs without the per-tool deadline, so a large vacuum does not time out.
 
 ## Args
 
@@ -43,7 +43,9 @@ None.
 }
 ```
 
-`warnings: []` fires when no space was reclaimed (suggests deletions are needed first).
+`warnings` fires when no space was reclaimed (suggests deletions are needed first); the summary then says the DB is already compact.
+
+Errors: any failure, including the DB being locked or busy in another server process, returns `errorKind: "internal"` with nextSteps to check for another process and run `db_stats`.
 
 ## Pairs well with
 

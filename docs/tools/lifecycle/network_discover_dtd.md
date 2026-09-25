@@ -8,7 +8,7 @@ when_to_use: When the server started without `--dtd-uri` (the typical zero-confi
 
 - The MCP server has already auto-discovered a DTD at startup AND `network_status.dtd.connected:true`. The work is done — just call `network_attach`.
 - You explicitly want NOT to auto-discover (paranoid configs, CI, shared machines). Start the server with `--no-auto-discover-dtd` and rely on explicit `--dtd-uri`.
-- You're hunting for a VM service URI directly — that's `network_status.knownApps[].uri` after attach, not this tool.
+- You're hunting for a VM service URI directly. That's `network_status.knownApps[].uri` (no attach needed), not this tool.
 - You need to discover DTDs on a remote machine — this is filesystem-only and local-only by design.
 
 ## Use this when
@@ -33,7 +33,7 @@ Each file inside is a JSON document containing the full WebSocket URI (token inc
 1. Lists every file in the directory (defensive 64-file cap).
 2. Parses each as JSON; skips unrecognizable / partially-written files silently.
 3. Probes each candidate's `pid` for liveness (POSIX `kill -0`, Windows `tasklist`).
-4. Ranks best-first: live > matchesCwd > newer epoch.
+4. Ranks best-first: live > matchesCwd > has a workspaceRoot > newer epoch.
 5. Applies the caller's `cwdMatch` / `includeStale` filters.
 6. Caps at `limit` candidates.
 
@@ -41,7 +41,7 @@ Each file inside is a JSON document containing the full WebSocket URI (token inc
 
 - `cwdMatch: bool` — default `true`. When true, only candidates whose `workspaceRoot` equals the server's current working directory are returned. Set false to see all DTDs on the machine.
 - `includeStale: bool` — default `false`. When true, candidates whose pid no longer responds to the OS probe are included (useful for forensics).
-- `limit: int` — default 5, hard cap 20.
+- `limit: int`: default 5, hard cap 20. A value of 0 or less falls back to 5.
 
 ## Output
 

@@ -16,7 +16,9 @@ when_to_use: After you're done querying a historical session.
 
 ## How it works
 
-Sets `Session.instance.viewedSessionId` to null. Read tools fall back to live behavior. Reports `previousViewedSessionId` so the agent can confirm what they reverted from.
+Sets `Session.instance.viewedSessionId` to null. Read tools fall back to live behavior. Reports `previousViewedSessionId` so the agent can confirm what they reverted from. Never fails and does not modify any data.
+
+`liveSessionId` is this process's attached session when exactly one is attached, otherwise null (nothing attached, or two or more attached; with several attached, read tools pick a default session by project directory, else most recently used, unless you pass `sessionId` / `appNameContains`).
 
 ## Args
 
@@ -37,7 +39,7 @@ None.
 }
 ```
 
-No-op: `summary` says "was not viewing history."
+No-op: `previousViewedSessionId` is null and `summary` says "was not viewing history." When `liveSessionId` is null, the first nextStep is `network_attach` instead of `network_list` (also with two or more sessions attached).
 
 ## Pairs well with
 

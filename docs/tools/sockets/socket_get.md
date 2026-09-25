@@ -18,19 +18,27 @@ when_to_use: When socket_list returns an id worth inspecting more closely.
 
 ## How it works
 
-Live: re-fetches the full socket profile and finds the id (cheap; profile is small).
-History: single-row SQL lookup.
+The session resolves like `socket_list` (`sessionId`, else `appNameContains`, else the `session_open` view, else the sole attached session, else a default pick among several attached).
+
+Live (the scope is a session attached to this server): re-fetches the socket profile and finds the id (cheap; profile is small). It reads the isolate named by `isolateId`, else the isolate recorded for this socket in the DB, else every HTTP-profiling isolate. If the socket is no longer in the live profile (closed/collected) or every isolate read failed, it returns the persisted DB copy with `source: "live-db-fallback"`, `degraded: true`, and the reason in `warnings`.
+
+History (a `session_open` view, or an explicit `sessionId` not attached here): single-row SQL lookup on `socket_events`.
 
 ## Args
 
-- `id` (string, required).
+- `id` (string, required): socket id from `socket_list`.
+- `sessionId` (int, optional): session to read. Omit to auto-resolve.
+- `appNameContains` (string, optional): pick an attached session by app-name substring instead of `sessionId`; must match exactly one.
+- `isolateId` (string, optional): isolate to read in live mode. Omit to auto-resolve.
 
 ## Returns
 
 ```json
 {
   "source": "history",
+  "scope": {"sessionId": 14, "isLive": false},
   "sessionId": 14,
+  "isolateId": "isolates/1234",
   "summary": "TCP api.example.com:443 — 12345 bytes read, 456 bytes written (open).",
   "id": "...",
   "socketType": "tcp",
@@ -48,7 +56,9 @@ History: single-row SQL lookup.
 }
 ```
 
-Null timing fields are omitted.
+Null timing fields (`startTimeUs` in history, `endTimeUs`, `lastReadTimeUs`, `lastWriteTimeUs`) and a null `isolateId` are omitted. The `network_list hostContains:` nextStep needs the http capability and a known address; the re-call hint appears only while the socket is open.
+
+Errors: missing `id` returns `bad_argument`. Socket profiling off for a live session returns `capability_disabled`. An id found neither live nor in the DB returns `not_found` (history, or live with `triedIsolates`); in live mode, when every isolate read failed and there is no DB copy, it returns `unresponsive_vm` with `triedIsolates`. Scope failures (nothing attached or opened, no `appNameContains` match, several matches) return an error with `nextSteps` but no `errorKind`.
 
 ## Pairs well with
 

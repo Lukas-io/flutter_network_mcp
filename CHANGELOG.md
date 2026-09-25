@@ -6,6 +6,43 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added: body decryption for app-encrypted bodies (#110, #111)
+
+- `session_configure bodyDecryption:{...}` sets an AES-CTR scheme (`aes-256-ctr` or `aes-128-ctr`; key as utf8, hex or base64; payload as hex, base64 or raw; IV as prefix, suffix, or infused at `ivOffset`). Hex offsets count hex characters; base64 and raw offsets count decoded bytes. `{off:true}` or `clear:true` turns it off.
+- The key stays in process memory and is never written to the capture DB. Replies show `keyFingerprint` (first 12 hex characters of its SHA-256), never the key.
+- `network_get`, `network_body`, `network_body_outline` and `network_body_query` return plaintext with `decrypted: true`. A body that does not fit the scheme comes back as captured with `decrypted: false` and a `decryptionFailed` reason. `network_diff` and `network_drift` compare the decrypted bodies.
+- `network_search` and `network_correlate` match plaintext through an in-memory FTS index, built per session on first use and dropped when the key changes, decryption is turned off, or the process exits. Nothing decrypted is persisted (#111 replaced #110's on-disk reindex).
+- `network_replay`, `network_replay_as_test` and HAR export keep the original bytes.
+- New dependency: `pointycastle`.
+
+### Fixed: attach and wait_for_app (#108)
+
+- VM service URIs are canonicalised (`ws://host:port/token/ws` and `http://host:port/token/` are one app), so the same app can no longer be attached twice under two spellings.
+- `network_attach` on an app that is already attached returns success with `alreadyAttached: true` and that session's id instead of an error.
+- `network_wait_for_app` returns straight away (`bad_argument`) when several apps match or the session cap is reached, treats an already-attached app as success, and without `appNameContains` looks across every running DTD.
+- The continuation hint uses the real exit time, and a failed DTD probe is no longer read as the app having exited.
+- A pending body read from a history view is called unrecoverable only once its session row has ended.
+
+### Fixed: logs_tail keeps developer.log messages whole (#109)
+
+- Message, logger name, error and stack trace are refetched past the VM's 128-character preview before storing, and a non-String `error:` is stored via `toString()`. When the VM cannot expand a value, the text says how much it cut.
+- `messageTruncateBytes` counts characters (64 to 65536, default 2048), and `truncated` / `totalLength` now reflect real cuts.
+
+### Fixed: sessions shared across server processes (#107, schema v13)
+
+- New `session_attachments` table: a session row ends only when the last server process capturing into it leaves, and the startup sweep no longer ends rows another live process holds. `network_detach` says when a session stays open and sets `stillCapturedByOtherProcess`.
+- Log records are de-duplicated across processes (`log_records.dedup_key`).
+- Two processes opening the same DB at once no longer fail with `database is locked`.
+- DBs created fresh at v12 get the live-URI unique index they were missing.
+
+### Fixed: bounded teardown body flush (#106)
+
+- The body flush on detach or app exit now keeps to its 3 s deadline: each pending body is tried once, each fetch has a 1 s timeout, and the flush stops as soon as the VM disconnects.
+
+### Docs
+
+- Refreshed the per-tool guides against the code, and added guides for `network_wait_for_app`, `network_replay_as_test`, `network_diff_session`, `network_drift` and `network_report`.
+
 ### Added — alert retention (auto-expire old alerts)
 
 The pending-alerts banner grew unbounded over weeks of use (observed at 14k+). New `AlertRetention` service auto-expires alerts from **non-attached** sessions older than a configurable window, so the banner reflects recent state instead of accumulated noise. A currently-attached session keeps all its alerts regardless of age. Window via `FLUTTER_NETWORK_MCP_ALERT_RETENTION_DAYS` (default **14**, `0` = keep forever); runtime-tunable via `alerts_config set:{retentionDays:N}`; surfaced in `db_stats.alertRetention`. Runs a deferred first sweep on start + hourly, independent of attach. Delete-based (cross-session `priorOccurrences` still works within the window). +5 tests.
