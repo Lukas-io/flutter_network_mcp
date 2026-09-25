@@ -14,6 +14,7 @@ import '../util/scope.dart';
 import '../util/guidance.dart';
 import 'error_kind.dart';
 import 'result.dart';
+import 'body_fetch.dart';
 
 final networkGetTool = Tool(
   name: 'network_get',
@@ -237,10 +238,10 @@ CallToolResult _buildLiveResponse({
       : firstHeader(r.request?.headers, 'content-type');
   final respCt = firstHeader(r.response?.headers, 'content-type');
   final reqBody = includeBodies
-      ? decodeBody(r.requestBody, reqCt, maxBytes: maxBytes)?.toJson()
+      ? readableBodyJson(r.requestBody, reqCt, maxBytes: maxBytes)
       : null;
   final respBody = includeBodies
-      ? decodeBody(r.responseBody, respCt, maxBytes: maxBytes)?.toJson()
+      ? readableBodyJson(r.responseBody, respCt, maxBytes: maxBytes)
       : null;
 
   // Classify body presence (#59) from the persisted row when available, so a
@@ -371,8 +372,8 @@ FutureOr<CallToolResult> _historyGet({
     final respCt = row['content_type'] as String? ?? firstHeader(respHeaders, 'content-type');
     final reqBlob = includeBodies ? dao.getBody(sid, id, 'request') : null;
     final respBlob = includeBodies ? dao.getBody(sid, id, 'response') : null;
-    final reqBody = reqBlob == null ? null : decodeBody(reqBlob, reqCt, maxBytes: maxBytes)?.toJson();
-    final respBody = respBlob == null ? null : decodeBody(respBlob, respCt, maxBytes: maxBytes)?.toJson();
+    final reqBody = readableBodyJson(reqBlob, reqCt, maxBytes: maxBytes);
+    final respBody = readableBodyJson(respBlob, respCt, maxBytes: maxBytes);
 
     final startUs = row['start_us'] as int?;
     final endUs = row['end_us'] as int?;

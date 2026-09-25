@@ -94,6 +94,7 @@ FutureOr<CallToolResult> networkBodyOutline(CallToolRequest request) async {
     final bytes = fetch.bytes;
     final mimeType = fetch.mimeType;
     final source = fetch.source;
+    final decryption = fetch.decryption;
 
     if (bytes == null || bytes.isEmpty) {
       return noBodyResult(scope, id, which, source, mimeType);
@@ -120,6 +121,7 @@ FutureOr<CallToolResult> networkBodyOutline(CallToolRequest request) async {
       );
       return jsonResult({
         'source': source,
+        ...decryption,
         'scope': scope.toBlock(),
         'sessionId': scope.sessionId,
         'summary':
@@ -143,6 +145,7 @@ FutureOr<CallToolResult> networkBodyOutline(CallToolRequest request) async {
 
     return jsonResult({
       'source': source,
+      ...decryption,
       'scope': scope.toBlock(),
       'sessionId': scope.sessionId,
       'summary':
