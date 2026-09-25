@@ -10,6 +10,7 @@ import '../util/http_timing.dart';
 import 'database.dart';
 import '../util/searchable_text.dart';
 import '../util/body_decoder.dart';
+import '../util/secret_redactor.dart';
 
 /// Typed accessors for the captures database. Holds no state of its own —
 /// all calls go directly through [CapturesDatabase.instance].
@@ -253,11 +254,12 @@ class CapturesDao {
     HttpProfileRequest r, {
     String? isolateId,
   }) {
+    final secretNames = storeSecrets() ? const <String>{} : _cachedRedactedHeaderSet();
     final headersReq = r.request != null && !r.request!.hasError
-        ? jsonEncode(r.request!.headers ?? {})
+        ? jsonEncode(redactHeaderValues(r.request!.headers ?? {}, secretNames))
         : null;
     final headersResp = r.response != null && !r.response!.hasError
-        ? jsonEncode(r.response!.headers ?? {})
+        ? jsonEncode(redactHeaderValues(r.response!.headers ?? {}, secretNames))
         : null;
     final contentType = _firstHeader(r.response?.headers, 'content-type') ??
         _firstHeader(r.request?.headers, 'content-type');
@@ -1890,6 +1892,7 @@ class CapturesDao {
   }
 
   bool addRedactedHeader(String name, {String? reason}) {
+    _redactedCache = null;
     final norm = name.trim().toLowerCase();
     if (norm.isEmpty) throw ArgumentError('header name cannot be empty');
     final before = _db.select('SELECT 1 FROM redacted_headers WHERE name=?', [norm]);
@@ -1902,6 +1905,7 @@ class CapturesDao {
   }
 
   bool removeRedactedHeader(String name) {
+    _redactedCache = null;
     final norm = name.trim().toLowerCase();
     final before = _db.select('SELECT 1 FROM redacted_headers WHERE name=?', [norm]);
     if (before.isEmpty) return false;
@@ -1924,6 +1928,20 @@ class CapturesDao {
     'x-api-key',
     'x-auth-token',
   ];
+
+  static ({Set<String> names, DateTime at})? _redactedCache;
+
+  /// [redactedHeaderSet], re-read at most every 30 s so the capture path does not query it per request.
+  Set<String> _cachedRedactedHeaderSet() {
+    final cached = _redactedCache;
+    if (cached != null &&
+        DateTime.now().difference(cached.at) < const Duration(seconds: 30)) {
+      return cached.names;
+    }
+    final names = redactedHeaderSet();
+    _redactedCache = (names: names, at: DateTime.now());
+    return names;
+  }
 
   /// Returns the lowercase set of header names that should be redacted.
   /// Always includes the built-in defaults.
@@ -1983,13 +2001,31 @@ class CapturesDao {
       throw ArgumentError('Multiple statements are not allowed.');
     }
     final result = _db.select('SELECT * FROM ($trimmed) LIMIT $rowCap');
-    return result.map((r) => _capRow(r, cellMaxChars)).toList();
+    final secretNames = redactedHeaderSet();
+    return result.map((r) => _capRow(r, cellMaxChars, secretNames)).toList();
   }
 
-  Map<String, Object?> _capRow(sql.Row r, int cellMaxChars) {
+  /// Masks a header map's secret values, even under an aliased column, and token or password patterns in any text.
+  static String _redactCell(String v, Set<String> secretNames) {
+    if (v.startsWith('{')) {
+      try {
+        final decoded = jsonDecode(v);
+        if (decoded is Map<String, dynamic>) {
+          v = jsonEncode(redactHeaderValues(decoded, secretNames));
+        }
+      } on FormatException {
+        // Not JSON; pattern masking below still applies.
+      }
+    }
+    return redactSecrets(v);
+  }
+
+  Map<String, Object?> _capRow(
+      sql.Row r, int cellMaxChars, Set<String> secretNames) {
     final out = <String, Object?>{};
     for (final k in r.keys) {
-      final v = r[k];
+      var v = r[k];
+      if (v is String) v = _redactCell(v, secretNames);
       if (v is List<int> || v is Uint8List) {
         final len = (v as List<int>).length;
         out[k] = {'type': 'blob', 'size': len};

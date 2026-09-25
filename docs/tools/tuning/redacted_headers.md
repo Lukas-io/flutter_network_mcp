@@ -1,6 +1,6 @@
 ---
 tool: redacted_headers
-description: Manage the header names masked as <redacted> in network_get, network_replay, network_replay_as_test, network_diff and redacted session exports. Adds to a built-in set; safe by default.
+description: Manage the header names whose values are masked as <redacted> when captured and in every read, replay, diff, export and SQL result. Adds to a built-in set; safe by default.
 when_to_use: When the project has custom auth/sensitive headers (X-Tenant-Key, X-Internal-Auth) that should be masked in shared curls.
 ---
 
@@ -8,8 +8,8 @@ when_to_use: When the project has custom auth/sensitive headers (X-Tenant-Key, X
 
 - The header is one of the built-in defaults (`authorization`, `cookie`, `proxy-authorization`, `set-cookie`, `x-api-key`, `x-auth-token`): always redacted. Adding one is a no-op (success with a warning); removing one is refused.
 - You want to redact bodies: this only affects headers. Bodies cannot be edited in place (`network_query` is read-only); `bodies_purge` deletes stored bodies.
-- You want capture-time redaction: this applies when a tool renders headers. Original header values stay in the DB.
-- Local debugging with `redact:false` on `network_get`, `network_replay` or `network_replay_as_test`: that bypasses redaction entirely; this list is irrelevant.
+- You want the real values kept for local replay: set `FLUTTER_NETWORK_MCP_STORE_SECRETS=true` before capturing. Otherwise values of these headers are stored as `<redacted>`, and a name added here applies to requests captured from then on (within about 30 seconds).
+- Local debugging with `redact:false` on `network_get`, `network_replay` or `network_replay_as_test`: that shows whatever the capture stored, which is `<redacted>` for these headers unless `FLUTTER_NETWORK_MCP_STORE_SECRETS=true` was set.
 
 ## Use this when
 
@@ -21,7 +21,8 @@ when_to_use: When the project has custom auth/sensitive headers (X-Tenant-Key, X
 Names are trimmed and lowercased before storing and before the built-in check, and matched case-insensitively. Every consumer reads `redactedHeaderSet()` (built-ins + extras) on each call, so changes take effect immediately:
 - `network_get`, `network_replay`, `network_replay_as_test`: redact by default; `redact:false` shows real values.
 - `network_diff`: always redacts in the header diff.
-- `session_export`: only when called with `redact:true` (its default is false).
+- `session_export`: by default (`redact:false` turns it off).
+- `network_query`: always, including header maps under an aliased column.
 
 Extras persist in the DB across restarts. The tool exists only when the `admin` capability is enabled.
 

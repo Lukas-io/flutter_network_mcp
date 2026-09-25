@@ -10,6 +10,7 @@ import 'package:flutter_network_mcp/src/tools/network_replay.dart';
 import 'package:flutter_network_mcp/src/tools/redacted_headers.dart';
 import 'package:flutter_network_mcp/src/tools/session_export.dart';
 import 'package:test/test.dart';
+import 'package:vm_service/vm_service.dart';
 
 /// D5 (audit RC9/F7): redaction is a serialization-layer policy. A secret
 /// auth header must never appear in get/diff/replay output, or in a HAR
@@ -99,12 +100,72 @@ void main() {
     expect(har, contains('<redacted>'));
   });
 
-  test('HAR export is faithful (unredacted) by default', () async {
-    final out = '${dir.path}/raw.har';
+  test('HAR export is redacted by default', () async {
+    final out = '${dir.path}/default.har';
     await sessionExport(CallToolRequest(
         name: 'session_export',
         arguments: {'id': sid, 'format': 'har', 'outPath': out}));
+    final har = File(out).readAsStringSync();
+    expect(har, isNot(contains('SUPER-SECRET')));
+    expect(har, isNot(contains('SESSION-COOKIE')));
+  });
+
+  test('HAR export redact:false keeps what the capture stored', () async {
+    final out = '${dir.path}/raw.har';
+    await sessionExport(CallToolRequest(
+        name: 'session_export',
+        arguments: {'id': sid, 'format': 'har', 'outPath': out, 'redact': false}));
     expect(File(out).readAsStringSync(), contains('SUPER-SECRET'));
+  });
+
+  test('a redacted export masks tokens and passwords inside bodies', () async {
+    CapturesDatabase.instance.raw.execute(
+      "INSERT INTO http_bodies(session_id, vm_id, which, bytes, size) VALUES (?,?,?,?,?)",
+      [sid, 'r1', 'response',
+        utf8.encode('{"access_token":"eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U","password":"hunter2","name":"Ada"}'),
+        120],
+    );
+    final out = '${dir.path}/bodies.har';
+    await sessionExport(CallToolRequest(
+        name: 'session_export',
+        arguments: {'id': sid, 'format': 'har', 'outPath': out}));
+    final har = File(out).readAsStringSync();
+    expect(har, isNot(contains('hunter2')));
+    expect(har, isNot(contains('eyJhbGci')));
+    expect(har, contains('Ada'));
+  });
+
+  test('network_query output never shows secret header values or tokens', () {
+    final rows = dao.rawSelect(
+        "SELECT request_headers_json AS h, response_headers_json FROM http_requests WHERE vm_id='r1'");
+    final text = jsonEncode(rows);
+    expect(text, isNot(contains('SUPER-SECRET')));
+    expect(text, isNot(contains('SESSION-COOKIE')));
+    expect(text, contains('application/json'));
+  });
+
+  test('captured secret headers are stored redacted', () {
+    dao.upsertHttpRequest(
+      sid,
+      HttpProfileRequest(
+        id: 'live1',
+        isolateId: 'i1',
+        method: 'GET',
+        uri: Uri.parse('https://api.x/me'),
+        events: const [],
+        startTime: DateTime.fromMicrosecondsSinceEpoch(2000),
+        request: HttpProfileRequestData.buildSuccessfulRequest(
+          headers: {'authorization': ['Bearer LIVE-TOKEN-777'], 'accept': ['*/*']},
+          cookies: const [],
+        ),
+      ),
+    );
+    final stored = CapturesDatabase.instance.raw
+        .select("SELECT request_headers_json FROM http_requests WHERE vm_id='live1'")
+        .first['request_headers_json'] as String;
+    expect(stored, isNot(contains('LIVE-TOKEN')));
+    expect(stored, contains('<redacted>'));
+    expect(stored, contains('*/*'));
   });
 
   test('HAR export redact:true masks response cookies', () async {

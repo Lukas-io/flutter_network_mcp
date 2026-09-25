@@ -1,41 +1,26 @@
-/// Strips filesystem identity from arbitrary text — typically Dart stack
-/// frames — so it's safe to ship off the user's machine.
-///
-/// Two threats to handle:
-/// 1. **POSIX `$HOME` paths**: `/Users/lukasio/StudioProjects/eats_mobile/lib/main.dart`
-///    leaks the username, project name, and parent dir layout.
-/// 2. **Windows `%USERPROFILE%` paths**: `C:\Users\lukasio\code\app\lib\main.dart`
-///    same problem.
-///
-/// The redactor replaces:
-/// - `/Users/<name>/StudioProjects/<project>/...` → `<project>/...`
-/// - `/Users/<name>/...` → `<home>/...`
-/// - `C:\Users\<name>\<project>\...` → `<project>\...`
-/// - `C:\Users\<name>\...` → `<home>\...`
-///
-/// `package:` URIs in stack frames are left untouched — they're already
-/// package-relative and contain no filesystem identity (`package:
-/// flutter_network_mcp/src/auto_attach.dart:189` is exactly what we want
-/// the collector to see).
-///
-/// Idempotent: running the redactor twice produces the same output.
-String redactPath(String input) {
+import 'dart:io';
+
+import '../util/secret_redactor.dart';
+
+/// Strips filesystem identity (username, project name, directory layout) from text that leaves the machine: telemetry, issue bodies.
+/// `<home>/…/lib/x.dart` collapses to `<project>/lib/x.dart`; `package:` URIs are untouched; idempotent.
+String redactPath(String input, {String? home}) {
   if (input.isEmpty) return input;
   var s = input;
-  s = s.replaceAllMapped(_posixStudioProjectsRegex, (m) {
-    return '<project:${m.group(1)}>/';
-  });
-  s = s.replaceAllMapped(_windowsStudioProjectsRegex, (m) {
-    return r'<project:' '${m.group(1)}' r'>\';
-  });
+  final h = home ?? _homeDir();
+  if (h != null && h.length > 1) {
+    s = s.replaceAll(
+        '$h${Platform.pathSeparator}', '<home>${Platform.pathSeparator}');
+    s = s.replaceAll('$h/', '<home>/');
+  }
   s = s.replaceAll(_posixHomeRegex, '<home>/');
   s = s.replaceAll(_windowsHomeRegex, r'<home>\');
+  s = s.replaceAllMapped(_posixProjectRegex, (m) => '<project>/${m[1]}/');
+  s = s.replaceAllMapped(_windowsProjectRegex, (m) => '<project>\\${m[1]}\\');
   return s;
 }
 
-/// Redacts every line of a Dart stack trace. Splits on `\n`, redacts each
-/// line independently, keeps the first [maxFrames] frames. Used by the
-/// telemetry payload builder to ship a bounded `stackHead`.
+/// Redacts every line of a Dart stack trace, keeping the first [maxFrames] frames.
 List<String> redactStackHead(StackTrace stack, {int maxFrames = 8}) {
   final lines = stack.toString().split('\n');
   final head = <String>[];
@@ -48,19 +33,20 @@ List<String> redactStackHead(StackTrace stack, {int maxFrames = 8}) {
   return head;
 }
 
-/// `/Users/<name>/StudioProjects/<project>/` — captures the project name
-/// so we can preserve it as a non-identifying label.
-final RegExp _posixStudioProjectsRegex =
-    RegExp(r'/Users/[^/]+/StudioProjects/([^/]+)/');
+/// [redactPath] and [redactSecrets] together, for anything posted publicly.
+String redactForSharing(String input) => redactSecrets(redactPath(input));
 
-/// Generic POSIX homedir fallback.
-final RegExp _posixHomeRegex = RegExp(r'/Users/[^/]+/');
+String? _homeDir() {
+  final env = Platform.environment;
+  final h = Platform.isWindows ? env['USERPROFILE'] : env['HOME'];
+  if (h == null || h.isEmpty) return null;
+  return h.endsWith('/') || h.endsWith(r'\') ? h.substring(0, h.length - 1) : h;
+}
 
-/// `C:\Users\<name>\StudioProjects\<project>\` — Windows analog of the
-/// POSIX rule. Captures the project name under StudioProjects so we keep
-/// the non-identifying label.
-final RegExp _windowsStudioProjectsRegex =
-    RegExp(r'C:\\Users\\[^\\]+\\StudioProjects\\([^\\]+)\\');
-
-/// Generic Windows homedir fallback.
-final RegExp _windowsHomeRegex = RegExp(r'C:\\Users\\[^\\]+\\');
+final RegExp _posixHomeRegex =
+    RegExp(r'(?:/Users/[^/\s]+|/home/[^/\s]+|/root)/');
+final RegExp _windowsHomeRegex = RegExp(r'[A-Za-z]:\\Users\\[^\\\s]+\\');
+final RegExp _posixProjectRegex =
+    RegExp(r'<home>/(?:[^/\s()]+/)*?(lib|test|bin|integration_test|tool)/');
+final RegExp _windowsProjectRegex =
+    RegExp(r'<home>\\(?:[^\\\s()]+\\)*?(lib|test|bin|integration_test|tool)\\');
