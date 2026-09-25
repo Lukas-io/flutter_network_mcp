@@ -1,0 +1,25 @@
+{
+ "version": 4,
+ "statements": [
+  "  CREATE TABLE sessions (\n    id            INTEGER PRIMARY KEY AUTOINCREMENT,\n    started_at    INTEGER NOT NULL,\n    ended_at      INTEGER,\n    app_name      TEXT,\n    vm_service_uri TEXT,\n    isolate_id    TEXT,\n    project_path  TEXT,\n    note          TEXT\n  )\n  ",
+  "  CREATE TABLE http_requests (\n    session_id            INTEGER NOT NULL,\n    vm_id                 TEXT NOT NULL,\n    isolate_id            TEXT,\n    method                TEXT,\n    url                   TEXT,\n    host                  TEXT,\n    path                  TEXT,\n    status_code           INTEGER,\n    reason_phrase         TEXT,\n    start_us              INTEGER,\n    end_us                INTEGER,\n    duration_us           INTEGER,\n    request_size          INTEGER,\n    response_size         INTEGER,\n    content_type          TEXT,\n    request_headers_json  TEXT,\n    response_headers_json TEXT,\n    has_error             INTEGER NOT NULL DEFAULT 0,\n    bodies_fetched        INTEGER NOT NULL DEFAULT 0,\n    PRIMARY KEY (session_id, vm_id),\n    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE\n  )\n  ",
+  "  CREATE TABLE http_bodies (\n    session_id INTEGER NOT NULL,\n    vm_id      TEXT NOT NULL,\n    which      TEXT NOT NULL,\n    bytes      BLOB,\n    size       INTEGER,\n    PRIMARY KEY (session_id, vm_id, which),\n    FOREIGN KEY (session_id, vm_id)\n      REFERENCES http_requests(session_id, vm_id) ON DELETE CASCADE\n  )\n  ",
+  "  CREATE TABLE socket_events (\n    session_id     INTEGER NOT NULL,\n    vm_id          TEXT NOT NULL,\n    isolate_id     TEXT,\n    socket_type    TEXT,\n    address        TEXT,\n    port           INTEGER,\n    start_us       INTEGER,\n    end_us         INTEGER,\n    last_read_us   INTEGER,\n    last_write_us  INTEGER,\n    read_bytes     INTEGER,\n    write_bytes    INTEGER,\n    PRIMARY KEY (session_id, vm_id),\n    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE\n  )\n  ",
+  "  CREATE TABLE log_records (\n    id           INTEGER PRIMARY KEY AUTOINCREMENT,\n    session_id   INTEGER NOT NULL,\n    isolate_id   TEXT,\n    timestamp_ms INTEGER,\n    source       TEXT,\n    level        INTEGER,\n    logger       TEXT,\n    message      TEXT,\n    error        TEXT,\n    stack_trace  TEXT,\n    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE\n  )\n  ",
+  "  CREATE TABLE alerts (\n    id           INTEGER PRIMARY KEY AUTOINCREMENT,\n    session_id   INTEGER NOT NULL,\n    ts_ms        INTEGER NOT NULL,\n    severity     TEXT NOT NULL,\n    kind         TEXT NOT NULL,\n    title        TEXT NOT NULL,\n    detail       TEXT,\n    source_kind  TEXT,\n    source_id    TEXT,\n    drained      INTEGER NOT NULL DEFAULT 0,\n    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE,\n    UNIQUE(session_id, kind, source_id)\n  )\n  ",
+  "  CREATE TABLE ignored_hosts (\n    host      TEXT PRIMARY KEY,\n    added_at  INTEGER NOT NULL,\n    reason    TEXT\n  )\n  ",
+  "  CREATE VIRTUAL TABLE http_search USING fts5(\n    url, content_request, content_response,\n    tokenize='unicode61'\n  )\n  ",
+  "  CREATE TABLE http_search_map (\n    rowid       INTEGER PRIMARY KEY,\n    session_id  INTEGER NOT NULL,\n    vm_id       TEXT NOT NULL,\n    isolate_id  TEXT,\n    UNIQUE(session_id, vm_id)\n  )\n  ",
+  "CREATE INDEX idx_http_session_start ON http_requests(session_id, start_us)",
+  "CREATE INDEX idx_http_host ON http_requests(host)",
+  "CREATE INDEX idx_http_status ON http_requests(status_code)",
+  "CREATE INDEX idx_http_isolate ON http_requests(session_id, isolate_id)",
+  "CREATE INDEX idx_socket_session_start ON socket_events(session_id, start_us)",
+  "CREATE INDEX idx_logs_session_time ON log_records(session_id, timestamp_ms)",
+  "CREATE INDEX idx_logs_level ON log_records(level)",
+  "CREATE INDEX idx_logs_isolate ON log_records(session_id, isolate_id)",
+  "CREATE INDEX idx_alerts_drained ON alerts(drained, severity, ts_ms)",
+  "  CREATE TABLE redacted_headers (\n    name      TEXT PRIMARY KEY,\n    added_at  INTEGER NOT NULL,\n    reason    TEXT\n  )\n  ",
+  "  CREATE TABLE alert_patterns (\n    id        INTEGER PRIMARY KEY AUTOINCREMENT,\n    kind      TEXT NOT NULL,\n    regex     TEXT NOT NULL,\n    severity  TEXT NOT NULL,\n    label     TEXT,\n    added_at  INTEGER NOT NULL\n  )\n  "
+ ]
+}
