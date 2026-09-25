@@ -2,6 +2,7 @@ import 'dart:io' as io;
 
 import '../config/db_cap_config.dart';
 import 'captures_db.dart';
+import 'plaintext_index.dart';
 
 /// What a single eviction sweep dropped. Surfaced by `db_stats` as
 /// `lastEviction` so the loss is visible, never silent (issue #58).
@@ -61,17 +62,23 @@ class DbCapManager {
 
   /// Checks the DB size and evicts if over the cap. Returns the sweep result,
   /// or null when disabled / already under cap. [protectedSessionIds] are the
-  /// currently-attached sessions, which are never evicted. [nowMs] lets tests
-  /// pin the timestamp.
+  /// currently-attached sessions, which are never evicted; neither is a session
+  /// another live server process captures into. [nowMs] and [capBytes] let
+  /// tests pin the timestamp and the cap.
   EvictionResult? maybeSweep({
     Set<int> protectedSessionIds = const {},
     int? nowMs,
+    int? capBytes,
   }) {
-    final cap = DbCapConfig.maxBytes;
+    final cap = capBytes ?? DbCapConfig.maxBytes;
     if (cap == null) return null;
 
     final originalSize = _dao.dbSizeBytes();
     if (originalSize <= cap) return null;
+    final protected = {
+      ...protectedSessionIds,
+      ..._dao.sessionsCapturedElsewhere(),
+    };
 
     final target = (cap * 0.9).floor();
     final need = originalSize - target;
@@ -83,9 +90,10 @@ class DbCapManager {
     // 1. Oldest bodies (exact bytes freed).
     final b = _dao.evictOldestBodies(
       targetBytes: need,
-      protectedSessionIds: protectedSessionIds,
+      protectedSessionIds: protected,
     );
     bodiesDropped = b.dropped;
+    b.sessions.forEach(PlaintextIndex.instance.forget);
     var freedEstimate = b.bytesFreed;
 
     // 2. Oldest logs, if bodies were not enough.
@@ -93,7 +101,7 @@ class DbCapManager {
       final rowsNeeded = ((need - freedEstimate) / _bytesPerLogRow).ceil();
       logsDropped = _dao.evictOldestLogs(
         maxRows: rowsNeeded,
-        protectedSessionIds: protectedSessionIds,
+        protectedSessionIds: protected,
       );
       freedEstimate += logsDropped * _bytesPerLogRow;
     }
@@ -106,7 +114,7 @@ class DbCapManager {
     // the average evictable-session size so we vacuum once, not per session.
     if (size > cap) {
       final evictable =
-          _dao.sessionIdsOldestFirst(protectedSessionIds: protectedSessionIds);
+          _dao.sessionIdsOldestFirst(protectedSessionIds: protected);
       if (evictable.isNotEmpty) {
         final avg = (size / evictable.length).ceil();
         var toDrop = ((size - target) / avg).ceil();
@@ -114,6 +122,7 @@ class DbCapManager {
         if (toDrop > evictable.length) toDrop = evictable.length;
         for (var i = 0; i < toDrop; i++) {
           if (_dao.deleteSession(evictable[i])) sessionsDropped++;
+          PlaintextIndex.instance.forget(evictable[i]);
         }
         _dao.vacuum();
         size = _dao.dbSizeBytes();
@@ -139,7 +148,7 @@ class DbCapManager {
         _warnedNothingEvictable = true;
         io.stderr.writeln(
           'flutter_network_mcp: DB is ${_mb(size)}MB (> ${_mb(cap)}MB cap) but '
-          'all remaining data belongs to the attached session(s); cannot evict '
+          'all remaining data belongs to live session(s); cannot evict '
           'live data. Detach to let it be reclaimed, or raise the cap.',
         );
       }

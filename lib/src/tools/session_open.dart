@@ -53,13 +53,18 @@ FutureOr<CallToolResult> sessionOpen(CallToolRequest request) async {
     final startedMs = row['started_at'];
     final endedMs = row['ended_at'];
     final isEnded = endedMs != null;
+    final capturedElsewhere =
+        !isAttached && !isEnded && dao.otherAttachedProcesses(id) > 0;
 
     // F11 tri-state: "still live" used to mean only ended_at IS NULL, so
     // crashed/never-detached sessions read as running apps.
     final statusDesc = switch (sessionStatusLabel(
       isAttached: isAttached,
       endedAtMs: endedMs,
+      capturedElsewhere: capturedElsewhere,
     )) {
+      'live' when capturedElsewhere =>
+        'live, captured by another server process',
       'live' => 'live — capture still running',
       'ended' => 'ended',
       _ => 'interrupted — no clean end recorded (killed process or pre-0.9.17)',
@@ -91,6 +96,7 @@ FutureOr<CallToolResult> sessionOpen(CallToolRequest request) async {
       if (endedMs != null) 'endedMs': endedMs,
       'isLive': isLive,
       'isEnded': isEnded,
+      if (capturedElsewhere) 'capturedElsewhere': true,
       if (row['project_path'] != null) 'projectPath': row['project_path'],
       if (row['note'] != null) 'note': row['note'],
       if (warnings.isNotEmpty) 'warnings': warnings,

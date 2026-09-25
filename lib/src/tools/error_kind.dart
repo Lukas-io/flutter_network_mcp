@@ -36,6 +36,9 @@ enum ErrorKind {
   /// Recovery: close the other server or point this one at another data dir.
   unresponsiveDb('unresponsive_db'),
 
+  /// The session is still capturing, here or in another server process sharing the DB. Recovery: detach it first.
+  sessionInUse('session_in_use'),
+
   /// An unexpected failure with no more specific classification.
   internal('internal');
 
