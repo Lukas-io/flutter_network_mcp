@@ -60,7 +60,7 @@ Both sorted newest-first by `startTimeUs`. Null timing fields (`endTimeUs`, `las
 
 `warnings` appears when the result is empty (live: drive the app; history: the session may not have used sockets, or socket profiling was off at attach), when some isolates did not respond, and on DB fallback. nextSteps: `socket_get` on the newest socket and `network_list` when there are rows; when empty, drive the app (live) or `session_close` (history).
 
-Errors: socket profiling off for a live session returns `capability_disabled` (nextSteps: `network_status`, re-attach); a DB failure in history mode returns `internal`. Scope failures (nothing attached or opened, no `appNameContains` match, several matches) return an error with `nextSteps` but no `errorKind`.
+Errors: socket profiling off for a live session returns `capability_disabled` (nextSteps: `network_status`, re-attach); a DB failure in history mode returns `internal`. Scope failures return `no_session` (nothing attached or opened, or no attached session matches `appNameContains`) or `bad_argument` (several attached sessions match), with `nextSteps`.
 
 ## Pairs well with
 

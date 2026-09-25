@@ -28,7 +28,7 @@ Reads the session's HTTP rows from the DB (up to 100,000, newest-first by start 
 
 Bodies are exported exactly as captured. With `session_configure bodyDecryption` on, the HAR still carries the original (possibly encrypted) bytes; decryption applies only to the read tools.
 
-`redact:true` replaces the values of the redacted header set with `<redacted>` in both formats: the built-ins (`authorization`, `cookie`, `proxy-authorization`, `x-api-key`, `x-auth-token`) plus names added with `redacted_headers`. `set-cookie` is not a built-in; add it with `redacted_headers` if response cookies must not leave.
+`redact:true` replaces the values of the redacted header set with `<redacted>` in both formats: the built-ins (`authorization`, `cookie`, `proxy-authorization`, `set-cookie`, `x-api-key`, `x-auth-token`) plus names added with `redacted_headers`. Response cookies (`set-cookie`) are masked too.
 
 Both formats create parent directories and overwrite an existing file. The tool runs without the per-tool deadline, so a large session does not time out.
 

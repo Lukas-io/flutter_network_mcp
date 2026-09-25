@@ -55,7 +55,7 @@ When the `http` or `logs` capability is disabled, that side comes back as an emp
 
 nextSteps: `network_get` for the nearest item when it is a request, and `network_replay` for the nearest request whenever any request was found. With nothing found the summary is `Nothing within +/-<windowMs>ms of <tsMs>.` and nextSteps suggests raising `windowMs`.
 
-Errors: missing `tsMs` returns `errorKind: "bad_argument"` with nextSteps pointing at `logs_tail` / `network_list` for an anchor. A DB failure returns `errorKind: "internal"`. Scope errors (nothing attached or opened, ambiguous `appNameContains`) carry `nextSteps` but currently no `errorKind`.
+Errors: missing `tsMs` returns `errorKind: "bad_argument"` with nextSteps pointing at `logs_tail` / `network_list` for an anchor. A DB failure returns `errorKind: "internal"`. Scope failures return `no_session` (nothing attached or opened, or no attached session matches `appNameContains`) or `bad_argument` (several attached sessions match), with `nextSteps`.
 
 ## Pairs well with
 

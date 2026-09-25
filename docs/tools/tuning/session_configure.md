@@ -1,6 +1,6 @@
 ---
 tool: session_configure
-description: Set process-wide sticky default filters that logs_tail / network_list inherit when the arg is omitted, a default network_list token budget, and an optional body decryption scheme for app-encrypted HTTP bodies.
+description: Set process-wide sticky default filters that logs_tail / network_list inherit when the arg is omitted, a default token budget for both, and an optional body decryption scheme for app-encrypted HTTP bodies.
 when_to_use: When you'll run several logs_tail / network_list reads with the same filter and don't want to repeat it, or when the app encrypts its request/response bodies and you have the key.
 ---
 
@@ -16,7 +16,7 @@ when_to_use: When you'll run several logs_tail / network_list reads with the sam
 
 - You're investigating one app concern and every read wants the same lens: "only `[EventTracker]` logs at level ≥ 1000" or "only 4xx/5xx HTTP". Set it once here, then read without repeating the args.
 - You keep re-typing the same `messageContains` / `statusMin` on consecutive calls.
-- `network_list` replies are too large for the context and you want a standing token budget.
+- `network_list` / `logs_tail` replies are too large for the context and you want a standing token budget.
 - Captured bodies are opaque hex/base64 blobs because the app encrypts them, and the user gave you the key. Set `bodyDecryption` and read or search the plaintext.
 
 ## How it works
@@ -25,7 +25,7 @@ Holds a single in-memory set of default filters. `logs_tail` and `network_list` 
 
 `clear:true` runs first, so `clear:true levelMin:1000` resets everything and then sets `levelMin`. It also turns body decryption off.
 
-`maxResponseTokens` becomes the default for `network_list`'s `maxTokens`: the `requests` array is trimmed newest-first to fit (about 4 characters per token, at least one row kept) and the reply reports `budget.dropped`. `logs_tail` does not apply it.
+`maxResponseTokens` becomes the default for the `maxTokens` arg of `network_list` and `logs_tail`: the `requests` / `entries` array is trimmed newest-first to fit (about 4 characters per token, at least one row kept) and the reply reports `budget.dropped`.
 
 ### Body decryption
 
@@ -49,7 +49,7 @@ All optional. Pass a field to set it, pass it as `null` to unset just that field
 - `method` (string | list) — default `network_list` method(s).
 - `hostContains` (string) — default `network_list` hostContains.
 - `statusMin` / `statusMax` (int) — default `network_list` status bounds.
-- `maxResponseTokens` (int): default token budget for `network_list` (its `maxTokens` arg overrides it). A non-positive value means no budget.
+- `maxResponseTokens` (int): default token budget for `network_list` and `logs_tail` (their `maxTokens` arg overrides it). A non-positive value means no budget.
 - `clear` (bool): reset ALL sticky defaults, and turn body decryption off.
 - `bodyDecryption` (object): the decryption scheme. Fields:
   - `algorithm` (string): `aes-256-ctr` (default, 32-byte key) or `aes-128-ctr` (16-byte key).

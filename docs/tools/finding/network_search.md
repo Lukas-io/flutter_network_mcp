@@ -73,7 +73,8 @@ Errors:
 | `query` missing or blank | `bad_argument` |
 | `which` not url / request / response / any | `bad_argument` |
 | The search itself threw (`network_search failed: ...`) | `bad_query` |
-| No session could be resolved, or `appNameContains` matched none / several | none (error with `nextSteps`) |
+| No session could be resolved, or `appNameContains` matched no attached session | `no_session` |
+| `appNameContains` matched several attached sessions | `bad_argument` |
 
 ## Pairs well with
 

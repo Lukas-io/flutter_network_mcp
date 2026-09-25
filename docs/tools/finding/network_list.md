@@ -100,8 +100,9 @@ Empty reads say why: `No HTTP captured yet in ...` (nothing ever), `No NEW HTTP 
 Error shapes:
 
 ```json
-// Nothing attached and no session opened (no errorKind field)
+// Nothing attached and no session opened
 {"error":"Not attached and no session opened for viewing. Call network_attach to capture live, or session_open id:<N> to read from a historical session, or pass sessionId:<N> directly.",
+ "errorKind":"no_session",
  "nextSteps":["network_status ...", "network_attach ...", "session_list ..."]}
 
 // Live read failed and the DB fallback failed too
@@ -116,7 +117,7 @@ Error shapes:
               "session_close if the viewed session was deleted"]}
 ```
 
-When the last attached app exited, the not-attached error names that session and adds `session_open id:<n>` as the first next step. `appNameContains` matching no attached session, or several, also errors without an `errorKind` and lists the candidates. A call that runs past the per-tool deadline returns `errorKind:"timeout"`.
+When the last attached app exited, the not-attached error names that session and adds `session_open id:<n>` as the first next step. `appNameContains` matching no attached session returns `errorKind:"no_session"`, and matching several returns `bad_argument`; both list the candidates. A call that runs past the per-tool deadline returns `errorKind:"timeout"`.
 
 ## Pairs well with
 

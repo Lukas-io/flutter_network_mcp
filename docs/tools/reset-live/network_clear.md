@@ -18,9 +18,9 @@ when_to_use: To isolate one user action's traffic, OR to reset the cursor withou
 
 ## How it works
 
-Resolves the target session like the read tools (`sessionId`, else `appNameContains`, else the `session_open` view, else the sole attached session, else a default pick among several attached, reported as `scope.pickedBy` with the alternatives in `scope.others`). The target must be attached to this server. Calls `ext.dart.io.clearHttpProfile` on each of that session's HTTP-profiling isolates (or only `isolateId`) and resets that session's `lastHttpCursor` to null. The DB session row + all captured `http_requests` / `http_bodies` / `alerts` etc. stay intact.
+Resolves the target session like the read tools (`sessionId`, else `appNameContains`, else the `session_open` view, else the sole attached session, else a default pick among several attached, reported as `scope.pickedBy` with the alternatives in `scope.others`). The target must be attached to this server. Calls `ext.dart.io.clearHttpProfile` on each of that session's HTTP-profiling isolates (or only `isolateId`) and, when at least one was cleared, resets that session's `lastHttpCursor` to null. The DB session row + all captured `http_requests` / `http_bodies` / `alerts` etc. stay intact.
 
-A failed isolate does not fail the call: it is listed in `failed` with its error and counted in `warnings`, and `cleared` is still `true`. Check `clearedIsolates`.
+A failed isolate does not fail the call while another one was cleared: it is listed in `failed` with its error and counted in `warnings`, the reply carries `partial:true`, and the summary says how many of the isolates were cleared. When no isolate was cleared the call fails instead (see Errors), and the cursor is left as it was.
 
 ## Args
 
@@ -34,7 +34,7 @@ A failed isolate does not fail the call: it is listed in `failed` with its error
 {
   "cleared": true,
   "scope": {"sessionId": 14, "appName": "eats_mobile", "isLive": true},
-  "summary": "Live VM HTTP profile cleared for session 14 (eats_mobile): 1 isolate(s). Persistent DB is untouched (captured rows remain queryable).",
+  "summary": "Live VM HTTP profile cleared for session 14 (eats_mobile): 1 of 1 isolate(s). Persistent DB is untouched (captured rows remain queryable).",
   "liveSessionId": 14,
   "clearedIsolates": ["isolates/1234"],
   "warnings": ["The persistent DB is NOT cleared. Use session_delete or bodies_purge to remove historical rows."],
@@ -45,9 +45,9 @@ A failed isolate does not fail the call: it is listed in `failed` with its error
 }
 ```
 
-`failed: [{isolateId, error}]` appears only when an isolate could not be cleared.
+`failed: [{isolateId, error}]` and `partial:true` appear only when an isolate could not be cleared.
 
-Errors: a session that is not attached here (opened via `session_open`, or an explicit historical `sessionId`) returns `no_session` with nextSteps `network_attach` / `bodies_purge` / `session_delete`; a session with no known HTTP-profiling isolates returns `no_session`. Scope failures (nothing attached, no `appNameContains` match, several matches) return an error with `nextSteps` but no `errorKind`.
+Errors: a session that is not attached here (opened via `session_open`, or an explicit historical `sessionId`) returns `no_session` with nextSteps `network_attach` / `bodies_purge` / `session_delete`; a session with no known HTTP-profiling isolates returns `no_session`. When every isolate failed to clear, the call returns `cleared:false` with `failed` and `errorKind` `not_found` (the VM does not know that isolate id, for example a wrong `isolateId`) or `unresponsive_vm` (anything else); nextSteps say to retry with the app in the foreground or re-attach. Scope failures return `no_session` (nothing attached or opened, or no attached session matches `appNameContains`) or `bad_argument` (several attached sessions match), with `nextSteps`.
 
 ## Pairs well with
 

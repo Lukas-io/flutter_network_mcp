@@ -62,7 +62,7 @@ FutureOr<CallToolResult> autoAttachConfig(CallToolRequest request) async {
     default:
       return errorResult(
         'auto_attach_config: unknown action "$action". Expected '
-        'list | add | remove | clear.',
+        'list | add | remove | clear | set.',
         kind: ErrorKind.badArgument,
       );
   }
