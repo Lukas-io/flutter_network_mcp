@@ -9,21 +9,49 @@
 /// dedupe to work. Duplicating it would risk silent drift.
 library;
 
-import 'dart:convert';
 import 'dart:io' as io;
-
-import 'package:crypto/crypto.dart';
+import 'dart:math';
 
 import '../version.dart';
 import 'telemetry_constants.dart';
 
-/// `HMAC-SHA256(dataDir, kPublicSalt)[:24]`. A one-way per-machine id: the
-/// collector can dedupe installs without ever learning a value it could
-/// reverse to the user. The salt is public, the dataDir is user-specific,
-/// and HMAC's one-way property prevents inversion.
-String machineHash(String dataDir) {
-  final hmac = Hmac(sha256, utf8.encode(kPublicSalt));
-  return hmac.convert(utf8.encode(dataDir)).toString().substring(0, 24);
+/// A random id created once per install in [dataDir], sent as `machineHash`; unlike a hash of the path, it reveals nothing about the user.
+String installId(String dataDir) {
+  final file = io.File('$dataDir/install-id');
+  try {
+    final existing = file.readAsStringSync().trim();
+    if (RegExp(r'^[0-9a-f]{24}$').hasMatch(existing)) return existing;
+  } on Object {
+    // Not created yet.
+  }
+  final rnd = Random.secure();
+  final id = [
+    for (var i = 0; i < 12; i++)
+      rnd.nextInt(256).toRadixString(16).padLeft(2, '0'),
+  ].join();
+  try {
+    io.Directory(dataDir).createSync(recursive: true);
+    file.writeAsStringSync(id);
+  } on Object {
+    // Unwritable data dir: the id lives for this run only.
+  }
+  return id;
+}
+
+/// Why nothing is sent, or null when the user opted in with `FLUTTER_NETWORK_MCP_TELEMETRY=on` and nothing overrides it. [usage] also honours `FLUTTER_NETWORK_MCP_NO_USAGE`.
+String? sharingOffReason({Map<String, String>? env, bool usage = false}) {
+  final e = env ?? io.Platform.environment;
+  if (truthyEnv(e['FLUTTER_NETWORK_MCP_NO_TELEMETRY'])) {
+    return 'FLUTTER_NETWORK_MCP_NO_TELEMETRY is set';
+  }
+  if (usage && truthyEnv(e['FLUTTER_NETWORK_MCP_NO_USAGE'])) {
+    return 'FLUTTER_NETWORK_MCP_NO_USAGE is set';
+  }
+  if (truthyEnv(e['DO_NOT_TRACK'])) return 'DO_NOT_TRACK is set';
+  if (!truthyEnv(e['FLUTTER_NETWORK_MCP_TELEMETRY'])) {
+    return 'off by default; set FLUTTER_NETWORK_MCP_TELEMETRY=on to share';
+  }
+  return null;
 }
 
 /// `"macos 14.6"`, operating system + truncated version. Long Linux
