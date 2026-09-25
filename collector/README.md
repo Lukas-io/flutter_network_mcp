@@ -5,7 +5,7 @@ A single Cloudflare Worker + D1 database that receives the two payload kinds the
 - **usage rollups** (issue #79): per-tool counts, outcome + latency stats, and the tool→next-tool transition graph. This is the "how are agents using the tools?" data.
 - **crash reports** (0.7.1): anonymized uncaught-error reports.
 
-Both are keyed by `machine_hash` (a one-way HMAC per install). No PII, URLs, bodies, or arg values are ever sent; see [`docs/CRASH_REPORTING.md`](../docs/CRASH_REPORTING.md).
+Both are keyed by `machine_hash` (a random id created once per install). No PII, URLs, bodies, or arg values are ever sent; see [`docs/telemetry.md`](../docs/telemetry.md).
 
 ## Files
 
@@ -143,5 +143,5 @@ Cloudflare free tier: 100K D1 writes/day + 100K Worker requests/day. A rollup sh
 
 ## Notes
 
-- v1 has no auth. The only identifier is the one-way `machine_hash`; payloads carry nothing sensitive. If abuse appears, add a shared-secret header check in `worker.js` (the binary holds the public salt; you hold the HMAC secret here).
+- v1 has no auth. The only identifier is `machine_hash`, a random id per install; payloads carry nothing sensitive. If abuse appears, add a shared-secret header check in `worker.js`.
 - The worker accepts the rollup/crash shapes as built by `UsageReporter.buildUsagePayload` and `buildTelemetryPayload`. If those payloads change, update `schema.sql` + the INSERTs together.
