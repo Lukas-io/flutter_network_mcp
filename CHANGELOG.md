@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-09-25
+
 ### Added: automatic backup before a schema upgrade
 
 - Before upgrading an existing `captures.db` to a newer schema, the server copies it to `captures.db.pre-v<N>.bak` in the same directory (a consistent snapshot, safe while other server processes have the database open). The newest copy replaces older ones, and copies older than 14 days are deleted at startup. Set `FLUTTER_NETWORK_MCP_NO_MIGRATION_BACKUP=true` to skip it.
