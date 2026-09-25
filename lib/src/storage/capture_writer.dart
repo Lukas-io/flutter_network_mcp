@@ -1,7 +1,5 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io' as io;
-import 'dart:typed_data';
 
 import 'package:vm_service/vm_service.dart';
 
@@ -13,6 +11,7 @@ import '../util/body_decoder.dart';
 import '../vm/vm_client.dart';
 import 'captures_db.dart';
 import 'db_cap.dart';
+import '../util/searchable_text.dart';
 
 /// Periodically polls the VM service and writes HTTP + socket data into the
 /// captures DB. Also drives the alert detector on each upserted request and
@@ -412,25 +411,9 @@ class CaptureWriter {
       vmId: detail.id,
       isolateId: isolateId,
       url: url,
-      requestText: _safeUtf8(detail.requestBody, reqCt),
-      responseText: _safeUtf8(detail.responseBody, respCt),
+      requestText: searchableText(detail.requestBody, reqCt),
+      responseText: searchableText(detail.responseBody, respCt),
     );
   }
 
-  String? _safeUtf8(Uint8List? bytes, String? contentType) {
-    if (bytes == null || bytes.isEmpty) return null;
-    final ct = contentType?.toLowerCase() ?? '';
-    final textish = ct.contains('json') ||
-        ct.contains('xml') ||
-        ct.contains('text') ||
-        ct.contains('javascript') ||
-        ct.contains('graphql') ||
-        ct.contains('form-urlencoded');
-    if (!textish) return null;
-    try {
-      return utf8.decode(bytes, allowMalformed: true);
-    } catch (_) {
-      return null;
-    }
-  }
 }

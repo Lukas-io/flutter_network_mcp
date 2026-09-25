@@ -106,6 +106,7 @@ FutureOr<CallToolResult> networkBodyQuery(CallToolRequest request) async {
     final bytes = fetch.bytes;
     final mimeType = fetch.mimeType;
     final source = fetch.source;
+    final decryption = fetch.decryption;
 
     if (bytes == null || bytes.isEmpty) {
       return noBodyResult(scope, id, which, source, mimeType);
@@ -118,6 +119,7 @@ FutureOr<CallToolResult> networkBodyQuery(CallToolRequest request) async {
         id: id,
         which: which,
         source: source,
+        decryption: decryption,
         mimeType: mimeType,
         bytes: bytes,
         total: total,
@@ -133,6 +135,7 @@ FutureOr<CallToolResult> networkBodyQuery(CallToolRequest request) async {
       id: id,
       which: which,
       source: source,
+      decryption: decryption,
       mimeType: mimeType,
       bytes: bytes,
       total: total,
@@ -158,6 +161,7 @@ CallToolResult _grep({
   required String id,
   required String which,
   required String source,
+  Map<String, Object?> decryption = const {},
   required String? mimeType,
   required List<int> bytes,
   required int total,
@@ -209,6 +213,7 @@ CallToolResult _grep({
   final truncated = totalMatches > matches.length;
   return jsonResult({
     'source': source,
+    ...decryption,
     'scope': scope.toBlock(),
     'sessionId': scope.sessionId,
     'summary': totalMatches == 0
@@ -235,6 +240,7 @@ CallToolResult _jsonPath({
   required String id,
   required String which,
   required String source,
+  Map<String, Object?> decryption = const {},
   required String? mimeType,
   required List<int> bytes,
   required int total,
@@ -284,6 +290,7 @@ CallToolResult _jsonPath({
   final truncated = totalHits > shown.length;
   return jsonResult({
     'source': source,
+    ...decryption,
     'scope': scope.toBlock(),
     'sessionId': scope.sessionId,
     'summary': totalHits == 0

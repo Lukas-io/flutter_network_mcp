@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:dart_mcp/server.dart';
 
+import '../config/body_decryption.dart';
 import '../config/capabilities.dart';
 import '../storage/captures_db.dart';
 import '../util/filters.dart';
@@ -74,6 +75,16 @@ FutureOr<CallToolResult> networkSearch(CallToolRequest request) async {
   final sessionId = scope.sessionId;
   final isolateId = args['isolateId'] as String?;
   final limit = clampLimit(args['limit'] as int?, fallback: 20, hardMax: 100);
+
+  // Bodies captured before decryption was turned on hold ciphertext in the index until reindexed.
+  if (BodyDecryptionConfig.active != null &&
+      BodyDecryptionConfig.reindexedSessions.add(sessionId)) {
+    try {
+      CapturesDao().reindexSessionBodies(sessionId);
+    } catch (_) {
+      BodyDecryptionConfig.reindexedSessions.remove(sessionId);
+    }
+  }
 
   try {
     final rows = CapturesDao().searchRequests(

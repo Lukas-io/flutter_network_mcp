@@ -9,6 +9,7 @@ import '../util/body_decoder.dart';
 import '../util/scope.dart';
 import 'error_kind.dart';
 import 'result.dart';
+import 'body_fetch.dart';
 
 final networkDiffTool = Tool(
   name: 'network_diff',
@@ -111,8 +112,14 @@ FutureOr<CallToolResult> networkDiff(CallToolRequest request) async {
     final ctB = b['content_type'] as String?;
     final bodyA = dao.getBody(sessionId, idA, 'response');
     final bodyB = dao.getBody(sessionId, idB, 'response');
-    final textA = bodyA == null ? null : decodeBody(bodyA, ctA, maxBytes: -1, semantic: false);
-    final textB = bodyB == null ? null : decodeBody(bodyB, ctB, maxBytes: -1, semantic: false);
+    final readableA = bodyA == null ? null : bodyForReading(bodyA, ctA);
+    final readableB = bodyB == null ? null : bodyForReading(bodyB, ctB);
+    final textA = readableA == null
+        ? null
+        : decodeBody(readableA.bytes, readableA.mimeType, maxBytes: -1, semantic: false);
+    final textB = readableB == null
+        ? null
+        : decodeBody(readableB.bytes, readableB.mimeType, maxBytes: -1, semantic: false);
 
     Map<String, Object?>? bodyDiff;
     if (textA?.encoding == 'utf8' && textB?.encoding == 'utf8') {
