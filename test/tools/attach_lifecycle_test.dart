@@ -63,5 +63,39 @@ void main() {
       expect(sc['errorKind'], 'timeout');
       expect(sc['polls'], greaterThanOrEqualTo(1));
     }, timeout: const Timeout(Duration(seconds: 20)));
+
+    test('reports its phase to a client that sent a progress token, and stops when it returns', () async {
+      final sent = <ProgressNotification>[];
+      final r = await networkWaitForApp(
+        CallToolRequest(
+          name: 'network_wait_for_app',
+          arguments: const {'timeoutMs': 2000},
+          meta: MetaWithProgressToken(progressToken: ProgressToken('wait-1')),
+        ),
+        null,
+        notifyProgress: sent.add,
+        progressEvery: const Duration(milliseconds: 300),
+      );
+      expect(r.isError, isTrue);
+      expect(sent, isNotEmpty);
+      expect(sent.first.progressToken, 'wait-1');
+      expect(sent.first.total, 2000);
+      expect(sent.first.message, matches(RegExp(r'(waiting for an app|probing DTD).*poll')));
+      final count = sent.length;
+      await Future<void>.delayed(const Duration(milliseconds: 700));
+      expect(sent.length, count);
+    }, timeout: const Timeout(Duration(seconds: 20)));
+
+    test('sends nothing without a progress token', () async {
+      final sent = <ProgressNotification>[];
+      await networkWaitForApp(
+        CallToolRequest(
+            name: 'network_wait_for_app', arguments: const {'timeoutMs': 1000}),
+        null,
+        notifyProgress: sent.add,
+        progressEvery: const Duration(milliseconds: 200),
+      );
+      expect(sent, isEmpty);
+    }, timeout: const Timeout(Duration(seconds: 20)));
   });
 }

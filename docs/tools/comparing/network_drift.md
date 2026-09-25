@@ -30,7 +30,7 @@ Only the first drift point is reported, relative to the oldest sample. Later cha
 
 `sinceMs` counts back from now (wall-clock time), so on a session that ended hours ago a small `sinceMs` matches nothing.
 
-Body decryption: when `session_configure bodyDecryption:{...}` is on, each response body is decrypted before parsing, and the content-type filter is skipped (encrypted bodies can carry any content type; bodies that are not JSON after decryption are skipped). This tool does not emit `decrypted` / `decryptionFailed` flags; call `network_get` on an id to see them.
+Body decryption: when `session_configure bodyDecryption:{...}` is on, each response body is decrypted before parsing, and the content-type filter is skipped (encrypted bodies can carry any content type; bodies that are not JSON after decryption are skipped). The reply then carries a `decryption` block: `decrypted` (responses that decrypted), `failed` (responses that did not), and `firstFailure` (the first reason, when any failed), plus a warning when any failed.
 
 ## Args
 
@@ -67,6 +67,7 @@ Body decryption: when `session_configure bodyDecryption:{...}` is on, each respo
 - `added` / `removed` / `changed`: present only when `drifted` is true. Field paths use `.` for keys and `[]` for array elements (`items[].price`); a top-level array is `[]`, a top-level scalar `(root)`.
 - With no drift: `drifted:false`, no field lists, and a `network_summarize` next step instead of `network_get`.
 - With fewer than 2 JSON responses: a normal reply with `scope`, `summary` "Not enough JSON responses to compare", `scanned`, and `nextSteps`, but no `drifted` field.
+- `decryption` and its warning (body decryption on only): counted over the sampled responses that had a stored body, e.g. `{"decrypted": 11, "failed": 1, "firstFailure": "the body is not a hex string"}`. Present in both reply shapes.
 
 The `nextSteps` wording above is shortened. `scope` says which session was read; a scope note (for example an open `session_open` view shadowing live sessions) is also copied to `warnings`.
 

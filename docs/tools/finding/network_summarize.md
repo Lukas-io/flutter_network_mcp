@@ -82,7 +82,7 @@ If the raw-row cap is hit, the response includes `rawRowsCapHit: true` (and the 
 
 `window` is the window formatted as `<n>ms` under a minute, `<n>m` under an hour, else `<n>h` (rounded), or `"entire session"`. `count` is the number of endpoint rows returned. When the result is truncated by `limit`, `truncatedAt:<n>` appears at top level and a `nextSteps` line suggests raising `limit` or narrowing `hostContains`. The `alerts_drain` next step appears only when a returned endpoint has a non-zero error rate. When alerts are pending for the session, a `pendingAlerts` block is added automatically.
 
-When nothing matches, the summary reads `No HTTP requests captured over <window>.` followed by a note that only dart:io traffic is captured, and the single next step depends on the session state: drive the app and re-run (live), or a statement that the capture is complete (ended, interrupted, or the app exited).
+When nothing matches, the summary reads `No HTTP requests captured over <window>.` followed by a note that only dart:io traffic is captured, and the single next step depends on the session state: drive the app and re-run (live, including a session another server process captures into), or a statement that the capture is complete (ended, interrupted, or the app exited).
 
 Errors: `errorKind:"internal"` with `network_summarize query failed: ...` when the DB read fails. Scope failures return `no_session` (nothing attached or opened, or no attached session matches `appNameContains`) or `bad_argument` (several attached sessions match), with `nextSteps`.
 

@@ -125,18 +125,32 @@ FutureOr<CallToolResult> networkSearch(CallToolRequest request) async {
       var total = -1;
       try {
         final dao = CapturesDao();
-        indexed = dao.searchIndexSize(sessionId);
+        indexed = scheme != null
+            ? PlaintextIndex.instance.indexedCount(sessionId)
+            : dao.searchIndexSize(sessionId);
         total = dao.httpRequestCount(sessionId);
         if (indexed > 0) availableHosts = dao.distinctHosts(sessionId);
         if (indexed > 0) {
           suggestedPaths = closestPaths(dao.distinctPaths(sessionId), query);
         }
       } catch (_) {/* best-effort */}
-      if (indexed == 0) {
+      if (indexed == 0 && scheme != null) {
+        warnings.add(
+          'Nothing is in the in-memory decrypted index for session '
+          '$sessionId: it has no captured requests yet. Each search indexes '
+          'every captured request, so retry once the app has made some.',
+        );
+      } else if (indexed == 0) {
         warnings.add(
           'Nothing is indexed for search yet in session $sessionId — the '
           'writer indexes URLs on first sight and backfills bodies every '
           '~2s. Retry shortly.',
+        );
+      } else if (total > indexed && scheme != null) {
+        warnings.add(
+          'No match for "$query", but the in-memory decrypted index holds '
+          'only $indexed of $total captured request(s); the rest were '
+          'captured after this search began. Retry to index them.',
         );
       } else if (total > indexed) {
         warnings.add(
@@ -154,18 +168,22 @@ FutureOr<CallToolResult> networkSearch(CallToolRequest request) async {
             unpersisted = CapturesDao().countUnpersistedBodies(sessionId);
           } catch (_) {/* best-effort */}
         }
+        final where = scheme != null
+            ? 'the in-memory decrypted index'
+            : 'the search index';
         if (unpersisted > 0) {
           warnings.add(
-            'No URL match for "$query". URLs are fully indexed, but '
+            'No URL match for "$query". URLs are fully indexed in $where, but '
             '$unpersisted request(s) in this session have no stored body '
-            '(never persisted, likely the session ended first), so a '
-            'response-content match cannot be ruled out.',
+            '(not persisted yet, purged, or the session ended first), so a '
+            'body match cannot be ruled out.'
+            '${scheme != null ? ' Their bodies are decrypted and indexed on the search after they arrive.' : ''}',
           );
         } else {
           warnings.add(
-            'No match for "$query". Every captured request is indexed, so the '
-            'term is absent from this session. See availableHosts (hosts seen '
-            'from Dart) for what was captured.',
+            'No match for "$query". Every captured request is in $where, so '
+            'the term is absent from this session. See availableHosts (hosts '
+            'seen from Dart) for what was captured.',
           );
         }
       }
@@ -196,6 +214,7 @@ FutureOr<CallToolResult> networkSearch(CallToolRequest request) async {
       'query': query,
       'which': whichArg,
       'count': matches.length,
+      if (scheme != null) 'index': 'decrypted-in-memory',
       'matches': matches,
       if (availableHosts != null && availableHosts.isNotEmpty)
         'availableHosts': availableHosts,

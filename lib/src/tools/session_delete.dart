@@ -5,6 +5,7 @@ import 'package:dart_mcp/server.dart';
 import '../config/capabilities.dart';
 import '../state/session.dart';
 import '../storage/captures_db.dart';
+import '../storage/plaintext_index.dart';
 import 'error_kind.dart';
 import 'result.dart';
 
@@ -13,7 +14,8 @@ final sessionDeleteTool = Tool(
   description:
       'Permanently deletes a session and all its data (requests, bodies, '
       'sockets, logs, alerts, index). Cannot be undone; dry-run unless '
-      'confirm:true. Refuses the live session (detach first).',
+      'confirm:true. Refuses a session still capturing here or in another '
+      'server process (detach first).',
   inputSchema: Schema.object(
     properties: {
       'id': Schema.int(description: 'Session id to delete.'),
@@ -37,17 +39,41 @@ FutureOr<CallToolResult> sessionDelete(CallToolRequest request) async {
   }
 
   final session = Session.instance;
-  if (session.liveSessionId == id) {
-    return errorResult('Cannot delete the live session — call network_detach first.', kind: ErrorKind.badArgument, extra: {
-      'liveSessionId': id,
-      'nextSteps': const [
-        'network_detach — gracefully end the live session',
-        'Then retry session_delete id:<n> confirm:true',
-      ],
-    });
+  if (SessionRegistry.instance.attachedById(id) != null) {
+    return errorResult(
+      'Session $id is still capturing in this server. Detach it before deleting.',
+      kind: ErrorKind.sessionInUse,
+      extra: {
+        'sessionId': id,
+        'capturedBy': 'this server',
+        'nextSteps': [
+          'network_detach sessionId:$id (ends the capture)',
+          'session_delete id:$id confirm:true (retry once detached)',
+        ],
+      },
+    );
   }
 
   final dao = CapturesDao();
+  final others = dao.otherAttachedProcesses(id);
+  if (others > 0) {
+    return errorResult(
+      'Session $id is still capturing in $others other server process(es) '
+      'on this capture DB. Deleting it would pull the rows out from under them.',
+      kind: ErrorKind.sessionInUse,
+      extra: {
+        'sessionId': id,
+        'capturedBy': 'another server process',
+        'otherProcesses': others,
+        'nextSteps': [
+          'Detach it where it is captured (network_detach in that server), or close that server',
+          'session_list (the session reads status "live", capturedElsewhere:true, until then)',
+          'bodies_purge sessionId:$id (drops only its bodies)',
+        ],
+      },
+    );
+  }
+
   final row = dao.getSessionWithCounts(id);
   if (row == null) {
     return errorResult('Session $id not found.', kind: ErrorKind.notFound, extra: const {
@@ -84,6 +110,7 @@ FutureOr<CallToolResult> sessionDelete(CallToolRequest request) async {
     session.viewedSessionId = null;
   }
   final deleted = dao.deleteSession(id);
+  PlaintextIndex.instance.forget(id);
 
   return jsonResult({
     'summary': 'Deleted session $id (${appName ?? "unnamed"}) — '

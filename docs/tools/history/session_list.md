@@ -22,9 +22,9 @@ when_to_use: When the user references a past session, or you want to confirm wha
 SQL on `sessions` joined with COUNT subqueries against http_requests / socket_events / log_records. Newest-first by `startedMs`. Null per-row fields (appName, note, projectPath, endedMs) are omitted.
 
 Each row carries `status`:
-- `live`: this server process is attached to the session right now.
+- `live`: this server process is attached to the session right now, or another live server process sharing the same DB captures into it. Several processes attached to the same app share one session row, and the row ends only when the last of them detaches. A row captured only by another process also carries `capturedElsewhere: true`.
 - `ended`: the session has an end time.
-- `interrupted`: no end time and this process is not attached (the capturing process was killed, or the row predates clean-end tracking). Another server process sharing the same DB can still be capturing into it (several processes attached to the same app share one session row); the row ends only when the last of them detaches. When a server starts, it ends open rows that no live server process holds and appends `[orphaned]` to their note.
+- `interrupted`: no end time and no live server process captures into it (the capturing process was killed, or the row predates clean-end tracking). When a server starts, it ends open rows that no live server process holds and appends `[orphaned]` to their note.
 
 `isLive` is true only for the session this process is attached to when exactly one is attached. With two or more attached, `liveSessionId` is null and every `isLive` is false; use `status` instead.
 
@@ -51,7 +51,9 @@ When the listed sessions include more distinct app names than distinct project p
   ],
   "sessions": [
     {"id":14, "startedMs":..., "isLive":true, "status":"live", "appName":"...",
-     "projectPath":"...", "counts":{"http":38, "sockets":3, "logs":127}}
+     "projectPath":"...", "counts":{"http":38, "sockets":3, "logs":127}},
+    {"id":12, "startedMs":..., "isLive":false, "status":"live",
+     "capturedElsewhere":true, "appName":"...", "counts":{"http":9, "sockets":0, "logs":40}}
   ]
 }
 ```
