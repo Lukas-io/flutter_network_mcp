@@ -9,6 +9,7 @@ import '../alerts/alert_detector.dart';
 import '../config/capabilities.dart';
 import '../state/log_buffer.dart';
 import '../storage/captures_db.dart';
+import 'instance_text.dart';
 
 /// Subscribes to the VM service Logging/Stdout/Stderr streams and forwards
 /// records into the in-memory [LogBuffer] AND (when [sessionIdProvider]
@@ -38,37 +39,10 @@ class LogStreamSubscriber {
     await _safeListen(service, EventStreams.kStderr);
 
     _subs.add(service.onLoggingEvent.listen((event) {
-      final record = event.logRecord;
-      if (record == null) return;
-      const source = 'logging';
-      final ts = record.time ?? event.timestamp ?? 0;
-      final level = record.level;
-      final logger = record.loggerName?.valueAsString;
-      final message = record.message?.valueAsString ?? '';
-      final err = record.error?.valueAsString;
-      final stack = record.stackTrace?.valueAsString;
-      final isoId = event.isolate?.id;
-      buffer.push(
-        source: source,
-        timestampMs: ts,
-        level: level,
-        loggerName: logger,
-        message: message,
-        error: err,
-        stackTrace: stack,
-        isolateId: isoId,
-      );
-      _persist(
-        source: source,
-        timestampMs: ts,
-        level: level,
-        logger: logger,
-        message: message,
-        error: err,
-        stack: stack,
-        isolateId: isoId,
-        dedupKey: 'logging:$isoId:${record.sequenceNumber}:${record.time}',
-      );
+      // Queued so records keep their order while long values are fetched.
+      _logQueue = _logQueue
+          .then((_) => _onLogRecord(service, buffer, event))
+          .catchError((Object e, StackTrace st) => _onStreamError(e, st));
     }, onError: _onStreamError));
 
     _subs.add(service.onStdoutEvent.listen(
@@ -79,6 +53,45 @@ class LogStreamSubscriber {
       (event) => _pushWriteEvent(buffer, event, 'stderr'),
       onError: _onStreamError,
     ));
+  }
+
+  Future<void> _logQueue = Future.value();
+
+  /// Stores one developer.log record with its message, error and stack whole; the VM only sends a 128-char preview of each.
+  Future<void> _onLogRecord(
+      VmService service, LogBuffer buffer, Event event) async {
+    final record = event.logRecord;
+    if (record == null) return;
+    const source = 'logging';
+    final ts = record.time ?? event.timestamp ?? 0;
+    final level = record.level;
+    final isoId = event.isolate?.id;
+    Future<String?> text(InstanceRef? ref) => instanceText(service, isoId, ref);
+    final logger = await text(record.loggerName);
+    final message = await text(record.message) ?? '';
+    final err = await text(record.error);
+    final stack = await text(record.stackTrace);
+    buffer.push(
+      source: source,
+      timestampMs: ts,
+      level: level,
+      loggerName: logger,
+      message: message,
+      error: err,
+      stackTrace: stack,
+      isolateId: isoId,
+    );
+    _persist(
+      source: source,
+      timestampMs: ts,
+      level: level,
+      logger: logger,
+      message: message,
+      error: err,
+      stack: stack,
+      isolateId: isoId,
+      dedupKey: 'logging:$isoId:${record.sequenceNumber}:${record.time}',
+    );
   }
 
   /// Catches synchronous + asynchronous stream errors so they don't
