@@ -368,8 +368,8 @@ FutureOr<CallToolResult> _historyGet({
     }
     final reqHeaders = _parseHeaders(row['request_headers_json']);
     final respHeaders = _parseHeaders(row['response_headers_json']);
-    final reqCt = row['content_type'] as String? ?? firstHeader(reqHeaders, 'content-type');
-    final respCt = row['content_type'] as String? ?? firstHeader(respHeaders, 'content-type');
+    final reqCt = storedContentType(row, 'request');
+    final respCt = storedContentType(row, 'response');
     final reqBlob = includeBodies ? dao.getBody(sid, id, 'request') : null;
     final respBlob = includeBodies ? dao.getBody(sid, id, 'response') : null;
     final reqBody = readableBodyJson(reqBlob, reqCt, maxBytes: maxBytes);

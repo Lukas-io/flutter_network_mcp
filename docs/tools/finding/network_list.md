@@ -27,11 +27,15 @@ The session comes from `sessionId`, else `appNameContains` (must match exactly o
 
 Sticky defaults from `session_configure` (`method`, `hostContains`, `statusMin`, `statusMax`, `maxResponseTokens`) fill any of those args you omit. An arg you pass, even `null`, wins.
 
-**Live read** (`source:"live"`): used when the session is live-attached and you pass neither `since:0` nor `before`. Calls `getHttpProfile` on every HTTP-profiling isolate (or only `isolateId`) with `updatedSince` = your `since`, else the session's stored cursor. Merges the isolates newest-first, applies the filters in-process and stops at `limit`. Every live read moves the stored cursor to the profile timestamp, so the next call without `since` returns only requests updated after it. Rows beyond `limit` in one read are not returned by the next incremental call; read them from the DB with `since:0` or `before`. A profile fetch that fails for one isolate is skipped without a warning, so if every isolate fails the live read comes back empty; `since:0` reads the DB instead.
+**Live read** (`source:"live"`): used when the session is live-attached and you pass neither `since:0` nor `before`. Calls `getHttpProfile` on every HTTP-profiling isolate (or only `isolateId`) with `updatedSince` = your `since`, else that isolate's stored cursor. Merges the isolates newest-first, applies the filters in-process and stops at `limit`. Every successful isolate fetch moves that isolate's stored cursor to the profile timestamp, so the next call without `since` returns only requests updated after it.
+
+Nothing new is skipped: rows fetched but not returned (past `limit`, or trimmed by the token budget) are kept, and the next call without `since` returns them, merged newest-first with anything that arrived since. The reply says how many are waiting in `remaining`, in the summary, and in a `network_list` next step. Rows a filter excluded are not kept.
+
+When the profile fetch fails for some isolates, the reply returns the rest with `partial:true`, `failedIsolates`, and a warning naming them; those isolates keep their cursor, so the next call retries them. When it fails for every isolate, the reply is the live DB fallback below.
 
 **History read** (`source:"history"`): used for a non-live scope (after `session_open`, an ended session, or an explicit historical `sessionId`), and for a live session when you pass `since:0` (or any value <= 0) or `before`. Runs an indexed SQL query over `http_requests`, newest-first by start time. `since` keeps rows that started after it; `before` keeps rows that started before it. This is how you page OLDER: pass the reply's `nextCursor` as `before`.
 
-**Live DB fallback** (`source:"live-db-fallback"`): when the live read throws as a whole, the reply is the persisted DB snapshot for the session with two warnings saying so. If the DB read fails too, the tool errors with `errorKind:"unresponsive_vm"`.
+**Live DB fallback** (`source:"live-db-fallback"`): when the profile fetch fails for every isolate (or the live read throws as a whole), the reply is the persisted DB snapshot for the session with two warnings saying so. If the DB read fails too, the tool errors with `errorKind:"unresponsive_vm"`.
 
 `maxTokens` (or the sticky `maxResponseTokens`) trims `requests` newest-first to fit an estimated token budget (JSON length / 4), always keeping at least one row, and reports `budget:{maxTokens, dropped}`.
 
@@ -77,12 +81,13 @@ Top-level fields:
 
 - `source`: `live`, `history` or `live-db-fallback`.
 - `scope`: which session was read (`sessionId`, `appName`, `isLive`, and `note` / `pickedBy` / `others` when relevant). A scope note (for example an open `session_open` view shadowing live sessions) is also copied to `warnings`.
-- `count`: rows returned. `totalScanned` (live only): rows the profile returned before filtering.
+- `count`: rows returned. `totalScanned` (live only): rows considered before filtering (this fetch plus rows kept from an earlier read).
 - `nextCursor`. Live: the profile timestamp, pass it back as `since`. History: the oldest start time in the batch when the page was full (pass it as `before` to page older), else `null`. Fallback: same as history, present only when the page was full.
 - `newestInBatch` (history only): newest start time in the batch, for `since` paging.
-- `partial: true` (live only): some rows could not be read and were skipped.
+- `remaining` (live only): new rows fetched but not returned yet (past `limit` or the token budget). The next call without `since` returns them. Absent when nothing is waiting.
+- `partial: true` (live only): some rows could not be read and were skipped, or some isolates failed (listed in `failedIsolates`).
 - `budget`: present when a token budget applied.
-- `warnings`: only when something is off (empty profile, filters excluded everything, filters dropped over 80% of scanned rows, rows skipped, budget trim, scope note).
+- `warnings`: only when something is off (empty profile, filters excluded everything, filters dropped over 80% of scanned rows, rows skipped, isolates that failed, budget trim, scope note).
 - `nextSteps`: 1 to 5 concrete calls; the `network_search` hint appears only when the search capability is on.
 - `pendingAlerts`: added automatically when alerts are pending for the session.
 
@@ -90,7 +95,7 @@ Per-request fields (null values are omitted): `id`, `method`, `uri`, `host`, `pa
 
 `requestContentLength` / `responseContentLength` are real byte counts (`0` = no body). A chunked / unknown-length message is reported as `requestSizeKnown: false` / `responseSizeKnown: false` instead of a misleading `-1` (#62); `network_get` on that id resolves the true size once the body is read.
 
-Empty reads say why: `No HTTP captured yet in ...` (nothing ever), `No NEW HTTP since your last call ...` (incremental read, pass `since:0`), `N request(s) scanned, 0 matched filters.` (filters), and in history `No requests in session N match the given filters/cursor.`
+Empty reads say why: `No HTTP captured yet in ...` (nothing ever), `No NEW HTTP since your last call ...` (incremental read, pass `since:0`), `N request(s) scanned, 0 matched filters.` (filters), and in history `No requests in session N match the given filters/cursor.` An empty history read's next steps depend on why it is empty (a `before` / `since` bound, active filters, or a session with no capture) and suggest `session_close` only while a `session_open` view of that session is active.
 
 Error shapes:
 

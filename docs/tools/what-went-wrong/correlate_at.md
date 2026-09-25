@@ -24,7 +24,7 @@ Resolves one session like the other read tools (explicit `sessionId`, then `appN
 
 Both bounds are inclusive. Each side is sorted by `|deltaMs|` and cut to `limit`, so with many records the ones nearest the anchor win. `isolateId` filters both sides. The headline "Nearest" is the single closest item across both sides.
 
-Log messages are cut at 512 characters: a cut entry has `truncated:true` (no `totalLength`). Log entries never include the record's `error` or `stackTrace`, even though those are stored in full. To read the whole message plus error and stack, use `logs_tail messageContains:"<distinctive text>" messageTruncateBytes:65536`.
+Log messages are cut at 512 characters, never inside an emoji or other surrogate pair (the cut backs off one character instead): a cut entry has `truncated:true` and `totalLength` (the full message length). When the record has an `error` or `stackTrace`, the entry includes it, bounded: `error` at 512 characters and `stackTrace` at 2048, with `errorTotalLength` / `stackTraceTotalLength` present only when that field was cut. To read everything in full, use `logs_tail messageContains:"<distinctive text>" messageTruncateBytes:65536`.
 
 ## Args
 
@@ -43,13 +43,13 @@ Log messages are cut at 512 characters: a cut entry has `truncated:true` (no `to
   "summary": "2 log(s) + 1 request(s) within +/-1000ms of 1780462000000. Nearest: GET https://api/x (+45ms).",
   "anchorMs": 1780462000000,
   "windowMs": 1000,
-  "logs":     [{ "id": 12, "timestampMs": ..., "deltaMs": -30, "source": "logging", "level": 800, "loggerName": "EventTracker", "isolateId": "isolates/123", "message": "...", "truncated": true }],
+  "logs":     [{ "id": 12, "timestampMs": ..., "deltaMs": -30, "source": "logging", "level": 800, "loggerName": "EventTracker", "isolateId": "isolates/123", "message": "...", "truncated": true, "totalLength": 1840, "error": "StateError: ...", "stackTrace": "#0 ..." }],
   "requests": [{ "id": "5320...", "timestampMs": ..., "deltaMs": 45, "method": "GET", "url": "...", "statusCode": 200, "durationMs": 180, "isolateId": "isolates/123" }],
   "nextSteps": ["network_get id:\"5320...\" ... full detail on the nearest request", "network_replay id:\"5320...\" ... reproduce the nearest request"]
 }
 ```
 
-`deltaMs` is signed: negative = before the anchor, positive = after. Each side is sorted nearest-first by `|deltaMs|`. A log's `id` is its DB row id; a request's `id` is the id `network_get` takes and its `timestampMs` is the request start. `level`, `loggerName`, `isolateId`, `statusCode` and `durationMs` are omitted when null; `truncated` appears only on cut messages.
+`deltaMs` is signed: negative = before the anchor, positive = after. Each side is sorted nearest-first by `|deltaMs|`. A log's `id` is its DB row id; a request's `id` is the id `network_get` takes and its `timestampMs` is the request start. `level`, `loggerName`, `isolateId`, `error`, `stackTrace`, `statusCode` and `durationMs` are omitted when null; `truncated` / `totalLength` appear only on cut messages.
 
 When the `http` or `logs` capability is disabled, that side comes back as an empty array and `disabledSides` lists it (`"logs"` / `"http"`). The tool is not registered when both are disabled.
 
