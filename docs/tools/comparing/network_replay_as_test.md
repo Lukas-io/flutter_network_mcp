@@ -7,7 +7,7 @@ when_to_use: When you want to iterate on a backend fix or reproduce a failing ca
 ## DO NOT USE THIS TOOL WHEN
 
 - You want a one-off shell reproduction: `network_replay` emits a curl.
-- The request body is binary or not valid UTF-8: the generated test sends no body at all, and no warning says so. Use `network_replay` (which marks binary bodies) or build the body yourself.
+- The request body is binary or not valid UTF-8: the generated test sends no body (the reply says so with `bodyIsBinary:true` and a warning). Use `network_replay` or set `request.bodyBytes` yourself.
 - The request body is over 8 KB and must be sent whole: the body is cut at 8192 bytes, with no argument to raise it.
 - You expect the test to run against a server that needs auth, as-is: with the default `redact:true`, auth headers are commented out and the test fails until you fill them in.
 - You want to assert on response content beyond one substring: the test checks the status code, plus at most one `assertBodyContains` string. Edit the generated code for more.
@@ -24,11 +24,11 @@ Reads the request row and request body from the DB (live or history; the VM is n
 
 - `http.Request('<METHOD>', Uri.parse('<url>'))` with the method upper-cased.
 - `request.headers.addAll({...})` with every captured request header. Headers in the redaction set (`authorization`, `cookie`, `proxy-authorization`, `x-api-key`, `x-auth-token`, plus names added via `redacted_headers`) become commented-out lines `// 'Name': '<fill in: redacted>',` unless you pass `redact:false`.
-- `request.body = '...'` when the captured request body is non-empty and decodes as UTF-8 (after cutting it at 8192 bytes). Otherwise no body line is written.
+- `request.body = '...'` when the captured request body is non-empty and decodes as UTF-8. A body over 8192 bytes is cut on a character boundary (never inside a multi-byte character), so text bodies always survive the cut. A body that is not UTF-8 gets no body line, and the reply carries `bodyIsBinary:true` plus a warning.
 - `expect(response.statusCode, <captured status>)`. When no status was captured (in-flight request), it asserts `inInclusiveRange(200, 599)` instead.
 - `expect(response.body, contains('...'))` when `assertBodyContains` is set.
 
-The test is named `<METHOD> <path> replays`. Strings are escaped for single-quoted Dart literals (`\`, `$`, `'`, and control characters).
+The test is named `<METHOD> <path> replays`. Every generated string literal, the test name included, is escaped for single-quoted Dart (`\`, `$`, `'`, `\n`, `\r`, `\t`), so a `$` in a path or body is never read as interpolation.
 
 The body is always the original captured bytes: `session_configure bodyDecryption` does not apply here, so an encrypted body is replayed encrypted, as the app sent it.
 
@@ -58,7 +58,7 @@ The body is always the original captured bytes: `session_configure bodyDecryptio
 }
 ```
 
-`warnings` (omitted when empty) appears for: redacted auth headers, a request body cut at 8192 bytes, no captured status (the test asserts the 200 to 599 range), and `redact:false` (do not commit the test as-is). The second `nextSteps` entry is shortened above.
+`warnings` (omitted when empty) appears for: redacted auth headers, a request body cut at 8192 bytes (the warning gives the bytes kept), a body that is not UTF-8 and was left out (`bodyIsBinary:true` is also set), no captured status (the test asserts the 200 to 599 range), `redact:false` (do not commit the test as-is), and a scope note (for example an open `session_open` view shadowing live sessions). The second `nextSteps` entry is shortened above.
 
 Errors: `bad_argument` (missing `id`), `not_found` (id not in the session's DB). Scope failures return `error` + `nextSteps` without an `errorKind`.
 

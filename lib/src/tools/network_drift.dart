@@ -126,6 +126,7 @@ FutureOr<CallToolResult> networkDrift(CallToolRequest request) async {
 
   if (samples.length < 2) {
     return jsonResult({
+      'scope': scope.toBlock(),
       'summary':
           'Not enough JSON responses to compare (${samples.length} found; '
               'need 2+).',
@@ -136,7 +137,7 @@ FutureOr<CallToolResult> networkDrift(CallToolRequest request) async {
         'network_summarize — see which endpoints have JSON traffic',
         'network_drift pathContains:"..." — widen or change the filter',
       ],
-    }, scopeSessionId: sid);
+    }, scopeSessionId: sid, scopeNote: scope.note);
   }
 
   final first = samples.first['shape'] as Map<String, String>;
@@ -166,6 +167,7 @@ FutureOr<CallToolResult> networkDrift(CallToolRequest request) async {
           'contract).';
 
   return jsonResult({
+    'scope': scope.toBlock(),
     'summary': summary,
     'sessionId': sid,
     'scanned': samples.length,
@@ -180,5 +182,5 @@ FutureOr<CallToolResult> networkDrift(CallToolRequest request) async {
         'network_summarize — endpoint overview',
       'network_drift pathContains:"..." — narrow to a single endpoint',
     ],
-  }, scopeSessionId: sid);
+  }, scopeSessionId: sid, scopeNote: scope.note);
 }

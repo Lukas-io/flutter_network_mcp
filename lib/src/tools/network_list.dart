@@ -11,6 +11,7 @@ import '../util/body_decoder.dart';
 import '../util/http_timing.dart';
 import '../util/body_status.dart';
 import '../util/filters.dart';
+import '../util/guidance.dart';
 import '../util/scope.dart';
 import '../util/token_budget.dart';
 import 'error_kind.dart';
@@ -131,34 +132,64 @@ FutureOr<CallToolResult> networkList(CallToolRequest request) async {
       : [isolateFilter];
 
   try {
-    final perIsolateRequests = <(HttpProfileRequest, String)>[];
+    final fetched = <String, (HttpProfileRequest, String)>{};
+    final failedIsolates = <String, Object>{};
     DateTime? latestCursor;
-    int scannedTotal = 0;
+    final cursors = attached.httpCursorByIsolate;
     for (final isoId in isolateIds) {
+      final isoCursor = sinceArg == null && cursors.containsKey(isoId)
+          ? cursors[isoId]
+          : cursor;
       try {
         final profile = await attached.vm.getHttpProfileForIsolate(
           isoId,
-          updatedSince: cursor,
+          updatedSince: isoCursor,
         );
+        cursors[isoId] = profile.timestamp;
         if (latestCursor == null || profile.timestamp.isAfter(latestCursor)) {
           latestCursor = profile.timestamp;
         }
-        scannedTotal += profile.requests.length;
         for (final req in profile.requests) {
-          perIsolateRequests.add((req, isoId));
+          fetched[req.id] = (req, isoId);
         }
-      } catch (_) {/* per-isolate skip */}
+      } catch (e) {
+        failedIsolates[isoId] = e;
+        cursors.putIfAbsent(isoId, () => attached.lastHttpCursor);
+      }
     }
-    if (latestCursor != null) {
-      attached.lastHttpCursor = latestCursor;
+    if (isolateIds.isNotEmpty && failedIsolates.length == isolateIds.length) {
+      return _liveDbFallback(
+        scope,
+        caps,
+        sinceArg,
+        methods,
+        hostContains,
+        statusMin,
+        statusMax,
+        isolateFilter,
+        limit,
+        failedIsolates.values.first,
+      );
     }
 
-    perIsolateRequests
-        .sort((a, b) => b.$1.startTime.compareTo(a.$1.startTime));
+    final unreturned = attached.unreturnedHttp;
+    final carried = <(HttpProfileRequest, String)>[
+      if (sinceArg == null)
+        for (final e in unreturned.entries)
+          if (!fetched.containsKey(e.key) && isolateIds.contains(e.value.$2))
+            e.value,
+    ];
+    final perIsolateRequests = [...fetched.values, ...carried]
+      ..sort((a, b) => b.$1.startTime.compareTo(a.$1.startTime));
+    final scannedTotal = perIsolateRequests.length;
 
     final filtered = <Map<String, Object?>>[];
+    final returned = <(HttpProfileRequest, String)>[];
+    var consumed = 0;
     var skippedErrors = 0;
     for (final (req, isoId) in perIsolateRequests) {
+      if (filtered.length >= limit) break;
+      consumed++;
       try {
         if (!methodMatches(req.method, methods)) continue;
         if (!hostMatches(req.uri.toString(), hostContains)) continue;
@@ -168,7 +199,7 @@ FutureOr<CallToolResult> networkList(CallToolRequest request) async {
         final summary = liveSummary(req);
         summary['isolateId'] = isoId;
         filtered.add(summary);
-        if (filtered.length >= limit) break;
+        returned.add((req, isoId));
       } catch (_) {
         skippedErrors++;
       }
@@ -185,6 +216,21 @@ FutureOr<CallToolResult> networkList(CallToolRequest request) async {
     if (budgetDropped > 0) {
       filtered.removeRange(budgetTrim.kept.length, filtered.length);
     }
+
+    for (final (req, _) in perIsolateRequests.take(consumed)) {
+      unreturned.remove(req.id);
+    }
+    for (final e in [
+      ...returned.skip(filtered.length),
+      ...perIsolateRequests.skip(consumed),
+    ]) {
+      unreturned[e.$1.id] = e;
+    }
+    final remaining = [
+      for (final e in unreturned.values)
+        if (isolateIds.contains(e.$2)) e,
+    ].length;
+    if (latestCursor != null) attached.lastHttpCursor = latestCursor;
 
     final scopeLabel =
         'session $liveSid (live${scope.appName != null ? ", ${scope.appName}" : ""})';
@@ -217,14 +263,28 @@ FutureOr<CallToolResult> networkList(CallToolRequest request) async {
         'in-flight/errored); the rest are returned.',
       );
     }
+    if (failedIsolates.isNotEmpty) {
+      warnings.add(
+        'Live profile fetch failed for ${failedIsolates.length} of '
+        '${isolateIds.length} isolate(s) (${failedIsolates.keys.join(", ")}): '
+        '${failedIsolates.values.first}. Their new requests are missing from '
+        'this read; their cursor was kept, so the next call retries them.',
+      );
+    }
     if (budgetDropped > 0) {
       warnings.add(
         'Trimmed $budgetDropped request(s) to fit the $budget-token budget; '
-        'page with since:<nextCursor> or raise maxTokens for the rest.',
+        'they are kept for the next call without since, or raise maxTokens.',
       );
     }
 
     final nextSteps = <String>[];
+    if (remaining > 0) {
+      nextSteps.add(
+        'network_list: $remaining more new request(s) were fetched but not '
+        'returned (limit/budget); the next call without since returns them',
+      );
+    }
     if (filtered.isNotEmpty) {
       nextSteps.add(
         'network_get id:"${filtered.first['id']}" — full headers + body for the top match',
@@ -249,10 +309,16 @@ FutureOr<CallToolResult> networkList(CallToolRequest request) async {
       'source': 'live',
       'scope': scope.toBlock(),
       'sessionId': liveSid,
-      'summary': summary,
+      'summary': remaining > 0
+          ? '$summary $remaining more new request(s) not returned yet; call '
+              'again without since for them.'
+          : summary,
       'count': filtered.length,
       'totalScanned': scannedTotal,
-      if (skippedErrors > 0) 'partial': true,
+      if (remaining > 0) 'remaining': remaining,
+      if (skippedErrors > 0 || failedIsolates.isNotEmpty) 'partial': true,
+      if (failedIsolates.isNotEmpty)
+        'failedIsolates': failedIsolates.keys.toList(),
       if (budget != null && budget > 0)
         'budget': {'maxTokens': budget, 'dropped': budgetDropped},
       if (latestCursor != null)
@@ -448,16 +514,22 @@ FutureOr<CallToolResult> _historyList(
     } else {
       // Cursor-aware empty hints: blaming filters when a cursor bound
       // excluded everything misdiagnoses the situation.
+      final state = SessionStateView.of(sid);
       if (beforeArg != null) {
         nextSteps.add(
             'Nothing older than before:$beforeArg — drop `before` to return to the newest page');
       } else if (sinceArg != null && sinceArg > 0) {
-        nextSteps.add(
-            'Nothing newer than since:$sinceArg — this session is history; new rows will not appear');
-      } else {
+        nextSteps.add(state.canGenerateTraffic
+            ? 'Nothing newer than since:$sinceArg yet. Drive the app, then re-call'
+            : 'Nothing newer than since:$sinceArg. This session is history; new rows will not appear');
+      } else if (activeFilters.isNotEmpty) {
         nextSteps.add('Widen filters (drop hostContains / lower statusMin)');
+      } else {
+        nextSteps.add(emptyCaptureHint(state, reRun: 'network_list'));
       }
-      nextSteps.add('session_close — return to live (currently viewing session $sid)');
+      if (state.isViewing) {
+        nextSteps.add('session_close: return to live (currently viewing session $sid)');
+      }
     }
 
     return jsonResult({
@@ -481,9 +553,10 @@ FutureOr<CallToolResult> _historyList(
         kind: ErrorKind.internal,
         extra: {
           'sessionId': sid,
-          'nextSteps': const [
+          'nextSteps': [
             'Verify the session still exists via session_list',
-            'session_close if the viewed session was deleted',
+            if (Session.instance.viewedSessionId == sid)
+              'session_close if the viewed session was deleted',
           ],
         });
   }

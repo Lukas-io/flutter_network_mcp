@@ -1,6 +1,8 @@
 import 'dart:async' show Timer, unawaited;
 import 'dart:io' as io;
 
+import 'package:vm_service/vm_service.dart' show HttpProfileRequest;
+
 import '../storage/capture_writer.dart';
 import '../storage/captures_db.dart';
 import '../vm/dtd_client.dart';
@@ -211,6 +213,14 @@ class AttachedSession {
 
   /// Mutable: updated by network_list when caller omits `since`.
   DateTime? lastHttpCursor;
+
+  /// Per-isolate incremental cursor, so one failing isolate keeps its own
+  /// place without holding the others back; absent keys use [lastHttpCursor].
+  final Map<String, DateTime?> httpCursorByIsolate = {};
+
+  /// Live requests a network_list read fetched but did not return (past
+  /// `limit` or the token budget), by id; the next incremental read returns them.
+  final Map<String, (HttpProfileRequest, String)> unreturnedHttp = {};
 
   /// Working directory of the server that attached this session — the
   /// project the caller is most likely asking about.

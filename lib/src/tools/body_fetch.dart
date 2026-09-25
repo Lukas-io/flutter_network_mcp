@@ -132,7 +132,7 @@ Future<RawBodyFetch> _fetchRawBodyBytes(
             }),
       );
     }
-    mimeType = row['content_type'] as String?;
+    mimeType = storedContentType(row, which);
     return (bytes: bytes, mimeType: mimeType, source: source, error: null);
   }
 
@@ -187,7 +187,7 @@ Future<RawBodyFetch> _fetchRawBodyBytes(
       final dbRow = CapturesDao().getHttpRequest(scope.sessionId, id);
       return (
         bytes: dbBytes,
-        mimeType: dbRow?['content_type'] as String?,
+        mimeType: dbRow == null ? null : storedContentType(dbRow, which),
         source: 'live-db-fallback',
         error: null,
       );

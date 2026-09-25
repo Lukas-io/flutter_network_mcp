@@ -45,6 +45,7 @@ Body decryption: when `session_configure bodyDecryption:{...}` is on, each respo
 
 ```json
 {
+  "scope": {"sessionId": 14, "appName": "my_app", "isLive": true},
   "summary": "Response shape DRIFTED across 12 sample(s): 1 added, 1 removed, 1 type-changed field(s).",
   "sessionId": 14,
   "scanned": 12,
@@ -65,9 +66,9 @@ Body decryption: when `session_configure bodyDecryption:{...}` is on, each respo
 - `matchedTotal`: rows that passed the filters, before sampling.
 - `added` / `removed` / `changed`: present only when `drifted` is true. Field paths use `.` for keys and `[]` for array elements (`items[].price`); a top-level array is `[]`, a top-level scalar `(root)`.
 - With no drift: `drifted:false`, no field lists, and a `network_summarize` next step instead of `network_get`.
-- With fewer than 2 JSON responses: a normal reply with `summary` "Not enough JSON responses to compare", `scanned`, and `nextSteps`, but no `drifted` field.
+- With fewer than 2 JSON responses: a normal reply with `scope`, `summary` "Not enough JSON responses to compare", `scanned`, and `nextSteps`, but no `drifted` field.
 
-The `nextSteps` wording above is shortened. There is no `scope` block.
+The `nextSteps` wording above is shortened. `scope` says which session was read; a scope note (for example an open `session_open` view shadowing live sessions) is also copied to `warnings`.
 
 Errors: `internal` (the DB query failed). Scope failures return `error` + `nextSteps` without an `errorKind`.
 

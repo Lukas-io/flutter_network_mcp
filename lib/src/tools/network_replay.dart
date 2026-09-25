@@ -5,6 +5,7 @@ import 'package:dart_mcp/server.dart';
 
 import '../config/capabilities.dart';
 import '../storage/captures_db.dart';
+import '../util/body_decoder.dart';
 import '../util/scope.dart';
 import 'error_kind.dart';
 import 'result.dart';
@@ -113,11 +114,14 @@ FutureOr<CallToolResult> networkReplay(CallToolRequest request) async {
 
     bool bodyTruncated = false;
     int? totalSize;
+    int? sentSize;
     bool bodyIsBinary = false;
     if (body != null && body.isNotEmpty) {
       totalSize = body.length;
-      final clipped = body.length > bodyMax ? body.sublist(0, bodyMax) : body;
       bodyTruncated = body.length > bodyMax;
+      final clipped =
+          bodyTruncated ? body.sublist(0, utf8SafeCut(body, bodyMax)) : body;
+      sentSize = clipped.length;
       try {
         final text = utf8.decode(clipped, allowMalformed: false);
         buf.write(" --data-raw '${_shellEscape(text)}'");
@@ -136,7 +140,7 @@ FutureOr<CallToolResult> networkReplay(CallToolRequest request) async {
     }
     if (bodyTruncated) {
       warnings.add(
-        'Request body truncated at $bodyMax of $totalSize bytes — the curl will send a shortened body unless you raise bodyTruncateBytes.',
+        'Request body truncated to $sentSize of $totalSize bytes (cut on a character boundary); the curl will send a shortened body unless you raise bodyTruncateBytes.',
       );
     }
     if (!redact) {
@@ -170,6 +174,7 @@ FutureOr<CallToolResult> networkReplay(CallToolRequest request) async {
       if (totalSize != null) ...{
         'bodyTotalSize': totalSize,
         'bodyTruncated': bodyTruncated,
+        if (bodyTruncated) 'bodySentSize': sentSize,
         if (bodyIsBinary) 'bodyIsBinary': true,
       },
       'curl': buf.toString(),
