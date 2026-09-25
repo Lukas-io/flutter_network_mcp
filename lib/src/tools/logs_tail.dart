@@ -9,6 +9,7 @@ import '../storage/captures_db.dart';
 import '../util/filters.dart';
 import '../util/scope.dart';
 import '../util/guidance.dart';
+import '../util/token_budget.dart';
 import 'error_kind.dart';
 import 'result.dart';
 
@@ -67,6 +68,12 @@ final logsTailTool = Tool(
             'Cut each message at this many characters (default 2048, '
             '64-65536). A cut record carries truncated:true and totalLength.',
       ),
+      'maxTokens': Schema.int(
+        description:
+            'Token budget for this response; keeps the newest records that '
+            'fit and reports budget.dropped. Overrides the session_configure '
+            'maxResponseTokens default.',
+      ),
     },
   ),
 );
@@ -109,6 +116,7 @@ FutureOr<CallToolResult> logsTail(CallToolRequest request) async {
   final truncateAt =
       ((args['messageTruncateBytes'] as int?) ?? _kMessageTruncateBytes)
           .clamp(64, 65536);
+  final maxTokens = args['maxTokens'] as int? ?? sf.maxResponseTokens;
 
   if (!scope.isLive) {
     final sid = scope.sessionId;
@@ -123,25 +131,15 @@ FutureOr<CallToolResult> logsTail(CallToolRequest request) async {
         isolateId: isolateFilter,
         limit: limit,
       );
-      final out = <Map<String, Object?>>[];
-      int? maxId;
-      int severeCount = 0;
-      for (final r in rows) {
-        final id = r['id'] as int;
-        if (maxId == null || id > maxId) maxId = id;
-        final lvl = r['level'] as int?;
-        if (lvl != null && lvl >= _kSevereLevel) severeCount++;
-        out.add(_historyEntry(r, truncateAt));
-      }
+      final out = [for (final r in rows) _historyEntry(r, truncateAt)];
       return jsonResult(_buildResponse(
         scope: scope,
         source: 'history',
         entries: out,
-        nextCursor: maxId,
+        maxTokens: maxTokens,
         bufferSize: null,
         bufferCapacity: null,
         streamActive: null,
-        severeCount: severeCount,
         levelMin: levelMin,
         loggerContains: loggerContains,
         messageContains: messageContains,
@@ -172,23 +170,15 @@ FutureOr<CallToolResult> logsTail(CallToolRequest request) async {
     isolateId: isolateFilter,
     limit: limit,
   );
-  final out = <Map<String, Object?>>[];
-  int? maxId;
-  int severeCount = 0;
-  for (final e in entries) {
-    if (maxId == null || e.id > maxId) maxId = e.id;
-    if ((e.level ?? 0) >= _kSevereLevel) severeCount++;
-    out.add(_liveEntry(e, truncateAt));
-  }
+  final out = [for (final e in entries) _liveEntry(e, truncateAt)];
   final response = _buildResponse(
     scope: scope,
     source: 'live',
     entries: out,
-    nextCursor: maxId,
+    maxTokens: maxTokens,
     bufferSize: attached.logBuffer.length,
     bufferCapacity: attached.logBuffer.capacity,
     streamActive: attached.logStream.isActive,
-    severeCount: severeCount,
     levelMin: levelMin,
     loggerContains: loggerContains,
     messageContains: messageContains,
@@ -256,11 +246,10 @@ Map<String, Object?> _buildResponse({
   required Scope scope,
   required String source,
   required List<Map<String, Object?>> entries,
-  required int? nextCursor,
+  required int? maxTokens,
   required int? bufferSize,
   required int? bufferCapacity,
   required bool? streamActive,
-  required int severeCount,
   required int? levelMin,
   required String? loggerContains,
   required List<String>? messageContains,
@@ -268,6 +257,15 @@ Map<String, Object?> _buildResponse({
   required CapabilityConfig caps,
 }) {
   final sessionId = scope.sessionId;
+  final nextCursor = entries.isEmpty ? null : entries.first['id'] as int;
+  final budgetTrim = trimToTokenBudget(entries, maxTokens);
+  final budgetDropped = budgetTrim.dropped;
+  if (budgetDropped > 0) {
+    entries.removeRange(budgetTrim.kept.length, entries.length);
+  }
+  final severeCount = entries
+      .where((e) => ((e['level'] as int?) ?? 0) >= _kSevereLevel)
+      .length;
   final filters =
       _filterDesc(levelMin, loggerContains, messageContains, sourceFilter);
   final nearCapacity = source == 'live' &&
@@ -291,6 +289,11 @@ Map<String, Object?> _buildResponse({
   }
   if (source == 'live' && streamActive == false) {
     warnings.add('Log stream is not subscribed — buffer will stay empty. Re-attach to start log capture.');
+  }
+  if (budgetDropped > 0) {
+    warnings.add('Trimmed $budgetDropped older record(s) to fit the '
+        '$maxTokens-token budget; since:nextCursor pages forward past them, so '
+        'raise maxTokens or narrow the filters to read them.');
   }
   if (entries.isEmpty && filters.isNotEmpty) {
     warnings.add('No matches — try widening levelMin / dropping loggerContains.');
@@ -337,6 +340,8 @@ Map<String, Object?> _buildResponse({
     if (streamActive != null) 'streamActive': streamActive,
     if (severeCount > 0) 'severeCount': severeCount,
     'nextCursor': nextCursor,
+    if (maxTokens != null && maxTokens > 0)
+      'budget': {'maxTokens': maxTokens, 'dropped': budgetDropped},
     if (warnings.isNotEmpty) 'warnings': warnings,
     'nextSteps': nextSteps,
     'entries': entries,

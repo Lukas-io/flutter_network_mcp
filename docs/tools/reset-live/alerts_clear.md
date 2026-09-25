@@ -50,7 +50,7 @@ Default `drainedOnly:true` keeps unread alerts safe. Tool refuses `drainedOnly:f
 
 `warnings` fires whenever `drainedOnly:false` was used (undrained alerts are gone permanently), and when undrained alerts still pend in scope. The first nextStep is `alerts_drain` when some still pend, otherwise `alerts_peek`.
 
-Errors: `drainedOnly:false` without `confirm:true` returns `bad_argument` (nextSteps: `alerts_drain` first, or retry with `confirm:true`). An unknown `severityMin` value currently fails with `internal` rather than `bad_argument`. Scope failures (nothing attached or opened, no `appNameContains` match, several matches) return an error with `nextSteps` but no `errorKind`.
+Errors: `drainedOnly:false` without `confirm:true` returns `bad_argument` (nextSteps: `alerts_drain` first, or retry with `confirm:true`). An unknown `severityMin` value returns `bad_argument` naming the valid values, and nothing is deleted. Scope failures return `no_session` (nothing attached or opened, or no attached session matches `appNameContains`) or `bad_argument` (several attached sessions match), with `nextSteps`.
 
 ## Pairs well with
 

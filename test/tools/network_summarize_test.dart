@@ -7,6 +7,8 @@ Map<String, Object?> row({
   String path = '/health',
   int? status = 200,
   int durationMs = 100,
+  bool ended = true,
+  bool hasError = false,
 }) {
   return {
     'method': method,
@@ -14,6 +16,8 @@ Map<String, Object?> row({
     'path': path,
     'status_code': status,
     'duration_us': durationMs * 1000,
+    'end_us': ended ? 1 : null,
+    'has_error': hasError ? 1 : 0,
   };
 }
 
@@ -107,14 +111,31 @@ void main() {
       expect(result.first['statusDist'], {'200': 3, '404': 1, '500': 1});
     });
 
-    test('null status counted as synthetic "error"', () {
+    test('a failed request with no status counts as synthetic "error"', () {
       final rows = [
         row(status: 200),
         row(status: null),
-        row(status: null),
+        row(status: null, ended: false, hasError: true),
       ];
       final result = summarizeRequests(rows);
       expect(result.first['statusDist'], {'200': 1, 'error': 2});
+    });
+
+    test('an in-flight request is not an error', () {
+      final rows = [
+        row(status: 200),
+        row(status: 500),
+        row(status: null, ended: false),
+        row(status: null, ended: false),
+      ];
+      final e = summarizeRequests(rows).first;
+      expect(e['statusDist'], {'200': 1, '500': 1, 'inFlight': 2});
+      expect(e['errorRate'], 0.5);
+    });
+
+    test('only in-flight requests give a zero error rate', () {
+      final e = summarizeRequests([row(status: null, ended: false)]).first;
+      expect(e['errorRate'], 0.0);
     });
 
     test('error rate = 4xx+5xx+null/total', () {

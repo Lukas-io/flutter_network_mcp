@@ -44,7 +44,7 @@ class LogBuffer {
   LogBuffer({int? capacity}) : capacity = capacity ?? _envCapacity();
 
   /// Reads `FLUTTER_NETWORK_MCP_LOG_BUFFER` (alias:
-  /// `FLUTTER_NETWORK_MCP_LOG_BUFFER_SIZE`), clamped 50–10000. Default 500.
+  /// `FLUTTER_NETWORK_MCP_LOG_BUFFER_SIZE`), clamped 50 to [maxCapacity]. Default [defaultCapacity].
   static int _envCapacity() {
     final env = io.Platform.environment;
     final raw = env['FLUTTER_NETWORK_MCP_LOG_BUFFER'] ??

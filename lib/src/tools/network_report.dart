@@ -110,16 +110,18 @@ FutureOr<CallToolResult> networkReport(CallToolRequest request) async {
     ];
   } else if (topErrors.isNotEmpty) {
     final worst = topErrors.first;
+    final host = (errorHotspots.first['host'] as String?) ?? '';
+    final hostArg = host.isEmpty ? '' : ' hostContains:"$host"';
     headline = 'Top problem: ${worst['endpoint']} is failing '
         '${((worst['errorRate'] as num) * 100).round()}% of '
         '${worst['count']} call(s).';
     nextSteps = [
       // D1: a host-wide search matches everything on the host; route to the
       // error rows directly instead.
-      'network_list statusMin:400 hostContains:"${_hostOf(worst)}" — list the failing requests, then network_get one',
+      'network_list statusMin:400$hostArg: list the failing requests, then network_get one',
       if (caps.isEnabled(Category.alerts) && pendingAlerts > 0)
         'alerts_drain — $pendingAlerts pending alert(s)',
-      'network_drift hostContains:"${_hostOf(worst)}" — check if the response shape changed',
+      'network_drift$hostArg: check if the response shape changed',
     ];
   } else if (topSlow.isNotEmpty &&
       ((topSlow.first['p95LatencyMs'] as int?) ?? 0) > 1000) {
@@ -151,13 +153,4 @@ FutureOr<CallToolResult> networkReport(CallToolRequest request) async {
     'slowestEndpoints': topSlow,
     'nextSteps': nextSteps,
   }, scopeSessionId: sid, scopeNote: scope.note);
-}
-
-String _hostOf(Map<String, Object?> endpoint) {
-  final ep = (endpoint['endpoint'] as String?) ?? '';
-  final parts = ep.split(' ');
-  if (parts.length < 2) return '';
-  final hostPath = parts[1];
-  final slash = hostPath.indexOf('/');
-  return slash <= 0 ? hostPath : hostPath.substring(0, slash);
 }
