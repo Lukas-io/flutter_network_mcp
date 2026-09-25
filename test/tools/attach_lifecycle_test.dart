@@ -12,7 +12,7 @@ void main() {
       final step = continuationReattachStep(
         lastUri: 'ws://live',
         lastApp: 'eats',
-        ageDesc: ' (~1h ago)',
+        attachedAgo: '1h',
         dead: false,
       );
       expect(step, contains('network_attach vmServiceUri:"ws://live"'));
@@ -23,9 +23,11 @@ void main() {
       final step = continuationReattachStep(
         lastUri: 'ws://dead',
         lastApp: 'eats',
-        ageDesc: ' (~1h ago)',
+        attachedAgo: '1h',
+        exitedAgo: '2m',
         dead: true,
       );
+      expect(step, contains('has exited ~2m ago'), reason: 'the exit age, not the attach age');
       expect(step, isNot(contains('network_attach vmServiceUri:"ws://dead"')));
       expect(step, contains('has exited'));
       expect(step, anyOf(contains('relaunch'), contains('wait_for_app')));
@@ -35,7 +37,6 @@ void main() {
       final step = continuationReattachStep(
         lastUri: 'ws://dead',
         lastApp: 'eats',
-        ageDesc: '',
         dead: true,
         relaunchUri: 'ws://new',
       );

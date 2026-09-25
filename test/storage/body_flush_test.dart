@@ -91,8 +91,19 @@ void main() {
       expect(warnings, isNot(contains('unrecoverable')));
     });
 
+    test('a history view of a session still open elsewhere is told to retry', () {
+      insertReq('r1');
+      final scope = Scope(sessionId: sid, appName: 'app', isLive: false);
+      final s = structured(
+          noBodyResult(scope, 'r1', 'response', 'history', null));
+      final warnings = (s['warnings'] as List).cast<String>().join(' ');
+      expect(warnings, contains('Retry'));
+      expect(warnings, isNot(contains('unrecoverable')));
+    });
+
     test('an ended session is told the bytes are unrecoverable', () {
       insertReq('r1');
+      dao.endSession(sid);
       final scope = Scope(sessionId: sid, appName: 'app', isLive: false);
       final s = structured(
           noBodyResult(scope, 'r1', 'response', 'history', null));

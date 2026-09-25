@@ -45,21 +45,32 @@ FutureOr<CallToolResult> networkWaitForApp(
 
   final start = DateTime.now();
   final deadline = start.add(Duration(milliseconds: timeoutMs));
+  int waited() => DateTime.now().difference(start).inMilliseconds;
   var polls = 0;
   Map<String, Object?>? last;
   while (true) {
     polls++;
     DtdProbe.invalidateCache();
-    final result = await performAttach(
-      appNameContains: needle,
-      defaultDtdUri: defaultDtdUri,
-    );
+    final result = needle == null
+        ? await _attachSoleApp(defaultDtdUri)
+        : await performAttach(
+            appNameContains: needle,
+            defaultDtdUri: defaultDtdUri,
+          );
     if (result['attached'] == true) {
-      return jsonResult({
-        ...result,
-        'waitedMs': DateTime.now().difference(start).inMilliseconds,
-        'polls': polls,
-      });
+      return jsonResult({...result, 'waitedMs': waited(), 'polls': polls});
+    }
+    // Several matching apps or a full session table: waiting cannot change it.
+    if (result['retryable'] == false) {
+      return errorResult(
+        '${result['error']}',
+        kind: ErrorKind.badArgument,
+        extra: {
+          ...result..remove('error')..remove('retryable'),
+          'waitedMs': waited(),
+          'polls': polls,
+        },
+      );
     }
     last = result;
     if (DateTime.now().add(const Duration(seconds: 1)).isAfter(deadline)) break;
@@ -81,5 +92,34 @@ FutureOr<CallToolResult> networkWaitForApp(
         'network_status — see what DTD reports right now',
       ],
     },
+  );
+}
+
+/// Without a name to match, looks across every running DTD (not only the startup default) and attaches when exactly one app is up.
+Future<Map<String, Object?>> _attachSoleApp(String? defaultDtdUri) async {
+  final listings = await DtdProbe.probeAll();
+  final apps = [
+    for (final l in listings)
+      for (final a in l.apps) (name: a.name, uri: a.uri),
+  ];
+  if (apps.isEmpty) {
+    return {'error': 'No app has registered with any running DTD yet.'};
+  }
+  if (apps.length > 1) {
+    return {
+      'error': '${apps.length} apps are running; pass appNameContains to pick one.',
+      'retryable': false,
+      'apps': [
+        for (final a in apps) {'name': a.name, 'uri': a.uri},
+      ],
+      'nextSteps': [
+        for (final a in apps)
+          'network_wait_for_app appNameContains:"${a.name ?? a.uri}"',
+      ],
+    };
+  }
+  return performAttach(
+    vmServiceUri: apps.single.uri,
+    defaultDtdUri: defaultDtdUri,
   );
 }
