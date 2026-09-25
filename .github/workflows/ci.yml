@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  dart:
+    name: Dart (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dart-lang/setup-dart@6afc89df92d6eb3834022f73cd65adc8cdfcb92d # v1.8.1
+        with:
+          sdk: stable
+      - run: dart pub get
+      - name: Analyze
+        run: dart analyze --fatal-warnings lib bin test
+      - name: Test
+        run: dart test
+        env:
+          FLUTTER_NETWORK_MCP_NO_TELEMETRY: 'true'
+          FLUTTER_NETWORK_MCP_NO_UPDATE_CHECK: 'true'

@@ -1,4 +1,5 @@
 import 'dart:io' as io;
+import 'dart:isolate';
 
 import 'package:path/path.dart' as p;
 
@@ -17,6 +18,8 @@ class DocResources {
   /// ladder: Platform.script when it's a `.dart` file (running from
   /// source), else the newest `<pub_cache>/git/flutter_network_mcp-*`.
   static io.Directory? resolveDocsDir() {
+    final own = _docsNextToPackage();
+    if (own != null) return own;
     final script = io.Platform.script.toFilePath();
     if (script.endsWith('.dart')) {
       // .../<root>/bin/flutter_network_mcp.dart -> <root>/docs
@@ -68,6 +71,22 @@ class DocResources {
     }
     out.sort((a, b) => a.uri.compareTo(b.uri));
     return out;
+  }
+
+  /// The `docs/` beside this package's own `lib/`, so the guides match the running code; null in a compiled binary, which has no package config.
+  static io.Directory? _docsNextToPackage() {
+    try {
+      final lib = Isolate.resolvePackageUriSync(
+          Uri.parse('package:flutter_network_mcp/'));
+      if (lib == null) return null;
+      final docs = io.Directory(
+          p.join(p.dirname(p.normalize(lib.toFilePath())), 'docs'));
+      return io.File(p.join(docs.path, 'RESPONSE_CONTRACT.md')).existsSync()
+          ? docs
+          : null;
+    } on Object {
+      return null;
+    }
   }
 
   static String? _pubCacheDir() {
