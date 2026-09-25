@@ -17,7 +17,7 @@ void main() {
       CapturesDatabase.open(dataDir: dir.path);
       dao = CapturesDao();
       // Three apps, ONE shared working directory (the #27 scenario).
-      for (final app in ['eatseats', 'acme_pay', 'eats_driver']) {
+      for (final app in ['eatsapp', 'acme_pay', 'eats_driver']) {
         dao.createSession(
           appName: app,
           vmServiceUri: 'ws://$app/ws',
@@ -46,7 +46,7 @@ void main() {
       final rows = dao.listSessions(appNameContains: 'eats');
       expect(
         rows.map((r) => r['app_name']).toSet(),
-        {'eatseats', 'eats_driver'},
+        {'eatsapp', 'eats_driver'},
       );
     });
 
