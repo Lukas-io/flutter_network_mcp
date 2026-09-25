@@ -419,6 +419,8 @@ FutureOr<CallToolResult> _historyGet({
       final bodyState = SessionStateView.of(scope.sessionId);
       final why = bodyState.canGenerateTraffic
           ? 'not persisted yet (writer may still be backfilling)'
+          : bodyState.capturedElsewhere
+          ? 'not persisted yet (another server process captures this session and may still be backfilling)'
           : 'was never captured before the session ${bodyState.isEnded ? "ended" : "was interrupted"}';
       if (reqBlob == null && includeBodies) {
         warnings.add('Request body $why.');

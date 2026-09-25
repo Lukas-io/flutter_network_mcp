@@ -21,7 +21,7 @@ when_to_use: When you want read tools to query a past session instead of the liv
 
 Validates the id exists, sets `Session.instance.viewedSessionId`. Read tools that auto-resolve their scope (`network_list/get/body`, `socket_list/get`, `logs_tail`, `network_search`, `network_diff`, and others) use this pointer when you pass no `sessionId` / `appNameContains`, even while live sessions are attached; their replies then carry a warning saying they read history. An explicit `sessionId` or `appNameContains` on a read tool overrides it.
 
-The summary labels the session `live` (this server process is attached), `ended`, or `interrupted` (no end time and this process is not attached; another server process sharing the DB may still be capturing into it). Opening does not attach anything.
+The summary labels the session `live` (this server process is attached), `live, captured by another server process` (another live server process sharing the DB captures into it; the reply also carries `capturedElsewhere: true`), `ended`, or `interrupted` (no end time and no live server process captures into it). Opening does not attach anything.
 
 ## Args
 
@@ -48,7 +48,7 @@ The summary labels the session `live` (this server process is attached), `ended`
 }
 ```
 
-`appName`, `endedMs`, `projectPath`, and `note` are omitted when null. `isLive` is true only when the id is this process's sole attached session. The `network_list` and `network_search` nextSteps appear only when those capabilities are enabled.
+`appName`, `endedMs`, `projectPath`, and `note` are omitted when null; `capturedElsewhere` appears only when true. `isLive` is true only when the id is this process's sole attached session. The `network_list` and `network_search` nextSteps appear only when those capabilities are enabled.
 
 `warnings` appears when you open the live session (this process's sole attached session): reads now come from the DB, not the incremental live profile.
 

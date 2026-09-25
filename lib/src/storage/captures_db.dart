@@ -94,6 +94,17 @@ class CapturesDao {
     ).first['n'] as int;
   }
 
+  /// Sessions a live server process other than this one captures into.
+  Set<int> sessionsCapturedElsewhere() {
+    _pruneDeadAttachments();
+    return {
+      for (final r in _db.select(
+          'SELECT DISTINCT session_id FROM session_attachments WHERE pid<>?',
+          [io.pid]))
+        r['session_id'] as int,
+    };
+  }
+
   void _pruneDeadAttachments({int? sessionId}) {
     final rows = _db.select(
       sessionId == null
@@ -1355,26 +1366,52 @@ class CapturesDao {
     return true;
   }
 
-  /// Drops captured BLOB bodies (request + response) for matching requests.
-  /// Keeps the http_requests metadata row intact.
-  /// [olderThanMs] is millis-since-epoch; requests with start_us older than
-  /// `olderThanMs * 1000` lose their bodies.
-  int purgeBodies({int? sessionId, int? olderThanMs}) {
+  /// Drops captured BLOB bodies (request + response) for matching requests, keeping the http_requests rows. Only the purged requests go back to `bodies_fetched=0` and lose their body text from the search index (their URL stays searchable). [olderThanMs] matches requests of the same session that started before it. Returns the bodies dropped and the sessions they came from.
+  ({int purged, Set<int> sessions}) purgeBodies({int? sessionId, int? olderThanMs}) {
     final (where, params, _) = _bodyPurgeWhere(sessionId, olderThanMs);
+    final targets = _db.select(
+      'SELECT DISTINCT session_id, vm_id FROM http_bodies$where',
+      params,
+    );
+    if (targets.isEmpty) return (purged: 0, sessions: const <int>{});
     final before = _db
         .select('SELECT COUNT(*) AS n FROM http_bodies$where', params)
         .first['n'] as int;
-    if (before == 0) return 0;
-    _db.execute('DELETE FROM http_bodies$where', params);
-    if (sessionId != null) {
-      _db.execute(
-        'UPDATE http_requests SET bodies_fetched=0 WHERE session_id=?',
-        [sessionId],
-      );
-    } else {
-      _db.execute('UPDATE http_requests SET bodies_fetched=0');
+    _db.execute('BEGIN');
+    try {
+      _db.execute('DELETE FROM http_bodies$where', params);
+      _forgetBodies([
+        for (final t in targets) (t['session_id'] as int, t['vm_id'] as String),
+      ]);
+      _db.execute('COMMIT');
+    } catch (_) {
+      _db.execute('ROLLBACK');
+      rethrow;
     }
-    return before;
+    return (
+      purged: before,
+      sessions: {for (final t in targets) t['session_id'] as int},
+    );
+  }
+
+  /// Marks [requests] as having no stored bodies and blanks their body text in the search index, keeping the URL.
+  void _forgetBodies(Iterable<(int, String)> requests) {
+    final unfetch = _db.prepare(
+        'UPDATE http_requests SET bodies_fetched=0 WHERE session_id=? AND vm_id=?');
+    final unindex = _db.prepare(
+      "UPDATE http_search SET content_request='', content_response='' "
+      'WHERE rowid IN (SELECT rowid FROM http_search_map '
+      'WHERE session_id=? AND vm_id=?)',
+    );
+    try {
+      for (final (sid, vmId) in requests) {
+        unfetch.execute([sid, vmId]);
+        unindex.execute([sid, vmId]);
+      }
+    } finally {
+      unfetch.close();
+      unindex.close();
+    }
   }
 
   /// Dry-run count + total bytes for [purgeBodies] with the same filters.
@@ -1401,7 +1438,9 @@ class CapturesDao {
       params.add(sessionId);
     }
     if (olderThanMs != null) {
-      clauses.add('vm_id IN (SELECT vm_id FROM http_requests WHERE start_us < ?)');
+      clauses.add('EXISTS (SELECT 1 FROM http_requests r '
+          'WHERE r.session_id = http_bodies.session_id '
+          'AND r.vm_id = http_bodies.vm_id AND r.start_us < ?)');
       params.add(olderThanMs * 1000);
     }
     final where = clauses.isEmpty ? '' : ' WHERE ${clauses.join(' AND ')}';
@@ -1496,12 +1535,12 @@ class CapturesDao {
   /// across all sessions except [protectedSessionIds], stopping once at least
   /// [targetBytes] of body content has been freed (or nothing is left). Keeps
   /// the `http_requests` metadata rows (their shape/latency stays useful) and
-  /// clears their `bodies_fetched`. Returns the count + bytes freed.
-  ({int dropped, int bytesFreed}) evictOldestBodies({
+  /// clears their `bodies_fetched` and indexed body text. Returns the count, bytes freed and sessions touched.
+  ({int dropped, int bytesFreed, Set<int> sessions}) evictOldestBodies({
     required int targetBytes,
     Set<int> protectedSessionIds = const {},
   }) {
-    if (targetBytes <= 0) return (dropped: 0, bytesFreed: 0);
+    if (targetBytes <= 0) return (dropped: 0, bytesFreed: 0, sessions: const <int>{});
     final notIn = _notInClause('b.session_id', protectedSessionIds);
     final rows = _db.select(
       'SELECT b.rowid AS rid, b.session_id AS sid, b.vm_id AS vid, b.size AS sz '
@@ -1519,18 +1558,17 @@ class CapturesDao {
       freed += (row['sz'] as int?) ?? 0;
       if (freed >= targetBytes) break;
     }
-    if (rowids.isEmpty) return (dropped: 0, bytesFreed: 0);
+    if (rowids.isEmpty) return (dropped: 0, bytesFreed: 0, sessions: const <int>{});
     _db.execute(
       'DELETE FROM http_bodies WHERE rowid IN (${rowids.map((_) => '?').join(',')})',
       rowids,
     );
-    for (final (sid, vid) in touched) {
-      _db.execute(
-        'UPDATE http_requests SET bodies_fetched=0 WHERE session_id=? AND vm_id=?',
-        [sid, vid],
-      );
-    }
-    return (dropped: rowids.length, bytesFreed: freed);
+    _forgetBodies(touched);
+    return (
+      dropped: rowids.length,
+      bytesFreed: freed,
+      sessions: {for (final (sid, _) in touched) sid},
+    );
   }
 
   /// Deletes up to [maxRows] of the oldest `log_records` (by `timestamp_ms`)
