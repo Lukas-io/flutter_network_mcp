@@ -7,6 +7,9 @@ enum Category {
   /// dart:io socket tools.
   sockets('sockets'),
 
+  /// WebSocket connections and message metadata read from the VM timeline: ws_list / ws_get.
+  websockets('websockets'),
+
   /// Log streams + logs_tail / logs_clear.
   logs('logs'),
 

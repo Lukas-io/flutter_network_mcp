@@ -85,19 +85,25 @@ FutureOr<CallToolResult> sessionDelete(CallToolRequest request) async {
   final httpCount = row['http_count'] ?? 0;
   final logCount = row['log_count'] ?? 0;
   final socketCount = row['socket_count'] ?? 0;
+  final wsCount = row['websocket_count'] as int? ?? 0;
   final note = row['note'] as String?;
 
   if (!confirm) {
     return jsonResult({
       'summary': 'DRY-RUN — would delete session $id (${appName ?? "unnamed"}) and '
-          '$httpCount http, $logCount log(s), $socketCount socket(s). Cannot be undone.',
+          '$httpCount http, $logCount log(s), $socketCount socket(s)${wsCount > 0 ? ", $wsCount WebSocket(s)" : ""}. Cannot be undone.',
       'dryRun': true,
       'sessionId': id,
       if (appName != null) 'appName': appName,
       'startedMs': row['started_at'],
       if (row['ended_at'] != null) 'endedMs': row['ended_at'],
       if (note != null) 'note': note,
-      'counts': {'http': httpCount, 'sockets': socketCount, 'logs': logCount},
+      'counts': {
+        'http': httpCount,
+        'sockets': socketCount,
+        'logs': logCount,
+        if (wsCount > 0) 'websockets': wsCount,
+      },
       'nextSteps': [
         if (caps.isEnabled(Category.sessions))
           'session_export id:$id format:"har" outPath:"..." — back up before deleting',

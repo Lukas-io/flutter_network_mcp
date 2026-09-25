@@ -77,6 +77,10 @@ The index below is by **use case** ("I want to do X — which tool?"). Some tool
 - [`socket_list`](tools/sockets/socket_list.md) — TCP/UDP byte counts + lifetimes.
 - [`socket_get`](tools/sockets/socket_get.md) — one socket's detail.
 
+### [WebSockets](tools/websockets/)
+- [`ws_list`](tools/websockets/ws_list.md): connections with url, state, close code and reason, message counts and bytes. Read from dart:io's timeline, nothing added to the app.
+- [`ws_get`](tools/websockets/ws_get.md): one connection's message timeline (direction, type, size; no contents).
+
 ### [Power user / ad-hoc queries](tools/power/)
 - [`network_query`](tools/power/network_query.md) — read-only SQL escape hatch (BLOB-safe, cell-capped, 500-row cap).
 - [`network_correlate`](tools/power/network_correlate.md) — find matching requests across 2+ sessions (webhook originator + receiver pattern). Requires explicit `sessionIds:[int]`.
@@ -120,6 +124,7 @@ For `--capabilities` / `--disable` startup flags — the tools each capability g
 |---|---|
 | `http` | `network_list`, `network_get`, `network_body`, `network_body_outline`, `network_body_query`, `network_clear`, `network_diff`, `network_replay`, `network_replay_as_test`, `network_summarize`, `network_diff_session`, `network_drift`, `network_report` |
 | `sockets` | `socket_list`, `socket_get`, `socket_clear` |
+| `websockets` | `ws_list`, `ws_get` |
 | `logs` | `logs_tail`, `logs_clear` |
 | `http` or `logs` | `correlate_at` |
 | `alerts` | `alerts_drain`, `alerts_peek`, `alerts_config`, `alerts_clear`, `alert_patterns` |

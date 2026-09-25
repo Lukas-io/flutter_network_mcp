@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added: WebSocket capture with nothing added to the app
+
+- `ws_list` lists the app's WebSocket connections: url, state (`connecting`, `open`, `closed`, `failed`, `error`), connect time, duration, who closed it with which code and reason, and messages and bytes each way. `ws_get` returns one connection's event timeline (time since start, direction, text / binary / ping / pong / close / error, size), paged with `afterId`.
+- Read from the `WebSocket.*` events dart:io writes to the VM timeline (Dart 3.13+, Flutter 3.47+). The server adds the `Dart` stream to the recorded timeline streams (keeping any DevTools already records) and reads new events when the socket byte counters moved or a WebSocket tool is called, so an animating app is not re-read every poll. Message contents are not in those events and are not captured.
+- Apps built with an older Dart are detected at attach, and `ws_list` says why it is empty instead of returning nothing.
+- New capability `websockets`. Schema v14 adds `websocket_connections` and `websocket_messages`; `session_list` and `session_delete` count WebSockets, `network_query` names the tables. Events re-read by an overlapping poll or by a second server process on the same app are stored once.
+
+
 ### Fixed: error kinds, validation and descriptions
 
 - Scope errors now carry `errorKind`: `no_session` when nothing is attached or opened, or no attached session matches `appNameContains`; `bad_argument` when several match.
@@ -551,7 +559,7 @@ Trust-breaking bug fixes from the first round of real dogfooding (issues #13, #1
 
 **Fix:** the backfill gate now also picks up response-incomplete requests once they're older than a short grace window, capped by a new `body_fetch_attempts` counter (schema **v6**) so genuinely body-less or transport-invisible requests stop being re-polled instead of looping forever. The misleading `network_get` warning ("bodies may grow on a subsequent call") is replaced with an accurate one that tells the agent when a response is terminally unreachable via vm_service and to fall back to `logs_tail`.
 
-> Note: responses from transports that bypass `dart:io HttpClient` (custom `HttpClientAdapter`, native HTTP) remain invisible at the vm_service layer — that's the realtime-capture gap tracked for the 0.9.x companion package. This fix restores everything the profiler *does* capture.
+> Note: responses from transports that bypass `dart:io HttpClient` (custom `HttpClientAdapter`, native HTTP) remain invisible at the vm_service layer — that's the realtime-capture gap. This fix restores everything the profiler *does* capture.
 
 ### Fixed — `network_attach appNameContains` failed across DTDs (#14)
 

@@ -145,6 +145,7 @@ class CapturesDatabase {
     if (from == 10 && to == 11) return migrationV10toV11;
     if (from == 11 && to == 12) return migrationV11toV12;
     if (from == 12 && to == 13) return migrationV12toV13;
+    if (from == 13 && to == 14) return migrationV13toV14;
     throw StateError('No migration defined for $from → $to.');
   }
 

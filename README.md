@@ -73,7 +73,7 @@ Captures are saved automatically. The next day, `session_list` shows what you ca
 
 ## What it does
 
-Live capture. HTTP requests (method, URL, headers, status, bodies), `dart:io` sockets, and app logs, streamed as they happen.
+Live capture. HTTP requests (method, URL, headers, status, bodies), `dart:io` sockets, WebSocket connections and their message timeline (type and size, not contents; apps built with Dart 3.13+), and app logs, streamed as they happen. Nothing is added to the app.
 
 Persistence. Every attach opens a SQLite session. Reopen past sessions, run ad-hoc SQL, or export to HAR 1.2 for sharing.
 
@@ -85,7 +85,7 @@ Multi-app. Attach to several running apps at once, for example a customer app an
 
 Capture control. Host and path glob filters, an opt-in allowlist, and an ephemeral no-persist mode for sessions you don't want written to disk. Sensitive fields are redacted before storage per a configurable policy.
 
-The server exposes 40 tools across HTTP, sockets, logs, alerts, search, sessions, SQL, and admin categories. Every tool returns a consistent shape with a summary, suggested next steps, and any warnings, so the agent can act without parsing prose.
+The server exposes 49 tools across HTTP, sockets, WebSockets, logs, alerts, search, sessions, SQL, and admin categories. Every tool returns a consistent shape with a summary, suggested next steps, and any warnings, so the agent can act without parsing prose.
 
 ## Documentation
 

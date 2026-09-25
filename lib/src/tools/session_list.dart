@@ -84,6 +84,8 @@ FutureOr<CallToolResult> sessionList(CallToolRequest request) async {
           'counts': {
             'http': r['http_count'],
             'sockets': r['socket_count'],
+            if ((r['websocket_count'] as int? ?? 0) > 0)
+              'websockets': r['websocket_count'],
             'logs': r['log_count'],
           },
         },
