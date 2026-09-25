@@ -93,7 +93,10 @@ base class FlutterNetworkMcpServer extends MCPServer
     final caps = CapabilityConfig.instance;
 
     _register(networkStatusTool, (req) => networkStatus(req, defaultDtdUri));
-    _register(networkWaitForAppTool, (req) => networkWaitForApp(req, defaultDtdUri));
+    _register(
+        networkWaitForAppTool,
+        (req) => networkWaitForApp(req, defaultDtdUri,
+            notifyProgress: notifyProgress));
     _register(networkAttachTool, (req) => networkAttach(req, defaultDtdUri));
     _register(networkDetachTool, networkDetach);
     _register(networkDiscoverDtdTool, networkDiscoverDtd);

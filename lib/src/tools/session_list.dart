@@ -56,6 +56,13 @@ FutureOr<CallToolResult> sessionList(CallToolRequest request) async {
     );
     final live = Session.instance.liveSessionId;
     final viewed = Session.instance.viewedSessionId;
+    final elsewhere = rows.any((r) => r['ended_at'] == null)
+        ? CapturesDao().sessionsCapturedElsewhere()
+        : const <int>{};
+    bool capturedElsewhere(Map<String, Object?> r) =>
+        r['ended_at'] == null &&
+        SessionRegistry.instance.attachedById(r['id'] as int) == null &&
+        elsewhere.contains(r['id']);
     final sessions = [
       for (final r in rows)
         {
@@ -68,7 +75,9 @@ FutureOr<CallToolResult> sessionList(CallToolRequest request) async {
       'status': sessionStatusLabel(
         isAttached: SessionRegistry.instance.attachedById(r['id'] as int) != null,
         endedAtMs: r['ended_at'],
+        capturedElsewhere: capturedElsewhere(r),
       ),
+          if (capturedElsewhere(r)) 'capturedElsewhere': true,
           if (r['app_name'] != null) 'appName': r['app_name'],
           if (r['project_path'] != null) 'projectPath': r['project_path'],
           if (r['note'] != null) 'note': r['note'],

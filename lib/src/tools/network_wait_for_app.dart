@@ -31,13 +31,19 @@ final networkWaitForAppTool = Tool(
   ),
 );
 
+/// How often a waiting call reports progress to a client that asked for it.
+const Duration kWaitProgressEvery = Duration(seconds: 15);
+
 /// Polls DTD about once a second (cache invalidated each time so a newly
 /// registered app is seen) until an unambiguous app attaches or [timeoutMs]
 /// passes. Deadline-exempt (see kUnboundedTools) so the wait is not cut short.
+/// When the request carries a progress token, [notifyProgress] receives the current phase every [progressEvery].
 FutureOr<CallToolResult> networkWaitForApp(
   CallToolRequest request,
-  String? defaultDtdUri,
-) async {
+  String? defaultDtdUri, {
+  void Function(ProgressNotification)? notifyProgress,
+  Duration progressEvery = kWaitProgressEvery,
+}) async {
   final args = request.arguments ?? const <String, Object?>{};
   final rawTimeout = (args['timeoutMs'] as int?) ?? 30000;
   final timeoutMs = rawTimeout.clamp(1000, 300000);
@@ -48,36 +54,61 @@ FutureOr<CallToolResult> networkWaitForApp(
   int waited() => DateTime.now().difference(start).inMilliseconds;
   var polls = 0;
   Map<String, Object?>? last;
-  while (true) {
-    polls++;
-    DtdProbe.invalidateCache();
-    final result = needle == null
-        ? await _attachSoleApp(defaultDtdUri)
-        : await performAttach(
-            appNameContains: needle,
-            defaultDtdUri: defaultDtdUri,
-          );
-    if (result['attached'] == true) {
-      return jsonResult({...result, 'waitedMs': waited(), 'polls': polls});
+  final waiting = needle == null
+      ? 'waiting for an app to register with DTD'
+      : 'waiting for an app named like "$needle" to register with DTD';
+  var phase = waiting;
+  final token = request.meta?.progressToken;
+  final ticker = token == null || notifyProgress == null
+      ? null
+      : Timer.periodic(progressEvery, (_) {
+          final secs = waited() ~/ 1000;
+          final lastError = last?['error'];
+          notifyProgress(ProgressNotification(
+            progressToken: token,
+            progress: waited(),
+            total: timeoutMs,
+            message: '$phase: ${secs}s of ${timeoutMs ~/ 1000}s, $polls poll(s)'
+                '${lastError != null ? '. Last attempt: $lastError' : ''}',
+          ));
+        });
+  try {
+    while (true) {
+      polls++;
+      DtdProbe.invalidateCache();
+      phase = 'probing DTD and attaching';
+      final result = needle == null
+          ? await _attachSoleApp(defaultDtdUri)
+          : await performAttach(
+              appNameContains: needle,
+              defaultDtdUri: defaultDtdUri,
+            );
+      if (result['attached'] == true) {
+        closeStaleViewAfterAttach(result);
+        return jsonResult({...result, 'waitedMs': waited(), 'polls': polls});
+      }
+      // Several matching apps or a full session table: waiting cannot change it.
+      if (result['retryable'] == false) {
+        return errorResult(
+          '${result['error']}',
+          kind: ErrorKind.badArgument,
+          extra: {
+            ...result
+              ..remove('error')
+              ..remove('errorKind')
+              ..remove('retryable'),
+            'waitedMs': waited(),
+            'polls': polls,
+          },
+        );
+      }
+      last = result;
+      phase = waiting;
+      if (DateTime.now().add(const Duration(seconds: 1)).isAfter(deadline)) break;
+      await Future<void>.delayed(const Duration(seconds: 1));
     }
-    // Several matching apps or a full session table: waiting cannot change it.
-    if (result['retryable'] == false) {
-      return errorResult(
-        '${result['error']}',
-        kind: ErrorKind.badArgument,
-        extra: {
-          ...result
-            ..remove('error')
-            ..remove('errorKind')
-            ..remove('retryable'),
-          'waitedMs': waited(),
-          'polls': polls,
-        },
-      );
-    }
-    last = result;
-    if (DateTime.now().add(const Duration(seconds: 1)).isAfter(deadline)) break;
-    await Future<void>.delayed(const Duration(seconds: 1));
+  } finally {
+    ticker?.cancel();
   }
 
   return errorResult(

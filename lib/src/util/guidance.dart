@@ -14,6 +14,7 @@ class SessionStateView {
     required this.isEnded,
     required this.appDied,
     required this.isViewing,
+    required this.capturedElsewhere,
     this.endedAtMs,
   });
 
@@ -34,9 +35,12 @@ class SessionStateView {
 
   final int? endedAtMs;
 
+  /// Another live server process sharing the capture DB still captures into this session.
+  final bool capturedElsewhere;
+
   /// Not attached and no recorded end: the capture stopped without a clean
   /// detach (server killed pre-0.9.17, crash, etc.).
-  bool get isInterrupted => !isAttached && !isEnded;
+  bool get isInterrupted => !isAttached && !isEnded && !capturedElsewhere;
 
   /// True when telling the agent to "drive the app" makes any sense.
   bool get canGenerateTraffic => isAttached && !appDied;
@@ -46,11 +50,17 @@ class SessionStateView {
     final attached = registry.attachedById(sessionId) != null;
     int? endedAtMs;
     var ended = false;
+    var elsewhere = false;
     if (CapturesDatabase.isOpen) {
       try {
-        final row = CapturesDao().getSession(sessionId);
+        final dao = CapturesDao();
+        final row = dao.getSession(sessionId);
         endedAtMs = row?['ended_at'] as int?;
         ended = endedAtMs != null;
+        elsewhere = row != null &&
+            !ended &&
+            !attached &&
+            dao.otherAttachedProcesses(sessionId) > 0;
       } catch (_) {/* DB closing — treat as unknown */}
     }
     return SessionStateView._(
@@ -59,6 +69,7 @@ class SessionStateView {
       isEnded: ended,
       appDied: registry.recentlyDied.any((d) => d.sessionId == sessionId),
       isViewing: Session.instance.viewedSessionId == sessionId,
+      capturedElsewhere: elsewhere,
       endedAtMs: endedAtMs,
     );
   }
@@ -67,12 +78,15 @@ class SessionStateView {
 /// Tri-state label for session displays (F11): "live" only when actually
 /// attached; a NULL ended_at on a non-attached session is "interrupted",
 /// never "still live".
+/// A session another live server process captures into ([capturedElsewhere]) is live too.
 String sessionStatusLabel({
   required bool isAttached,
   required Object? endedAtMs,
+  bool capturedElsewhere = false,
 }) {
   if (isAttached) return 'live';
   if (endedAtMs != null) return 'ended';
+  if (capturedElsewhere) return 'live';
   return 'interrupted';
 }
 
@@ -88,6 +102,10 @@ String emptyCaptureHint(SessionStateView state, {required String reRun}) {
   if (state.appDied) {
     return 'The app for session ${state.sessionId} exited — this capture is '
         'final. Whatever was recorded is all there is.';
+  }
+  if (state.capturedElsewhere) {
+    return 'Session ${state.sessionId} is captured by another server process, '
+        'so new traffic still lands in it. Drive the app, then re-run $reRun.';
   }
   final how = state.isEnded ? 'ended' : 'was interrupted (no clean end)';
   return 'Session ${state.sessionId} $how — this is its complete capture; '
