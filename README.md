@@ -111,4 +111,4 @@ Built with `package:dart_mcp`, `package:dtd`, `package:vm_service`, and `package
 
 ## License
 
-MIT
+[Apache License 2.0](LICENSE). See [NOTICE](NOTICE).
