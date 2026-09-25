@@ -80,6 +80,27 @@ void main() {
       expect(_ended(sid), isTrue);
     });
 
+    test('a pid now held by a process that started after the attach is treated as gone', () {
+      final sid = session('ws://reused');
+      final hourAgo = DateTime.now().millisecondsSinceEpoch - 3600 * 1000;
+      CapturesDatabase.instance.raw.execute(
+        'INSERT INTO session_attachments(session_id, pid, attached_at) VALUES (?,?,?)',
+        [sid, other.pid, hourAgo],
+      );
+      expect(dao.otherAttachedProcesses(sid), 0);
+    });
+
+    test('keep:true releases this process without ending the row', () {
+      final sid = session('ws://kept');
+      dao.attachProcess(sid);
+      dao.releaseAttachment(sid);
+      final held = CapturesDatabase.instance.raw.select(
+          'SELECT COUNT(*) AS n FROM session_attachments WHERE session_id=?',
+          [sid]).first['n'];
+      expect(held, 0);
+      expect(_ended(sid), isFalse);
+    });
+
     test('the startup sweep spares it but ends rows whose processes are gone', () {
       final shared = session('ws://shared');
       dao.attachProcess(shared, pid: other.pid);
@@ -143,5 +164,12 @@ void main() {
         .select("SELECT value FROM _meta WHERE key='schema_version'")
         .first['value'];
     expect(version, '${currentVersion}');
+  });
+
+  test('parseElapsed reads every ps etime shape', () {
+    expect(parseElapsed('00:07'), const Duration(seconds: 7));
+    expect(parseElapsed('01:02:03'), const Duration(hours: 1, minutes: 2, seconds: 3));
+    expect(parseElapsed('2-01:00:00'), const Duration(days: 2, hours: 1));
+    expect(parseElapsed('soon'), isNull);
   });
 }
