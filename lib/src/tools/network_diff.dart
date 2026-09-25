@@ -155,6 +155,13 @@ FutureOr<CallToolResult> networkDiff(CallToolRequest request) async {
             : 'One or both response bodies are binary — body diff skipped.',
       );
     }
+    for (final (side, readable) in [('A', readableA), ('B', readableB)]) {
+      final failure = readable?.flags['decryptionFailed'];
+      if (failure != null) {
+        warnings.add('Response body $side did not decrypt ($failure); it is '
+            'diffed as captured.');
+      }
+    }
     if (bodyDiff?['truncated'] == true) {
       warnings.add('Body diff truncated at $maxLines lines per side.');
     }
@@ -175,8 +182,8 @@ FutureOr<CallToolResult> networkDiff(CallToolRequest request) async {
       'scope': scope.toBlock(),
       'sessionId': sessionId,
       'summary': summary,
-      'a': _summary(a),
-      'b': _summary(b),
+      'a': {..._summary(a), ...?readableA?.flags},
+      'b': {..._summary(b), ...?readableB?.flags},
       if (statusChanged)
         'statusDiff': {'a': a['status_code'], 'b': b['status_code']},
       if (methodChanged)

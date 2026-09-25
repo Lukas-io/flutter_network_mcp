@@ -97,6 +97,23 @@ void main() {
     expect(PlaintextIndex.instance.search(query: 'Adaeze', sessionId: sid), isEmpty);
   });
 
+  test('forget drops one session and keeps the others', () {
+    request('r1');
+    final other = dao.createSession(
+        appName: 'bank2', vmServiceUri: 'ws://y', isolateId: null, projectPath: null);
+    final keep = sid;
+    sid = other;
+    request('r1');
+    PlaintextIndex.instance.refresh(keep, scheme);
+    PlaintextIndex.instance.refresh(other, scheme);
+
+    PlaintextIndex.instance.forget(other);
+    expect(PlaintextIndex.instance.sessions, {keep});
+    expect(PlaintextIndex.instance.indexedCount(other), 0);
+    expect(PlaintextIndex.instance.search(query: 'Adaeze', sessionId: other), isEmpty);
+    expect(PlaintextIndex.instance.search(query: 'Adaeze', sessionId: keep), hasLength(1));
+  });
+
   test('correlate returns the plaintext match oldest first', () {
     request('r1');
     PlaintextIndex.instance.refresh(sid, scheme);
