@@ -9,6 +9,7 @@ import 'package:vm_service/vm_service.dart';
 import '../util/http_timing.dart';
 import 'database.dart';
 import '../util/searchable_text.dart';
+import '../util/body_decoder.dart';
 
 /// Typed accessors for the captures database. Holds no state of its own —
 /// all calls go directly through [CapturesDatabase.instance].
@@ -1815,7 +1816,8 @@ class CapturesDao {
   /// stored textish bodies. Idempotent; returns the number repaired.
   int repairSearchIndex({int limit = 50000}) {
     final missing = _db.select(
-      'SELECT r.session_id, r.vm_id, r.isolate_id, r.url, r.content_type '
+      'SELECT r.session_id, r.vm_id, r.isolate_id, r.url, r.content_type, '
+      'r.request_headers_json, r.response_headers_json '
       'FROM http_requests r '
       'LEFT JOIN http_search_map m '
       '  ON m.session_id = r.session_id AND m.vm_id = r.vm_id '
@@ -1837,7 +1839,7 @@ class CapturesDao {
         for (final b in bodies) {
           final text = searchableText(
             b['bytes'] as Uint8List?,
-            row['content_type'] as String?,
+            storedContentType(_rowToMap(row), b['which'] as String),
           );
           if (text == null) continue;
           if (b['which'] == 'request') {
