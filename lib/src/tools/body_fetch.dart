@@ -174,8 +174,11 @@ CallToolResult noBodyResult(
   final bodyStatus = status['bodyStatus'];
   final warnings = <String>[];
   if (bodyStatus == 'pending') {
+    // A history view of a session some server process still captures into is not ended.
+    final ended = !scope.isLive &&
+        CapturesDao().getSession(scope.sessionId)?['ended_at'] != null;
     warnings.add(
-      scope.isLive
+      !ended
           ? '$which body not captured yet — the writer backfills async. Retry '
               'in ~2s, or fetch in live mode.'
           : 'The session ended before this $which body was persisted; the '
