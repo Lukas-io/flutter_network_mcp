@@ -42,6 +42,7 @@ when_to_use: Right after `network_status`, when the question is "is anything wro
 
 ```json
 {
+  "scope": {"sessionId": 14, "appName": "my_app", "isLive": true},
   "summary": "Top problem: GET api.example.com/api/orders/N is failing 38% of 21 call(s).",
   "sessionId": 14,
   "totalRequests": 247,
@@ -66,7 +67,7 @@ when_to_use: Right after `network_status`, when the question is "is anything wro
 - `totalRequests` is the number of requests the digest covered (at most 10 000); `distinctEndpoints` is the number of endpoint buckets.
 - `errorHotspots` and `slowestEndpoints` rows carry only `endpoint`, `count`, `errorRate` and `p95LatencyMs` (`null` when no request of that endpoint has a duration; such endpoints are left out of `slowestEndpoints`). An endpoint can appear in both lists.
 - `pendingAlerts` is added automatically when the alerts capability is on and the session has undrained alerts (`critical` is included when some are critical).
-- There is no `scope` block and no `count` field. A scope note (for example an open `session_open` view shadowing live sessions) is not copied to `warnings` here, unlike `network_summarize`.
+- `scope` says which session was read. There is no `count` field. A scope note (for example an open `session_open` view shadowing live sessions) is also copied to `warnings`, as in `network_summarize`.
 
 Errors:
 

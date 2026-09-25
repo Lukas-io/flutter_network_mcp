@@ -21,7 +21,7 @@ when_to_use: When the user wants to reproduce a request from the terminal, share
 
 Reads the request row and request body from the DB (live or history; the VM is not queried, so a request that is not persisted yet is `not_found`). Builds `curl -X 'METHOD' -H 'Name: Value' --data-raw '<body>' '<url>'`. Single-quotes everything; escapes single quotes via the `'\''` trick. With `redact` unset or `true`, header values whose names are in the redaction set (`authorization`, `cookie`, `proxy-authorization`, `x-api-key`, `x-auth-token`, plus names added via `redacted_headers`) are masked with `<redacted>`; with `redact:false` real values are shown. Redaction is display-only: the DB always stores the real values.
 
-Body is truncated to `bodyTruncateBytes` (default 4 KB) so the response payload stays context-cheap. `bodyTotalSize` + `bodyTruncated` + a top-level warning surface when truncation happened. A body that is not valid UTF-8 after truncation becomes `--data-binary @-` with `bodyIsBinary:true`.
+Body is truncated to `bodyTruncateBytes` (default 4 KB) so the response payload stays context-cheap. The cut never splits a UTF-8 character: it backs off to the last whole character, so the curl may carry up to 3 bytes fewer than the limit. `bodyTotalSize` + `bodyTruncated` + `bodySentSize` (bytes actually in the curl) + a top-level warning surface when truncation happened. A body that is not valid UTF-8 becomes `--data-binary @-` with `bodyIsBinary:true`.
 
 The body is always the original captured bytes: `session_configure bodyDecryption` does not apply here, so an encrypted body is replayed encrypted, as the app sent it.
 
@@ -57,7 +57,7 @@ The body is always the original captured bytes: `session_configure bodyDecryptio
 }
 ```
 
-With `redact:false`, the real `Authorization` value is in the curl, `redacted:false`, `redactedHeaders` is absent, and a warning says auth headers are NOT redacted. `warnings` otherwise appears for: binary body (uses `@-`) and body truncated. `bodyTotalSize` / `bodyTruncated` are absent when the request had no body.
+With `redact:false`, the real `Authorization` value is in the curl, `redacted:false`, `redactedHeaders` is absent, and a warning says auth headers are NOT redacted. `warnings` otherwise appears for: binary body (uses `@-`) and body truncated. `bodyTotalSize` / `bodyTruncated` are absent when the request had no body; `bodySentSize` is present only when the body was truncated.
 
 Errors: `bad_argument` (missing `id`), `not_found` (id not in the session's DB), `internal` (unexpected failure). Scope failures return `error` + `nextSteps` without an `errorKind`.
 

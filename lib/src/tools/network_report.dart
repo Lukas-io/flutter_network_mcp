@@ -142,6 +142,7 @@ FutureOr<CallToolResult> networkReport(CallToolRequest request) async {
   }
 
   return jsonResult({
+    'scope': scope.toBlock(),
     'summary': headline,
     'sessionId': sid,
     'totalRequests': totalRequests,
@@ -149,7 +150,7 @@ FutureOr<CallToolResult> networkReport(CallToolRequest request) async {
     'errorHotspots': topErrors,
     'slowestEndpoints': topSlow,
     'nextSteps': nextSteps,
-  }, scopeSessionId: sid);
+  }, scopeSessionId: sid, scopeNote: scope.note);
 }
 
 String _hostOf(Map<String, Object?> endpoint) {

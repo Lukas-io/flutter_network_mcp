@@ -26,7 +26,7 @@ Live mode: calls `getHttpProfileRequest` on the VM service, on the isolate you p
 
 History mode (a `session_open` view, or a `sessionId` that is not attached): reads from `http_requests` + `http_bodies`. When a body is missing, a `warnings` entry says why: "not persisted yet (writer may still be backfilling)" while the session can still capture, or "was never captured before the session ended/was interrupted" once it cannot. Lifecycle events are not stored, so `includeEvents` has no effect here, and `isComplete` / `isResponseComplete` are not returned.
 
-Bodies decode as UTF-8 for text content types (`application/json`, `application/xml`, `application/x-www-form-urlencoded`, `application/javascript`, `application/graphql`, the `+json` API types, `text/*`), base64 otherwise. Truncated payloads carry `{truncated:true, totalSize, truncationMode}` in the body sub-object AND a top-level `warnings[]` entry pointing at `network_body`.
+Bodies decode as UTF-8 for text content types (`application/json`, `application/xml`, `application/x-www-form-urlencoded`, `application/javascript`, `application/graphql`, the `+json` API types, `text/*`), base64 otherwise. Each side uses its own `content-type` header: the request body is decoded by the request's header and the response body by the response's, in live and history mode alike (a JSON upload that returns an image still shows its request as text). Truncated payloads carry `{truncated:true, totalSize, truncationMode}` in the body sub-object AND a top-level `warnings[]` entry pointing at `network_body`.
 
 **Semantic truncation (0.7.0+).** For JSON and HTML bodies, truncation now preserves STRUCTURE instead of slicing at the byte cap:
 

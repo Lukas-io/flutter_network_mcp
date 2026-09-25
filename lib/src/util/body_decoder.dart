@@ -186,6 +186,30 @@ Map<String, Object?>? truncateHeaders(
   return out;
 }
 
+/// Content type of a persisted `http_requests` row's [which] body, read from that side's own headers.
+String? storedContentType(Map<String, Object?> row, String which) {
+  final raw = row[which == 'request' ? 'request_headers_json' : 'response_headers_json'];
+  Map<String, dynamic>? headers;
+  if (raw is String && raw.isNotEmpty) {
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map) headers = decoded.cast<String, dynamic>();
+    } catch (_) {}
+  }
+  final ct = firstHeader(headers, 'content-type');
+  if (ct != null || which == 'request') return ct;
+  return headers == null ? row['content_type'] as String? : null;
+}
+
+/// Longest prefix length of [bytes], at most [max], that does not split a UTF-8 character.
+int utf8SafeCut(List<int> bytes, int max) {
+  if (max >= bytes.length) return bytes.length;
+  for (var end = max; end > 0 && end >= max - 3; end--) {
+    if (bytes[end] & 0xC0 != 0x80) return end;
+  }
+  return max;
+}
+
 String? firstHeader(Map<String, dynamic>? headers, String name) {
   if (headers == null) return null;
   final target = name.toLowerCase();
