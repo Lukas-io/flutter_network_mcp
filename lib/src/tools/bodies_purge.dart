@@ -2,7 +2,9 @@ import 'dart:async';
 
 import 'package:dart_mcp/server.dart';
 
+import '../state/session.dart';
 import '../storage/captures_db.dart';
+import '../storage/plaintext_index.dart';
 import 'error_kind.dart';
 import 'result.dart';
 
@@ -71,7 +73,16 @@ FutureOr<CallToolResult> bodiesPurge(CallToolRequest request) async {
       });
     }
 
-    final purged = dao.purgeBodies(sessionId: sessionId, olderThanMs: olderThanMs);
+    final (:purged, :sessions) =
+        dao.purgeBodies(sessionId: sessionId, olderThanMs: olderThanMs);
+    sessions.forEach(PlaintextIndex.instance.forget);
+    final elsewhere = sessions.isEmpty ? const <int>{} : dao.sessionsCapturedElsewhere();
+    final capturing = [
+      for (final sid in sessions)
+        if (SessionRegistry.instance.attachedById(sid) != null ||
+            elsewhere.contains(sid))
+          sid,
+    ]..sort();
     return jsonResult({
       'summary': purged == 0
           ? 'No bodies matched filters — nothing purged.'
@@ -80,8 +91,13 @@ FutureOr<CallToolResult> bodiesPurge(CallToolRequest request) async {
       'purgedBytes': totalBytes,
       'sessionId': sessionId,
       'olderThanMs': olderThanMs,
-      'warnings': const [
+      if (sessions.isNotEmpty) 'purgedSessions': sessions.toList()..sort(),
+      'warnings': [
         'Disk space is NOT reclaimed yet — run db_vacuum to compact the file.',
+        if (capturing.isNotEmpty)
+          'Session(s) ${capturing.join(', ')} are still capturing: bodies the '
+              'app still holds in its HTTP profile are fetched again. Detach '
+              'first to keep them gone.',
       ],
       'nextSteps': const [
         'db_vacuum — reclaim disk space',

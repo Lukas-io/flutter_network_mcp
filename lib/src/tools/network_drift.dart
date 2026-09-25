@@ -106,10 +106,20 @@ FutureOr<CallToolResult> networkDrift(CallToolRequest request) async {
   }
 
   final samples = <Map<String, Object?>>[];
+  var decrypted = 0;
+  var decryptionFailed = 0;
+  String? firstFailure;
   for (final r in candidates) {
     final stored = dao.getBody(sid, r['vm_id'] as String, 'response');
     if (stored == null || stored.isEmpty) continue;
-    final bytes = bodyForReading(stored, r['content_type'] as String?).bytes;
+    final readable = bodyForReading(stored, r['content_type'] as String?);
+    final bytes = readable.bytes;
+    if (readable.flags['decrypted'] == true) decrypted++;
+    final failure = readable.flags['decryptionFailed'] as String?;
+    if (failure != null) {
+      decryptionFailed++;
+      firstFailure ??= failure;
+    }
     Object? decoded;
     try {
       decoded = jsonDecode(utf8.decode(bytes));
@@ -124,6 +134,21 @@ FutureOr<CallToolResult> networkDrift(CallToolRequest request) async {
     });
   }
 
+  final decryption = BodyDecryptionConfig.active == null
+      ? const <String, Object?>{}
+      : {
+          'decryption': {
+            'decrypted': decrypted,
+            'failed': decryptionFailed,
+            if (firstFailure != null) 'firstFailure': firstFailure,
+          },
+        };
+  final decryptionWarnings = [
+    if (decryptionFailed > 0)
+      '$decryptionFailed response(s) did not decrypt ($firstFailure); those '
+          'that are not plain JSON were left out of the comparison.',
+  ];
+
   if (samples.length < 2) {
     return jsonResult({
       'scope': scope.toBlock(),
@@ -132,6 +157,8 @@ FutureOr<CallToolResult> networkDrift(CallToolRequest request) async {
               'need 2+).',
       'sessionId': sid,
       'scanned': samples.length,
+      ...decryption,
+      if (decryptionWarnings.isNotEmpty) 'warnings': decryptionWarnings,
       'nextSteps': const [
         'Drive the endpoint more, then re-call (need 2+ JSON responses)',
         'network_summarize — see which endpoints have JSON traffic',
@@ -175,6 +202,8 @@ FutureOr<CallToolResult> networkDrift(CallToolRequest request) async {
     'drifted': drifted,
     if (drifted) ...diff,
     if (driftAt != null) 'firstDriftAt': driftAt,
+    ...decryption,
+    if (decryptionWarnings.isNotEmpty) 'warnings': decryptionWarnings,
     'nextSteps': [
       if (drifted)
         'network_get id:"${driftAt['id']}" — inspect the response that changed'

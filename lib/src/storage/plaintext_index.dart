@@ -37,8 +37,21 @@ class PlaintextIndex {
     _indexed.clear();
   }
 
+  /// Drops [sessionId]'s rows, after its bodies or the session itself left the capture DB; the next search re-reads what is left.
+  void forget(int sessionId) {
+    if (_indexed.remove(sessionId) == null) return;
+    final db = _db;
+    if (db == null) return;
+    db.execute('DELETE FROM plain_search WHERE rowid IN '
+        '(SELECT rowid FROM plain_map WHERE session_id=?)', [sessionId]);
+    db.execute('DELETE FROM plain_map WHERE session_id=?', [sessionId]);
+  }
+
   /// Sessions indexed so far.
   Set<int> get sessions => _indexed.keys.toSet();
+
+  /// Requests of [sessionId] held in the index.
+  int indexedCount(int sessionId) => _indexed[sessionId]?.length ?? 0;
 
   /// Indexes [sessionId]'s requests not seen yet and re-reads those whose bodies were still arriving. Returns how many were (re)indexed.
   int refresh(int sessionId, BodyDecryption scheme) {

@@ -6,7 +6,7 @@ when_to_use: When freeing disk space by removing sessions no longer worth keepin
 
 ## DO NOT USE THIS TOOL WHEN
 
-- The session is LIVE: call `network_detach` first. Delete refuses only when the id is this server's sole attached session. It does NOT refuse a session that is one of two or more attached here, or one another server process is still capturing into, so treat any session without `endedMs` in `session_list` as possibly still capturing (a session held only by another process shows `status: "interrupted"`).
+- The session is still capturing: call `network_detach` first. Delete refuses (`errorKind: "session_in_use"`) any session attached in this server, however many are attached, and any session another live server process sharing the DB still captures into (`session_list` shows it as `status: "live"` with `capturedElsewhere: true`).
 - You want to keep metadata but drop bodies — use `bodies_purge` instead.
 - You're not sure — call without `confirm:true` first for a dry-run that shows what would be deleted (counts included).
 - The user might want it later — consider `session_export id:<n> format:"har"` as a backup first.
@@ -19,7 +19,7 @@ when_to_use: When freeing disk space by removing sessions no longer worth keepin
 
 ## How it works
 
-Two-phase by default. First call (no `confirm:true`): dry-run with full counts so the agent can echo "would delete X http, Y logs, Z sockets". Second call (`confirm:true`): actual `DELETE FROM sessions WHERE id = ?`, which cascades via foreign keys to http_requests, http_bodies, socket_events, log_records, alerts, and session_attachments. FTS5 search rows are dropped first by hand since FTS doesn't honor FK cascades. If the deleted session was the one opened with `session_open`, the read pointer reverts to live. **Disk space is NOT reclaimed**: run `db_vacuum` afterwards.
+Two-phase by default. First call (no `confirm:true`): dry-run with full counts so the agent can echo "would delete X http, Y logs, Z sockets". Second call (`confirm:true`): actual `DELETE FROM sessions WHERE id = ?`, which cascades via foreign keys to http_requests, http_bodies, socket_events, log_records, alerts, and session_attachments. FTS5 search rows are dropped first by hand since FTS doesn't honor FK cascades. Decrypted body text this process held in memory for search (body decryption on) is dropped too. If the deleted session was the one opened with `session_open`, the read pointer reverts to live. **Disk space is NOT reclaimed**: run `db_vacuum` afterwards.
 
 ## Args
 
@@ -62,7 +62,11 @@ Confirmed:
 
 `appName`, `endedMs`, and `note` are omitted when null. The confirmed reply's counts are measured just before the delete.
 
-Errors: missing `id` returns `bad_argument`; the id of this server's sole live session returns `bad_argument` with `liveSessionId` and nextSteps to `network_detach` first (checked before the dry-run too); an unknown id returns `not_found`.
+Errors (a session still capturing is checked before the dry-run too):
+- missing `id`: `bad_argument`.
+- a session attached in this server: `session_in_use` with `capturedBy: "this server"` and nextSteps to `network_detach sessionId:<n>` first.
+- a session another live server process captures into: `session_in_use` with `capturedBy: "another server process"`, `otherProcesses` (how many), and nextSteps to detach it there or close that server, or `bodies_purge` instead.
+- an unknown id: `not_found`.
 
 ## Pairs well with
 

@@ -59,6 +59,7 @@ agent that sees an unknown kind treats it as `internal`.
 | `unresponsive_vm` | RPC timed out (app paused/backgrounded, DDS wedged) | retry, or read from DB |
 | `bad_query` | malformed SQL / search | use the inline schema/terms, retry |
 | `capability_disabled` | tool gated off | enable it / use another tool |
+| `session_in_use` | the session is still capturing, here or in another server process on the same DB | detach it first (where it is captured), then retry |
 | `internal` | unexpected | report |
 
 ## The error-resistance ladder

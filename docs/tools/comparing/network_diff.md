@@ -23,7 +23,7 @@ when_to_use: When you have two captured ids and need to know what's different â€
 
 Pulls both `http_requests` rows and response bodies from the DB (live or history; the VM is never queried, so a request that is not persisted yet reports `not_found` or an uncomparable body). Computes a header diff (added / removed / changed) on the response headers, with names lowercased and auth-like headers (`authorization`, `cookie`, `proxy-authorization`, `x-api-key`, `x-auth-token`, plus `redacted_headers` names) always shown as `<redacted>`. Decodes both response bodies; if both are UTF-8 text by content type, splits them on newlines and compares line N of A with line N of B (no alignment, so one inserted line shifts every later line into the hunks), up to `maxBodyLines` per side, clipping each line at `maxLineLength`. Status/method/URL diffs are reported only when changed.
 
-Body decryption: when `session_configure bodyDecryption:{...}` is on, both response bodies are decrypted before diffing (a body that does not fit the scheme is diffed as captured). This tool does not emit `decrypted` / `decryptionFailed` flags; call `network_get` on each id to see them.
+Body decryption: when `session_configure bodyDecryption:{...}` is on, both response bodies are decrypted before diffing (a body that does not fit the scheme is diffed as captured). Each side's block (`a`, `b`) then carries the same flags `network_body` returns: `decrypted: true`, or `decrypted: false` with `decryptionFailed` giving the reason, and a warning names a side that did not decrypt. A side with no stored body carries no flag.
 
 ## Args
 
@@ -55,7 +55,7 @@ Body decryption: when `session_configure bodyDecryption:{...}` is on, both respo
 }
 ```
 
-`statusDiff` / `methodDiff` / `urlDiff` only appear when changed. Identical bodies give `{"comparable":true, "equal":true, "hunks":[]}`. When a body is missing or either body is not UTF-8 text, `responseBody` is `{"comparable":false, "reason":"..."}` and a warning says so. `warnings` (omitted when empty) also surfaces truncation at `maxBodyLines` and clipped lines. The `network_replay` next step only appears when the bodies were comparable and differ.
+`statusDiff` / `methodDiff` / `urlDiff` only appear when changed. Identical bodies give `{"comparable":true, "equal":true, "hunks":[]}`. When a body is missing or either body is not UTF-8 text, `responseBody` is `{"comparable":false, "reason":"..."}` and a warning says so. `warnings` (omitted when empty) also surfaces a body that did not decrypt (decryption on), truncation at `maxBodyLines`, and clipped lines. The `network_replay` next step only appears when the bodies were comparable and differ.
 
 Errors: `bad_argument` (an id missing, or `idA` equal to `idB`), `not_found` (either id not in the session), `internal` (unexpected failure). Scope failures return `error` + `nextSteps` without an `errorKind`.
 

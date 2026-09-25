@@ -27,11 +27,11 @@ when_to_use: When the app is still launching (or relaunching) and network_status
    - Exactly one app: attaches to it by its VM service URI.
    - Several apps: returns at once with `errorKind: bad_argument`, the `apps` list, and one `network_wait_for_app appNameContains:"..."` step per app.
 4. With `appNameContains`: runs the same attach as `network_attach appNameContains:"..."`, matched across every running DTD. No matching app yet: waits and polls again.
-5. The attach succeeds, or the app is already attached (`alreadyAttached:true`, with that session's id): returns the attach result plus `waitedMs` and `polls`.
+5. The attach succeeds, or the app is already attached (`alreadyAttached:true`, with that session's id): returns the attach result plus `waitedMs` and `polls`. Like `network_attach`, it closes an open `session_open` view so the next bare read targets the live session, and adds a warning naming the closed view (`session_open id:<n>` reopens it).
 6. Answers that waiting cannot change (several apps match, session cap reached; the attach marks them `retryable:false`) return at once as `errorKind: bad_argument`, with the attach result's `apps` or `attached` list and `nextSteps`.
 7. Any other failed attempt (no app yet, attach in progress, a failed connect) is retried until the deadline. Then the call returns `errorKind: timeout` with the last attempt's error as `lastAttempt`.
 
-The tool sends no progress notifications while it waits; a long `timeoutMs` blocks the call for that long.
+When the call carries a progress token (`_meta.progressToken`), the tool sends `notifications/progress` about every 15 s while it waits: `progress` is the ms waited, `total` the clamped `timeoutMs`, and `message` the current phase (waiting for an app to register, or probing DTD and attaching) with seconds waited, poll count, and the last attempt's error. Notifications stop when the call returns. Without a token it sends none, and a long `timeoutMs` blocks silently for that long.
 
 ## Args
 
