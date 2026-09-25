@@ -93,7 +93,6 @@ class CaptureWriter {
     _sessionId = null;
     _lastCursorPerIsolate.clear();
     _ticksSinceRescan = 0;
-    _ticking = false;
   }
 
   /// Drains every pending body to the DB now, ignoring the backfill grace
@@ -109,21 +108,31 @@ class CaptureWriter {
     final searchOn = CapabilityConfig.instance.isEnabled(Category.search);
     final nowUs = DateTime.now().microsecondsSinceEpoch;
     final stopAt = DateTime.now().add(deadline);
+    final tried = <String>{};
     while (DateTime.now().isBefore(stopAt)) {
       // No grace window and a high attempt ceiling: on teardown we want every
       // body the VM still holds, complete or not, in one last pass.
-      final pending = _dao.pendingBodyFetches(
-        sid,
-        limit: 100,
-        staleBeforeUs: nowUs,
-        maxAttempts: 1 << 30,
-      );
+      final pending = _dao
+          .pendingBodyFetches(
+            sid,
+            limit: tried.length + 100,
+            staleBeforeUs: nowUs,
+            maxAttempts: 1 << 30,
+          )
+          .where((e) => !tried.contains(e.vmId))
+          .toList();
       if (pending.isEmpty) return;
       for (final entry in pending) {
-        await _fetchAndStoreBody(vm, sid, entry, searchOn: searchOn);
+        if (!vm.isConnected || !DateTime.now().isBefore(stopAt)) return;
+        tried.add(entry.vmId);
+        await _fetchAndStoreBody(vm, sid, entry,
+            searchOn: searchOn, timeout: flushFetchTimeout);
       }
     }
   }
+
+  /// Longest one body fetch may take during a teardown flush, so a dying VM cannot hold the session past [flushPendingBodies]'s deadline.
+  static const flushFetchTimeout = Duration(seconds: 1);
 
   /// Forces a re-read of the ignored_hosts table — called by the tool that
   /// adds/removes entries so changes take effect before the next tick.
@@ -280,14 +289,14 @@ class CaptureWriter {
     int sid,
     ({String vmId, String? isolateId, bool isComplete}) entry, {
     required bool searchOn,
+    Duration? timeout,
   }) async {
     final isolateId = entry.isolateId ?? vm.isolateId;
     if (isolateId == null) return;
     try {
-      final detail = await vm.getHttpProfileRequestForIsolate(
-        isolateId,
-        entry.vmId,
-      );
+      final fetch = vm.getHttpProfileRequestForIsolate(isolateId, entry.vmId);
+      final detail =
+          await (timeout == null ? fetch : fetch.timeout(timeout));
       final hasBody = (detail.requestBody?.isNotEmpty ?? false) ||
           (detail.responseBody?.isNotEmpty ?? false);
       if (hasBody) {
