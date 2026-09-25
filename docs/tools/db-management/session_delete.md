@@ -31,10 +31,10 @@ Two-phase by default. First call (no `confirm:true`): dry-run with full counts s
 Dry-run:
 ```json
 {
-  "summary": "DRY-RUN — would delete session 7 (sanga_mobile) and 38 http, 12 log(s), 3 socket(s). Cannot be undone.",
+  "summary": "DRY-RUN — would delete session 7 (eats_mobile) and 38 http, 12 log(s), 3 socket(s). Cannot be undone.",
   "dryRun": true,
   "sessionId": 7,
-  "appName": "sanga_mobile",
+  "appName": "eats_mobile",
   "startedMs": ..., "endedMs": ..., "note": "old debug",
   "counts": {"http":38, "sockets":3, "logs":12},
   "nextSteps": [
@@ -47,10 +47,10 @@ Dry-run:
 Confirmed:
 ```json
 {
-  "summary": "Deleted session 7 (sanga_mobile) — 38 http, 12 log(s), 3 socket(s) removed.",
+  "summary": "Deleted session 7 (eats_mobile) — 38 http, 12 log(s), 3 socket(s) removed.",
   "deleted": true,
   "sessionId": 7,
-  "appName": "sanga_mobile",
+  "appName": "eats_mobile",
   "counts": {"http":38, "sockets":3, "logs":12},
   "warnings": ["Disk space is NOT reclaimed yet — run db_vacuum to compact the file."],
   "nextSteps": [

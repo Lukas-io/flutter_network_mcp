@@ -61,7 +61,7 @@ void main() {
           'attachments': [
             {
               'vmServiceUri': 'ws://127.0.0.1:54450/abc=',
-              'appName': 'sanga_mobile',
+              'appName': 'eats_mobile',
               'attachedAtMs': 1780461000000,
             },
           ],
@@ -75,7 +75,7 @@ void main() {
         expect(attachments, hasLength(1));
         final first = attachments.first as Map;
         expect(first['vmServiceUri'], 'ws://127.0.0.1:54450/abc=');
-        expect(first['appName'], 'sanga_mobile');
+        expect(first['appName'], 'eats_mobile');
       } finally {
         SessionContinuation.clear();
       }

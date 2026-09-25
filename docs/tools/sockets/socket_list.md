@@ -40,7 +40,7 @@ Both sorted newest-first by `startTimeUs`. Null timing fields (`endTimeUs`, `las
 ```json
 {
   "source": "live",
-  "scope": {"sessionId": 14, "appName": "sanga_mobile", "isLive": true},
+  "scope": {"sessionId": 14, "appName": "eats_mobile", "isLive": true},
   "sessionId": 14,
   "summary": "3 socket(s) (1 open) in session 14 (live, newest-first).",
   "count": 3,

@@ -33,7 +33,7 @@ final autoAttachConfigTool = Tool(
       'app': Schema.string(
         description:
             'Allowlist pattern (case-insensitive substring of the app name, '
-            'e.g. "sanga_mobile"). Required for add/remove.',
+            'e.g. "eats_mobile"). Required for add/remove.',
       ),
       'deny': Schema.string(
         description: 'Denylist pattern to add alongside app (rare).',
@@ -131,7 +131,7 @@ CallToolResult _add({required String? app, required String? deny}) {
       kind: ErrorKind.badArgument,
       extra: const {
         'nextSteps': [
-          'auto_attach_config action:"add" app:"sanga_mobile"',
+          'auto_attach_config action:"add" app:"eats_mobile"',
         ],
       },
     );

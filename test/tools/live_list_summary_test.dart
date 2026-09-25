@@ -4,7 +4,7 @@ import 'package:test/test.dart';
 /// UX pass: network_list LIVE is cursor-incremental. The empty-but-captured
 /// case must not read as "no traffic" (the trap found in live testing).
 void main() {
-  const scope = 'session 1 (live, sanga_mobile)';
+  const scope = 'session 1 (live, eats_mobile)';
 
   String s({
     int matched = 0,

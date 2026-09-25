@@ -11,7 +11,7 @@ void main() {
     test('a live (not-dead) URI keeps the reattach suggestion', () {
       final step = continuationReattachStep(
         lastUri: 'ws://live',
-        lastApp: 'sanga',
+        lastApp: 'eats',
         attachedAgo: '1h',
         dead: false,
       );
@@ -22,7 +22,7 @@ void main() {
     test('a dead URI with no relaunch says the app exited, not reattach', () {
       final step = continuationReattachStep(
         lastUri: 'ws://dead',
-        lastApp: 'sanga',
+        lastApp: 'eats',
         attachedAgo: '1h',
         exitedAgo: '2m',
         dead: true,
@@ -36,7 +36,7 @@ void main() {
     test('a dead URI whose app relaunched points at the new URI', () {
       final step = continuationReattachStep(
         lastUri: 'ws://dead',
-        lastApp: 'sanga',
+        lastApp: 'eats',
         dead: true,
         relaunchUri: 'ws://new',
       );

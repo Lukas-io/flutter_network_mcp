@@ -17,7 +17,15 @@ Good for:
 - Generating a HAR file from a capture session to hand a coworker.
 - Finding the one request containing a specific error across weeks of history.
 
-Not for: production observability, traffic outside `dart:io` HTTP, or release and profile builds where the VM service is stripped.
+Not for: production observability, traffic outside `dart:io` HTTP, or release builds, where the VM service is stripped.
+
+## Limits today
+
+- **Only traffic that goes through `dart:io` is captured.** Native SDKs (analytics, crash reporting, ads, maps) and gRPC or HTTP/2 stacks are invisible; gRPC shows up only as socket byte counts. Native HTTP clients such as `cupertino_http` and `cronet_http` are not verified yet.
+- **WebSockets are metadata only**: connections, message direction, type and size, never contents. They need an app built with Dart 3.13 or newer.
+- **Flutter web is not supported.**
+- **One database per machine**, shared by every project you capture. Bodies are stored as captured; secret headers are stored as `<redacted>`.
+- **macOS and Linux hosts.** Windows install is not working yet.
 
 ## Requirements
 
@@ -85,7 +93,7 @@ Multi-app. Attach to several running apps at once, for example a customer app an
 
 Capture control. Host and path glob filters, an opt-in allowlist, and an ephemeral no-persist mode for sessions you don't want written to disk. Secret headers (authorization, cookies, API keys, plus any you add) are redacted before they are stored; set `FLUTTER_NETWORK_MCP_STORE_SECRETS=true` to keep them for local replay. Exports and SQL output also mask tokens, passwords and keys found in bodies.
 
-The server exposes 49 tools across HTTP, sockets, WebSockets, logs, alerts, search, sessions, SQL, and admin categories. Every tool returns a consistent shape with a summary, suggested next steps, and any warnings, so the agent can act without parsing prose.
+The server exposes 50 tools across HTTP, sockets, WebSockets, logs, alerts, search, sessions, SQL, and admin categories. Every tool returns a consistent shape with a summary, suggested next steps, and any warnings, so the agent can act without parsing prose.
 
 ## Documentation
 
@@ -96,6 +104,8 @@ The server exposes 49 tools across HTTP, sockets, WebSockets, logs, alerts, sear
 ## Contributing
 
 Reports help. If you use an MCP-capable agent, say "file a bug for this" or "file a UX friction report" and the agent will fill and submit the template. Bug and friction templates live in [`.github/ISSUE_TEMPLATE`](.github/ISSUE_TEMPLATE).
+
+Report security problems privately, as described in [SECURITY.md](SECURITY.md).
 
 ## Local development
 

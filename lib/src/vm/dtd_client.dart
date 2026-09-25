@@ -20,7 +20,7 @@ class DtdClient {
   /// Returns the VM service connections DTD knows about.
   ///
   /// Each entry exposes a `uri` (a `ws://...` URL) and optional `name`
-  /// (e.g. `Flutter - iPhone 17 - Package: sanga_mobile`).
+  /// (e.g. `Flutter - iPhone 17 - Package: eats_mobile`).
   Future<List<VmServiceInfo>> getConnectedApps() async {
     final dtd = _requireConnected();
     final response = await dtd.getVmServices();

@@ -63,7 +63,7 @@ Header values longer than `headerTruncateBytes` become `{value, truncated, total
   "scope": {"sessionId": 1, "appName": "my_app", "isLive": true},
   "sessionId": 1,
   "isolateId": "isolates/1234",
-  "summary": "GET https://nexus.sangaeats.com/feed/vendors?page=1&limit=20 → 200 OK · 372ms (application/json)",
+  "summary": "GET https://api.example.com/feed/vendors?page=1&limit=20 → 200 OK · 372ms (application/json)",
   "id": "-748091783736179394",
   "method": "GET",
   "uri": "https://...",

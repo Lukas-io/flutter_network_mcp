@@ -47,9 +47,9 @@ Each file inside is a JSON document containing the full WebSocket URI (token inc
 
 ```json
 {
-  "summary": "2 candidate(s) returned (of 4 found, 4 live). Recommended: ws://127.0.0.1:54450/-y7LwW-MjnA= (pid 77534, /Users/lukasio/StudioProjects/sanga_mobile).",
+  "summary": "2 candidate(s) returned (of 4 found, 4 live). Recommended: ws://127.0.0.1:54450/-y7LwW-MjnA= (pid 77534, /Users/lukasio/StudioProjects/eats_mobile).",
   "discoveryDir": "/Users/lukasio/Library/Application Support/dart/dtd",
-  "cwd": "/Users/lukasio/StudioProjects/sanga_mobile",
+  "cwd": "/Users/lukasio/StudioProjects/eats_mobile",
   "totalFound": 4,
   "liveCount": 4,
   "visibleCount": 2,
@@ -60,7 +60,7 @@ Each file inside is a JSON document containing the full WebSocket URI (token inc
       "pid": 77534,
       "epochMs": 1780462678169,
       "dartVersion": "3.12.0 (stable) ...",
-      "workspaceRoot": "/Users/lukasio/StudioProjects/sanga_mobile",
+      "workspaceRoot": "/Users/lukasio/StudioProjects/eats_mobile",
       "ideName": "Android Studio",
       "isLive": true,
       "matchesCwd": true,

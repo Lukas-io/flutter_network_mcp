@@ -10,15 +10,15 @@ import 'vm/dtd_probe.dart';
 ///
 /// **Mandatory allowlist:** every constructor call must pass a non-empty
 /// [allowedAppPatterns] list. Each pattern is a case-insensitive
-/// substring matched against the DTD app name (e.g. "sanga_mobile"
-/// matches "Flutter - iPhone 17 - Package: sanga_mobile"). The CLI
+/// substring matched against the DTD app name (e.g. "eats_mobile"
+/// matches "Flutter - iPhone 17 - Package: eats_mobile"). The CLI
 /// surface (`--auto-attach=app1,app2`) has no boolean form — you can't
 /// enable auto-attach without saying which apps it's allowed to grab.
 ///
 /// **Optional denylist** ([deniedAppPatterns]) lets you exclude specific
 /// devices that would otherwise match the allowlist — useful when the
 /// allowlist is a broad package name but you want to skip a particular
-/// device (`--auto-attach=sanga_mobile --auto-attach-deny="Pixel 7"`).
+/// device (`--auto-attach=eats_mobile --auto-attach-deny="Pixel 7"`).
 /// Same case-insensitive substring matching as the allowlist. Deny wins
 /// when both match.
 ///

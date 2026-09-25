@@ -10,7 +10,7 @@ The index below is by **use case** ("I want to do X — which tool?"). Some tool
 
 > **Multi-isolate within one app (0.6.0):** captures HTTP/socket/log traffic from EVERY isolate in the attached app (was: only the first). Per-row `isolate_id` tagging via schema v4. The 11 read tools that take `sessionId:` also accept an optional **`isolateId:`** filter (omit to merge every isolate — single-isolate UX preserved). `network_status.attached[].isolates` lists what's being captured. Newly-spawned isolates get picked up automatically on a ~20s re-scan.
 
-> **Cross-app correlate (0.6.0):** the new `network_correlate` tool finds matching requests across 2+ attached sessions by a shared substring (webhook id, correlation token, URL fragment). Requires explicit `sessionIds:[int]` — cross-session aggregation is intentional. Use case: sanga_mobile sends a webhook, sanga_driver receives it; this returns both halves paired by smallest time delta.
+> **Cross-app correlate (0.6.0):** the new `network_correlate` tool finds matching requests across 2+ attached sessions by a shared substring (webhook id, correlation token, URL fragment). Requires explicit `sessionIds:[int]` — cross-session aggregation is intentional. Use case: eats_mobile sends a webhook, eats_driver receives it; this returns both halves paired by smallest time delta.
 
 ---
 

@@ -34,8 +34,8 @@ Default `drainedOnly:true` keeps unread alerts safe. Tool refuses `drainedOnly:f
 
 ```json
 {
-  "scope": {"sessionId": 14, "appName": "sanga_mobile", "isLive": true},
-  "summary": "Deleted 17 alert(s) from session 14 (sanga_mobile), drained only. 0 undrained still pending in scope.",
+  "scope": {"sessionId": 14, "appName": "eats_mobile", "isLive": true},
+  "summary": "Deleted 17 alert(s) from session 14 (eats_mobile), drained only. 0 undrained still pending in scope.",
   "deleted": 17,
   "remainingPending": 0,
   "sessionId": 14,

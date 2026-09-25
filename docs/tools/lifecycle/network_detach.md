@@ -41,10 +41,10 @@ An open `session_open` view of a detached session is closed. DTD disconnects onc
 ```json
 {
   "detached": true,
-  "summary": "Detached from sanga_mobile. Session 14 ended ... captured 38 http, 12 log(s), 3 alert(s). Queryable via session_open id:14. DTD disconnected.",
+  "summary": "Detached from eats_mobile. Session 14 ended ... captured 38 http, 12 log(s), 3 alert(s). Queryable via session_open id:14. DTD disconnected.",
   "wasAttached": true,
   "detachedSessions": [
-    {"sessionId": 14, "appName": "sanga_mobile",
+    {"sessionId": 14, "appName": "eats_mobile",
      "captured": {"http": 38, "logs": 12, "alerts": 3}}
   ],
   "remainingAttached": 0,
@@ -75,7 +75,7 @@ Errors:
 
 ```
 > network_detach
-< {detached:true, summary:"Detached from sanga_mobile. Session 14 ended — captured 38 http, 12 log(s), 3 alert(s)..."}
+< {detached:true, summary:"Detached from eats_mobile. Session 14 ended — captured 38 http, 12 log(s), 3 alert(s)..."}
 > session_note id:14 note:"auth bug repro for #1842"
 ```
 
@@ -88,6 +88,6 @@ Two attached, detach one:
 Shared with another server process:
 ```
 > network_detach
-< {summary:"Detached from sanga_mobile. Session 14 stays open: another server process is still capturing into it ...",
+< {summary:"Detached from eats_mobile. Session 14 stays open: another server process is still capturing into it ...",
    detachedSessions:[{sessionId:14, stillCapturedByOtherProcess:true, ...}]}
 ```

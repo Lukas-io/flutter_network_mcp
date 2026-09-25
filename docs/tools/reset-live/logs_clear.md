@@ -29,8 +29,8 @@ Resolves the target session like the read tools (`sessionId`, else `appNameConta
 ```json
 {
   "cleared": true,
-  "scope": {"sessionId": 14, "appName": "sanga_mobile", "isLive": true},
-  "summary": "Cleared 412 log record(s) from live ring buffer for session 14 (sanga_mobile). Persistent DB log_records untouched.",
+  "scope": {"sessionId": 14, "appName": "eats_mobile", "isLive": true},
+  "summary": "Cleared 412 log record(s) from live ring buffer for session 14 (eats_mobile). Persistent DB log_records untouched.",
   "clearedCount": 412,
   "streamActive": true,
   "warnings": ["The persistent DB is NOT cleared. Use session_delete for DB-side removal."],

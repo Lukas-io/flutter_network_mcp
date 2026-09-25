@@ -40,7 +40,7 @@ void main() {
 
     test('stackHead has paths redacted', () {
       final stack = StackTrace.fromString(
-        '#0 main (/Users/alice/StudioProjects/sanga_mobile/lib/main.dart:1:1)\n'
+        '#0 main (/Users/alice/StudioProjects/eats_mobile/lib/main.dart:1:1)\n'
         '#1 other (/Users/alice/code/util.dart:5:1)',
       );
       final payload = buildTelemetryPayload(
@@ -52,7 +52,7 @@ void main() {
       expect(frames.any((f) => f.contains('alice')), isFalse,
           reason: 'redactor must strip usernames');
       expect(frames.any((f) => f.contains('<project>/lib/main.dart')), isTrue);
-      expect(frames.any((f) => f.contains('sanga_mobile')), isFalse);
+      expect(frames.any((f) => f.contains('eats_mobile')), isFalse);
     });
 
     test('signature stable across runs for the same error + stack', () {

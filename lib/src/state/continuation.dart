@@ -9,7 +9,7 @@ import 'session.dart';
 
 /// Persists the set of currently-attached sessions across MCP-host
 /// restarts. Lets the agent's first `network_status` after a Claude
-/// Code reload say "you were on sanga_mobile 47 min ago, here's the
+/// Code reload say "you were on eats_mobile 47 min ago, here's the
 /// reattach command" — zero user friction.
 ///
 /// File location: `<data-dir>/last-session.json`. Written on every

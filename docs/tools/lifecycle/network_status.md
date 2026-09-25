@@ -54,10 +54,10 @@ When `attachIfOne:true` AND `attachedCount == 0` AND `knownApps.length == 1` AND
   "alerts": {"pendingTotal": 0, "pendingEvents": 0, "critical": 0},
   "knownApps": [
     {
-      "name": "sanga_mobile - iPhone 17",
+      "name": "eats_mobile - iPhone 17",
       "uri": "ws://127.0.0.1:54450/.../ws",
       "dtdUri": "ws://127.0.0.1:56443/...",
-      "workspaceRoot": "/Users/me/StudioProjects/sanga_mobile"
+      "workspaceRoot": "/Users/me/StudioProjects/eats_mobile"
     }
   ],
   "nextSteps": ["Call network_attach (one app available — will be auto-picked)"]
@@ -84,7 +84,7 @@ Other optional fields: `viewedSessionId` (a `session_open` view is active), `sta
   "attachments": [
     {
       "vmServiceUri": "http://127.0.0.1:54450/abc=/",
-      "appName": "sanga_mobile",
+      "appName": "eats_mobile",
       "attachedAtMs": 1780461000000
     }
   ]
@@ -105,7 +105,7 @@ When present, the FIRST `nextSteps` line is about that app. If it is still reach
 > network_status
 < {attachedCount:0, attached:[], capabilities:"all",
    dtd:{connected:true, uri:"ws://..."},
-   knownApps:[{name:"Kind: Flutter - iPhone 17 - Package: sanga_mobile", uri:"ws://..."}],
+   knownApps:[{name:"Kind: Flutter - iPhone 17 - Package: eats_mobile", uri:"ws://..."}],
    nextSteps:["Call network_attach (one app available — will be auto-picked)"]}
 > network_attach
 ```

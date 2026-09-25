@@ -600,7 +600,7 @@ New persistent file `<data-dir>/auto-attach.json`:
 
 ```jsonc
 {
-  "allowed": ["sanga_mobile", "sanga_driver"],
+  "allowed": ["eats_mobile", "eats_driver"],
   "denied": ["iPhone 7"],
   "writtenAtMs": 1780462000000
 }
@@ -619,7 +619,7 @@ The file is the persistent default; env vars + flags stay as per-launch override
 New always-on lifecycle tool. Single tool with `action` argument:
 
 ```
-auto_attach_config action:"add" app:"sanga_mobile"
+auto_attach_config action:"add" app:"eats_mobile"
   → writes the file, updates in-memory config, returns persisted:bool
 ```
 
@@ -677,7 +677,7 @@ New alert kinds: `http_anomaly` (warning) + `http_anomaly_errors` (error). Both 
 
 ### Added — session continuation memory
 
-Every Claude Code reload, machine reboot, or MCP-host crash today loses the attachment state. The agent's first `network_status` comes back empty, the user re-types "attach to sanga_mobile", etc. This release makes the next launch say "you were on sanga_mobile 47 min ago, here's the reattach command" — zero friction.
+Every Claude Code reload, machine reboot, or MCP-host crash today loses the attachment state. The agent's first `network_status` comes back empty, the user re-types "attach to eats_mobile", etc. This release makes the next launch say "you were on eats_mobile 47 min ago, here's the reattach command" — zero friction.
 
 New `<data-dir>/last-session.json`:
 
@@ -687,7 +687,7 @@ New `<data-dir>/last-session.json`:
   "attachments": [
     {
       "vmServiceUri": "ws://127.0.0.1:54450/abc=",
-      "appName": "sanga_mobile",
+      "appName": "eats_mobile",
       "attachedAtMs": 1780461000000
     }
   ]
@@ -699,7 +699,7 @@ Multi-attach friendly — all currently-attached sessions get recorded. Written 
 `network_status` surfaces a `continuation` block at the top level (when `attachedCount == 0` and a record exists), and adds a `nextStep` of the form:
 
 ```
-network_attach vmServiceUri:"ws://..." — reattach to sanga_mobile (~47m ago); previous attachment recorded by 0.7.3 continuation
+network_attach vmServiceUri:"ws://..." — reattach to eats_mobile (~47m ago); previous attachment recorded by 0.7.3 continuation
 ```
 
 Explicit detach removes the continuation so a clean teardown doesn't haunt the next session.
@@ -752,7 +752,7 @@ When `alerts_drain` (or `alerts_peek`) emits a row with a signature, the respons
     {
       "sessionId": 14,
       "startedAtMs": 1780462000000,
-      "appName": "sanga_mobile",
+      "appName": "eats_mobile",
       "note": "fixed by adding Expanded — lib/view/widgets/cart.dart"
     }
   ]
@@ -1043,17 +1043,17 @@ New always-on lifecycle tool that exposes the discovery surface to the agent on 
 
 ### Added — multi-DTD app enumeration
 
-Each `flutter run` spawns its own DTD. Before 0.6.2, the MCP connected to one DTD and only saw the apps registered to THAT DTD. A user with sanga_mobile + sanga_driver + a sample in three `flutter run` terminals saw only ONE in `network_status.knownApps`.
+Each `flutter run` spawns its own DTD. Before 0.6.2, the MCP connected to one DTD and only saw the apps registered to THAT DTD. A user with eats_mobile + eats_driver + a sample in three `flutter run` terminals saw only ONE in `network_status.knownApps`.
 
 New `lib/src/vm/dtd_probe.dart` enumerates apps across every live DTD on the machine via TRANSIENT `DtdClient` connections — never touches `Session.instance.dtd` or attached session state. Parallel `Future.wait` with a 1.5s per-probe timeout so one hung DTD can't block the others. Result cached for 30s keyed by discovery-key (sorted pid:epoch tuples).
 
 `network_status.knownApps` now lists apps across all DTDs. Each entry carries new `dtdUri` + `workspaceRoot` fields naming the source DTD — the agent can pick the right `dtdUri:` arg for `network_attach` if needed, though direct `vmServiceUri:` works without DTD at all. Existing fields (`name`, `uri`, `exposedUri`) unchanged. Per-DTD probe errors surface in `dtdProbeErrors`.
 
-AutoAttacher uses the same probe so `--auto-attach=sanga_mobile,sanga_driver` works across multiple DTDs — when a matching app is found in a DTD OTHER than the primary, attach happens via `performAttach(vmServiceUri: ...)` (the existing branch that bypasses DTD entirely), so the primary connection is never disturbed.
+AutoAttacher uses the same probe so `--auto-attach=eats_mobile,eats_driver` works across multiple DTDs — when a matching app is found in a DTD OTHER than the primary, attach happens via `performAttach(vmServiceUri: ...)` (the existing branch that bypasses DTD entirely), so the primary connection is never disturbed.
 
 ### Changed — auto-attach first tick
 
-0.6.1's defensive design seeded already-running apps into `_seenUris` on the first tick of `AutoAttacher` WITHOUT attaching them. But 0.6.1 also made the allowlist mandatory — the user has already explicitly named which apps to grab. Skip-on-first-tick meant if sanga_mobile was running before the MCP came up, the agent couldn't see it until a Flutter restart.
+0.6.1's defensive design seeded already-running apps into `_seenUris` on the first tick of `AutoAttacher` WITHOUT attaching them. But 0.6.1 also made the allowlist mandatory — the user has already explicitly named which apps to grab. Skip-on-first-tick meant if eats_mobile was running before the MCP came up, the agent couldn't see it until a Flutter restart.
 
 The early-return at `auto_attach.dart:206` is dropped. First-tick behaviour now: log the intent (`auto-attach first tick — evaluating N currently-running app(s) against allowlist X`), then fall through to the standard allowlist gate + `performAttach` loop. The existing `_seenUris` de-dupe (post-attach the URI joins the set) prevents double-attach on subsequent ticks. Allowlist + denylist gates unchanged.
 
@@ -1085,7 +1085,7 @@ README gains a "Reconfiguring without re-registering" section explaining that ev
 
 After a successful attach, the response includes an `autoAttachSuggestion` block when the attached app isn't already covered by the `FLUTTER_NETWORK_MCP_AUTO_ATTACH` allowlist. The block carries:
 
-- `appName` / `pattern` (extracted token — "sanga_mobile" from "Flutter - iPhone 17 - Package: sanga_mobile")
+- `appName` / `pattern` (extracted token — "eats_mobile" from "Flutter - iPhone 17 - Package: eats_mobile")
 - `currentAllowlist`, `enabled`
 - `suggestedShellLine` (paste-ready `export ...`)
 - `agentAction` (explicit instruction to ASK THE USER before editing anything)
@@ -1100,7 +1100,7 @@ User-asked TODO marker for a future opt-IN crash-telemetry channel (so bugs come
 
 ### Notes
 
-- Live-verified on macOS against 4 currently-running DTDs (sanga_mobile, sanga_driver, two dart-sdk Android Studio sessions). The Linux + Windows path branches were reviewed but not runtime-tested in this round.
+- Live-verified on macOS against 4 currently-running DTDs (eats_mobile, eats_driver, two dart-sdk Android Studio sessions). The Linux + Windows path branches were reviewed but not runtime-tested in this round.
 - No security gap: the discovery files are written by `package:dtd` itself and are protected by per-user filesystem permissions. The MCP can only see what the user can see.
 - Tool count: 33 → **34** (`network_discover_dtd` added under Lifecycle). Tool surface unchanged in the multi-DTD work — only `knownApps` shape gained additive fields.
 
@@ -1114,13 +1114,13 @@ A security + reliability follow-up to 0.6.0. Closes a real auto-attach exposure 
 
 **Fix:**
 
-- `--auto-attach` is now an option taking a comma-separated allowlist of case-insensitive substring patterns matched against the app name DTD reports: `--auto-attach=sanga_mobile,sanga_driver`.
+- `--auto-attach` is now an option taking a comma-separated allowlist of case-insensitive substring patterns matched against the app name DTD reports: `--auto-attach=eats_mobile,eats_driver`.
 - **There is no boolean form.** To enable auto-attach you MUST specify which apps it's allowed to grab. Empty / absent disables.
 - `FLUTTER_NETWORK_MCP_AUTO_ATTACH=app1,app2` follows the same semantics (env var changed from `true|1`).
 - Non-matching apps log a one-line stderr note and are added to the known-URI set so the watcher doesn't retry every tick (acts as both rate-limit and audit trail).
 - `AutoAttacher`'s constructor enforces this with an assertion — the class is impossible to instantiate without a non-empty allowlist.
 
-**Optional denylist** — `--auto-attach-deny=Pixel 7,Android emulator` (or env var `FLUTTER_NETWORK_MCP_AUTO_ATTACH_DENY=...`) excludes specific apps/devices even when the allowlist would otherwise admit them. Useful for cases where the allowlist is a broad package name (e.g. `sanga_mobile`) but a particular device or form factor should be skipped. Same case-insensitive substring matching as the allowlist. Deny wins over allow. DTD reports names like `Flutter - iPhone 17 - Package: sanga_mobile`, so substring patterns can target either the package or the device.
+**Optional denylist** — `--auto-attach-deny=Pixel 7,Android emulator` (or env var `FLUTTER_NETWORK_MCP_AUTO_ATTACH_DENY=...`) excludes specific apps/devices even when the allowlist would otherwise admit them. Useful for cases where the allowlist is a broad package name (e.g. `eats_mobile`) but a particular device or form factor should be skipped. Same case-insensitive substring matching as the allowlist. Deny wins over allow. DTD reports names like `Flutter - iPhone 17 - Package: eats_mobile`, so substring patterns can target either the package or the device.
 
 **Migration from 0.6.0:** if you launched the server with `--auto-attach` (bool form, no value) in 0.6.0, change it to `--auto-attach=<app substring,...>`. Same for the env var. Without the value, the watcher silently stays off — no surprise grabbing.
 
@@ -1138,12 +1138,12 @@ None of this can break the user's Flutter app — the MCP runs in a separate pro
 
 ### Added — multi-attach
 
-The MCP server can now hold **N concurrent attached sessions** — debug `sanga_mobile` and `sanga_driver` in the same DB, the same agent conversation, without losing either side. Each attach owns its own VM connection + 2-second capture writer + 500-entry log ring. Cap via `FLUTTER_NETWORK_MCP_MAX_ATTACH` env var (default 4, clamped 1–32). DB schema unchanged — zero migrations needed; the schema was already keyed by `session_id`.
+The MCP server can now hold **N concurrent attached sessions** — debug `eats_mobile` and `eats_driver` in the same DB, the same agent conversation, without losing either side. Each attach owns its own VM connection + 2-second capture writer + 500-entry log ring. Cap via `FLUTTER_NETWORK_MCP_MAX_ATTACH` env var (default 4, clamped 1–32). DB schema unchanged — zero migrations needed; the schema was already keyed by `session_id`.
 
 Shipped across six commits (phases 1–6), summarized here:
 
 - **Architecture** — `SessionRegistry.instance` holds a `Map<String, AttachedSession>` keyed on vmServiceUri. Each `AttachedSession` owns its `VmClient`, `CaptureWriter`, `LogBuffer`, `LogStreamSubscriber`, and capture-time flags (httpProfilingEnabled, socketProfilingEnabled, lastHttpCursor). The DTD client and DB stay singletons.
-- **Scope resolver** (`lib/src/util/scope.dart`) — every read tool routes through `resolveScope(args)` at the top. Priority order: `sessionId` arg → `appNameContains` arg → history view (`session_open`) → `registry.soleAttached` (auto-resolve when exactly one is attached). With 2+ attached and no scope hint, returns a structured error listing every attached session + `nextSteps` like `sessionId:14  // sanga_mobile`. Successful responses carry a `scope:{sessionId, appName, isLive}` block so the agent can verify which session it just read from.
+- **Scope resolver** (`lib/src/util/scope.dart`) — every read tool routes through `resolveScope(args)` at the top. Priority order: `sessionId` arg → `appNameContains` arg → history view (`session_open`) → `registry.soleAttached` (auto-resolve when exactly one is attached). With 2+ attached and no scope hint, returns a structured error listing every attached session + `nextSteps` like `sessionId:14  // eats_mobile`. Successful responses carry a `scope:{sessionId, appName, isLive}` block so the agent can verify which session it just read from.
 - **Per-session alerts** — `jsonResult` gained an optional `scopeSessionId` parameter so the auto-injected `pendingAlerts` field is scoped to the calling tool's session, not process-wide. No cross-app alert bleed in the push-like signal.
 - **`network_attach`** — drops `force:true` arg entirely. Per-vmServiceUri duplicate guard (same app can't attach twice; different apps coexist). Returns `scope:{sessionId, appName, isLive:true}`. Catch block disconnects DTD only when this attempt brought DTD up AND no other sessions remain.
 - **`network_detach`** — three modes: `sessionId` / `appNameContains` for one session, `all:true` to drop everything, zero-arg works only when exactly one is attached. DTD disconnects only when nothing remains.
@@ -1177,7 +1177,7 @@ A single Flutter app can have multiple isolates (main + worker + spawned compute
 
 ### Added — `network_correlate` tool
 
-Typed companion to `network_query` SQL for the **webhook originator + receiver** pattern. When sanga_mobile sends a webhook that sanga_driver receives, `network_correlate sessionIds:[14,15] pattern:"txn-abc-123" timeWindowMs:5000` returns both halves paired by smallest time delta.
+Typed companion to `network_query` SQL for the **webhook originator + receiver** pattern. When eats_mobile sends a webhook that eats_driver receives, `network_correlate sessionIds:[14,15] pattern:"txn-abc-123" timeWindowMs:5000` returns both halves paired by smallest time delta.
 
 - `sessionIds:[int]` is **required** — cross-session aggregation is intentional, so the agent must pick which apps to compare (preventing accidental cross-app data bleed). Hard cap: 8 sessions per call.
 - `pattern:string` is **required** — substring searched via FTS5 in URLs and/or bodies. Phrase-quoted automatically so hyphens / colons / special chars work.

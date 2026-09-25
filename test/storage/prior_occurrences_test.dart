@@ -42,7 +42,7 @@ void main() {
     test('returns prior occurrence from another session', () {
       // Past session with an alert.
       final pastSid = dao.createSession(
-        appName: 'sanga_mobile',
+        appName: 'eats_mobile',
         vmServiceUri: 'ws://past',
         isolateId: null,
         projectPath: null,
@@ -61,7 +61,7 @@ void main() {
 
       // Current session.
       final currentSid = dao.createSession(
-        appName: 'sanga_mobile',
+        appName: 'eats_mobile',
         vmServiceUri: 'ws://current',
         isolateId: null,
         projectPath: null,
@@ -74,7 +74,7 @@ void main() {
       expect(result, hasLength(1));
       expect(result.first['session_id'], pastSid);
       expect(result.first['note'], 'investigated yesterday');
-      expect(result.first['app_name'], 'sanga_mobile');
+      expect(result.first['app_name'], 'eats_mobile');
     });
 
     test('excludes the current session', () {

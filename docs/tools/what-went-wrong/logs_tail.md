@@ -51,9 +51,9 @@ Filters you omit fall back to the sticky defaults from `session_configure` (`lev
 ```json
 {
   "source": "live",
-  "scope": {"sessionId": 14, "appName": "sanga_mobile", "isLive": true},
+  "scope": {"sessionId": 14, "appName": "eats_mobile", "isLive": true},
   "sessionId": 14,
-  "summary": "12 record(s) from live session 14 (sanga_mobile), 2 severe (level ≥ 1200); filtered by level≥900.",
+  "summary": "12 record(s) from live session 14 (eats_mobile), 2 severe (level ≥ 1200); filtered by level≥900.",
   "count": 12,
   "bufferSize": 412,
   "bufferCapacity": 2000,
