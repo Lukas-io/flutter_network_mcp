@@ -83,7 +83,7 @@ Full-text search. Ranked, highlighted search across every captured URL and body.
 
 Multi-app. Attach to several running apps at once, for example a customer app and a driver app, and correlate requests across them by a shared id.
 
-Capture control. Host and path glob filters, an opt-in allowlist, and an ephemeral no-persist mode for sessions you don't want written to disk. Sensitive fields are redacted before storage per a configurable policy.
+Capture control. Host and path glob filters, an opt-in allowlist, and an ephemeral no-persist mode for sessions you don't want written to disk. Secret headers (authorization, cookies, API keys, plus any you add) are redacted before they are stored; set `FLUTTER_NETWORK_MCP_STORE_SECRETS=true` to keep them for local replay. Exports and SQL output also mask tokens, passwords and keys found in bodies.
 
 The server exposes 49 tools across HTTP, sockets, WebSockets, logs, alerts, search, sessions, SQL, and admin categories. Every tool returns a consistent shape with a summary, suggested next steps, and any warnings, so the agent can act without parsing prose.
 

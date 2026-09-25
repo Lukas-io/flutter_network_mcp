@@ -9,7 +9,7 @@ when_to_use: When the user wants to share a session, archive it outside the DB, 
 - The user wants you to inspect — open it via `session_open` and use read tools. Export is for offline handoff.
 - The session is still live — export still works but is a snapshot. The tool warns and suggests detaching first.
 - You want a partial export (one request): there's no filter. Use `network_replay` for a single request as curl, or `network_query` for a SQL-filtered row set (returned in the reply, not written to a file).
-- You're sharing externally without `redact:true`: by default headers, cookies, and bodies are written verbatim. `redact:true` masks header values only (see below); bodies and URLs are never redacted.
+- You're sharing externally with `redact:false`: that writes whatever the capture stored, bodies included. The default masks secrets (see below), but bodies can still hold personal data, and URLs are not changed.
 - You want sockets or logs in a file: neither format includes them (only the `counts` block mentions them).
 
 ## Use this when
@@ -28,7 +28,7 @@ Reads the session's HTTP rows from the DB (up to 100,000, newest-first by start 
 
 Bodies are exported exactly as captured. With `session_configure bodyDecryption` on, the HAR still carries the original (possibly encrypted) bytes; decryption applies only to the read tools.
 
-`redact:true` replaces the values of the redacted header set with `<redacted>` in both formats: the built-ins (`authorization`, `cookie`, `proxy-authorization`, `set-cookie`, `x-api-key`, `x-auth-token`) plus names added with `redacted_headers`. Response cookies (`set-cookie`) are masked too.
+By default (`redact:true`) the export replaces the values of the redacted header set with `<redacted>` in both formats: the built-ins (`authorization`, `cookie`, `proxy-authorization`, `set-cookie`, `x-api-key`, `x-auth-token`) plus names added with `redacted_headers`. In HAR bodies it also masks bearer tokens, JWTs, long hex keys and values of fields like `password`, `token`, `api_key` and `client_secret`.
 
 Both formats create parent directories and overwrite an existing file. The tool runs without the per-tool deadline, so a large session does not time out.
 
@@ -37,7 +37,7 @@ Both formats create parent directories and overwrite an existing file. The tool 
 - `id` (int, required).
 - `format` (string, required): `"har"` or `"ndjson"`.
 - `outPath` (string, required): absolute path to write to. A relative path is not rejected; it resolves against the server process's working directory.
-- `redact` (bool, default false): mask auth header values (see above).
+- `redact` (bool, default true): mask secret headers and body secrets (see above). Pass false only for a file that stays on this machine.
 
 ## Returns
 
@@ -57,7 +57,7 @@ Both formats create parent directories and overwrite an existing file. The tool 
 }
 ```
 
-`warnings` fires for: the session is this process's sole live session (the file is a snapshot), an existing file was overwritten, a HAR with 0 requests, and any export with HTTP rows (unredacted headers and bodies without `redact:true`; bodies still unredacted with it). For NDJSON the first nextStep is a `jq` hint instead of the DevTools import.
+`warnings` fires for: the session is this process's sole live session (the file is a snapshot), an existing file was overwritten, a HAR with 0 requests, and any export with HTTP rows (with `redact:false`, that the file is unredacted; otherwise, that bodies can still hold personal data). For NDJSON the first nextStep is a `jq` hint instead of the DevTools import.
 
 Errors: missing `id` or `outPath`, or a `format` other than `"har"` / `"ndjson"`, returns `bad_argument`; an unknown id returns `not_found`; a write failure (for example an unwritable path) returns `internal` with `sessionId`, `outPath`, and nextSteps to check the directory and the id.
 
