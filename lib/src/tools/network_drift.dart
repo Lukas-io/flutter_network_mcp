@@ -3,11 +3,13 @@ import 'dart:convert';
 
 import 'package:dart_mcp/server.dart';
 
+import '../config/body_decryption.dart';
 import '../storage/captures_db.dart';
 import '../util/json_shape.dart';
 import '../util/scope.dart';
 import 'error_kind.dart';
 import 'result.dart';
+import 'body_fetch.dart';
 
 final networkDriftTool = Tool(
   name: 'network_drift',
@@ -80,7 +82,8 @@ FutureOr<CallToolResult> networkDrift(CallToolRequest request) async {
   final matched = <Map<String, Object?>>[];
   for (final r in rows) {
     final ct = (r['content_type'] as String?)?.toLowerCase() ?? '';
-    if (!ct.contains('json')) continue;
+    // Encrypted bodies travel under any content type; the JSON check happens after decryption.
+    if (!ct.contains('json') && BodyDecryptionConfig.active == null) continue;
     final path = (r['path'] as String?)?.toLowerCase() ?? '';
     if (pathContains != null && !path.contains(pathContains)) continue;
     if (r['vm_id'] == null) continue;
@@ -104,8 +107,9 @@ FutureOr<CallToolResult> networkDrift(CallToolRequest request) async {
 
   final samples = <Map<String, Object?>>[];
   for (final r in candidates) {
-    final bytes = dao.getBody(sid, r['vm_id'] as String, 'response');
-    if (bytes == null || bytes.isEmpty) continue;
+    final stored = dao.getBody(sid, r['vm_id'] as String, 'response');
+    if (stored == null || stored.isEmpty) continue;
+    final bytes = bodyForReading(stored, r['content_type'] as String?).bytes;
     Object? decoded;
     try {
       decoded = jsonDecode(utf8.decode(bytes));

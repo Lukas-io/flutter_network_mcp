@@ -1,7 +1,9 @@
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:dart_mcp/server.dart';
 
+import '../config/body_decryption.dart';
 import '../state/session.dart';
 import '../storage/captures_db.dart';
 import '../util/body_decoder.dart';
@@ -15,12 +17,56 @@ import 'result.dart';
 /// triple is meaningful: when [error] != null the caller should return it
 /// verbatim; otherwise [bytes] may still be null/empty (a genuinely no-body
 /// response), which the caller renders via [noBodyResult].
-typedef BodyFetch = ({
+typedef RawBodyFetch = ({
   Uint8List? bytes,
   String? mimeType,
   String source,
   CallToolResult? error,
 });
+
+/// [RawBodyFetch] after body decryption (#105): [decryption] holds the `decrypted` / `decryptionFailed` flags to merge into the reply, empty when decryption is off.
+typedef BodyFetch = ({
+  Uint8List? bytes,
+  String? mimeType,
+  String source,
+  CallToolResult? error,
+  Map<String, Object?> decryption,
+});
+
+/// A body as the agent should read it: decrypted when body decryption is on and the body fits the scheme, else as captured; [flags] says which.
+({Uint8List bytes, String? mimeType, Map<String, Object?> flags}) bodyForReading(
+    Uint8List bytes, String? mimeType) {
+  final scheme = BodyDecryptionConfig.active;
+  if (scheme == null || bytes.isEmpty) {
+    return (bytes: bytes, mimeType: mimeType, flags: const {});
+  }
+  final out = scheme.decrypt(bytes);
+  if (!out.decrypted) {
+    return (
+      bytes: bytes,
+      mimeType: mimeType,
+      flags: {'decrypted': false, 'decryptionFailed': out.failure},
+    );
+  }
+  final text = utf8.decode(out.bytes).trimLeft();
+  final looksJson = text.startsWith('{') || text.startsWith('[');
+  return (
+    bytes: out.bytes,
+    mimeType: looksJson ? 'application/json' : 'text/plain; charset=utf-8',
+    flags: const {'decrypted': true},
+  );
+}
+
+/// [decodeBody] of a body [bodyForReading] has decrypted, with its flags folded in.
+Map<String, Object?>? readableBodyJson(
+    Uint8List? bytes, String? mimeType, {required int maxBytes}) {
+  if (bytes == null) return null;
+  final readable = bodyForReading(bytes, mimeType);
+  final decoded =
+      decodeBody(readable.bytes, readable.mimeType, maxBytes: maxBytes)?.toJson();
+  if (decoded == null) return null;
+  return {...decoded, ...readable.flags};
+}
 
 /// Resolves the raw bytes of one captured body, shared by `network_body` and
 /// `network_body_outline` so both flows fetch identically (live VM with a
@@ -28,6 +74,33 @@ typedef BodyFetch = ({
 /// in a live session try every HTTP-profiling isolate, then fall back to the
 /// stored blob; in history read straight from the DB.
 Future<BodyFetch> fetchBodyBytes(
+  Scope scope,
+  String id,
+  String which, {
+  String? isolateId,
+}) async {
+  final raw = await _fetchRawBodyBytes(scope, id, which, isolateId: isolateId);
+  final bytes = raw.bytes;
+  if (raw.error != null || bytes == null || bytes.isEmpty) {
+    return (
+      bytes: bytes,
+      mimeType: raw.mimeType,
+      source: raw.source,
+      error: raw.error,
+      decryption: const <String, Object?>{},
+    );
+  }
+  final readable = bodyForReading(bytes, raw.mimeType);
+  return (
+    bytes: readable.bytes,
+    mimeType: readable.mimeType,
+    source: raw.source,
+    error: null,
+    decryption: readable.flags,
+  );
+}
+
+Future<RawBodyFetch> _fetchRawBodyBytes(
   Scope scope,
   String id,
   String which, {
