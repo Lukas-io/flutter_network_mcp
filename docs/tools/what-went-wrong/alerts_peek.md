@@ -22,11 +22,13 @@ Same builder as `alerts_drain` but doesn't update `drained`. Response shape is i
 
 ## Args
 
-Same as `alerts_drain` but smaller default `limit` (20 instead of 50).
+Same as `alerts_drain` (`sessionId`, `appNameContains`, `severityMin`, `limit`) but smaller default `limit`: 20 instead of 50, hard cap 200, values <= 0 fall back to 20.
 
 ## Returns
 
-Identical shape to `alerts_drain` (see that doc).
+Identical shape to `alerts_drain` (see that doc), with the summary starting `Peeked at N alert(s)`. `count` and the summary cover only the rows returned (at most `limit`), not everything pending; `network_status.alerts.pendingTotal` gives the DB-wide pending count.
+
+Errors match `alerts_drain`: scope errors carry `nextSteps` but currently no `errorKind`; an unknown `severityMin` or a DB failure returns `errorKind: "internal"` (`alerts_peek failed: ...`).
 
 ## Pairs well with
 
@@ -37,7 +39,7 @@ Identical shape to `alerts_drain` (see that doc).
 
 ```
 > alerts_peek limit:5
-< {summary:"Peeked at 12 alert(s)...", alerts:[<first 5>]}
+< {summary:"Peeked at 5 alert(s) session 14: 1 critical, 4 warning.", count:5, alerts:[<5 newest>]}
 > # show user, get confirmation
 > alerts_drain
 ```

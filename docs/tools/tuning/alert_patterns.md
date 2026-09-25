@@ -7,8 +7,8 @@ when_to_use: When built-in alert rules miss project-specific failure signals you
 ## DO NOT USE THIS TOOL WHEN
 
 - Built-ins already catch it — `log_keyword` matches `/error|exception|failed|denied|timeout|refused|crash/i`, `flutter_error` catches the Flutter framework patterns. Don't double-fire.
-- The pattern matches everything — `.*` style regexes flood the queue. The tool warns on these but still accepts; consider narrowing.
-- The regex is invalid — the tool validates compile-time and returns a clear FormatException.
+- The pattern matches everything: a match-all regex floods the queue. The tool warns only when the regex is exactly `.*` or `.+` and still registers it; any other broad pattern is accepted without a warning.
+- The regex is invalid: it is compiled before storing, and a bad one returns `errorKind: "bad_query"` with `Invalid regex: <reason>`. Nothing is stored.
 - You want HTTP-side rules — these match LOG text, not HTTP requests. For HTTP tuning use `alerts_config`.
 
 ## Use this when
@@ -19,11 +19,15 @@ when_to_use: When built-in alert rules miss project-specific failure signals you
 
 ## How it works
 
-Stored in `alert_patterns(id, kind, regex, severity, label)`. The detector evaluates them on every log record AFTER built-in rules. Patterns can fire ALONGSIDE `log_keyword`; they do NOT fire alongside `flutter_error` (that short-circuits to avoid double-alerts on framework exceptions).
+Stored in the `alert_patterns` table (`id`, `kind`, `regex`, `severity`, `label`, `added_at`); `kind` is trimmed before storing. Every add or remove reloads the full pattern set into the detector, so changes apply to the next log record.
 
-`regex` compiles with `multiLine:true`. `label` becomes the alert title; if omitted, the first matching line is used. `kind` is your free-text label that shows in `alerts_drain.alerts[].kind`.
+The detector runs on each persisted `logging`, `stdout` and `stderr` record with a non-empty message (native device logs are not evaluated). It matches the record's `message` only; the separate `error` and `stackTrace` fields are not scanned. Built-in rules run first. If `flutter_error` is enabled and matches, the record stops there and no custom pattern is evaluated. Otherwise `log_keyword` and every matching custom pattern each raise their own alert, so one record can fire several.
 
-Patterns are hydrated from the DB on server start, so they survive restarts.
+`regex` compiles with `multiLine:true` and is case-sensitive (no case flag is set). A leading `(?i)` is rejected as an invalid regex; use a character class such as `[Oo]rder[Ss]ervice` instead. `label` becomes the alert title; if omitted, the first line of the message is used (cut at 160 chars). The alert `detail` is the message, cut at 2048 chars. `kind` is your free-text label that shows in `alerts_drain.alerts[].kind`, and it feeds the dedup signature together with the title.
+
+`severity` is checked case-insensitively but stored exactly as given. Pass it in lowercase: `alerts_drain` / `alerts_peek` / `alerts_clear` `severityMin` filters only rank lowercase values, so an alert stored as `"ERROR"` never passes a `severityMin` filter.
+
+Patterns are loaded from the DB on server start, so they survive restarts. The tool exists only when the `alerts` capability is enabled.
 
 ## Args
 
@@ -56,7 +60,12 @@ Patterns are hydrated from the DB on server start, so they survive restarts.
  "nextSteps":["alert_patterns action:\"list\" — confirm remaining patterns", ...]}
 ```
 
-`warnings: []` fires when the regex is over-broad (`.*` / `.+`).
+On `add`, `warnings` appears only when the regex is exactly `.*` or `.+`. On `remove` of an unknown id the call succeeds with `removed:false` and summary `No alert pattern with id <id> (already removed?).`. `label` is omitted from list entries that have none.
+
+Errors (all carry `nextSteps`):
+- `bad_argument`: missing `kind`, `regex` or `severity` on add, missing `id` on remove, an unknown `action`, or a severity outside info / warning / error / critical.
+- `bad_query`: the regex does not compile.
+- `internal`: any other failure.
 
 ## Pairs well with
 
@@ -71,5 +80,5 @@ Patterns are hydrated from the DB on server start, so they survive restarts.
 < {summary:"Registered alert pattern #1...", id:1}
 > # OrderService error logs ...
 > alerts_drain
-< [{kind:"order_fail", severity:"error", title:"OrderService failure", ...}]
+< {summary:"Drained 1 alert(s) session 14: 1 error.", alerts:[{kind:"order_fail", severity:"error", title:"OrderService failure", ...}]}
 ```

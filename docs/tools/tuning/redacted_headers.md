@@ -1,15 +1,15 @@
 ---
 tool: redacted_headers
-description: Manage the header name allowlist that network_replay masks. Adds to a built-in set; safe by default.
+description: Manage the header names masked as <redacted> in network_get, network_replay, network_replay_as_test, network_diff and redacted session exports. Adds to a built-in set; safe by default.
 when_to_use: When the project has custom auth/sensitive headers (X-Tenant-Key, X-Internal-Auth) that should be masked in shared curls.
 ---
 
 ## DO NOT USE THIS TOOL WHEN
 
-- The header is one of the built-in defaults (`authorization`, `cookie`, `proxy-authorization`, `x-api-key`, `x-auth-token`) — always redacted; the tool refuses to add or remove these.
-- You want to redact bodies — this only affects headers. Use SQL UPDATE for bulk body redaction.
-- You want capture-time redaction — this is replay-time. Original header values stay in the DB.
-- Local debugging with `redact:false` on `network_replay` — that bypasses everything; this list is irrelevant.
+- The header is one of the built-in defaults (`authorization`, `cookie`, `proxy-authorization`, `x-api-key`, `x-auth-token`): always redacted. Adding one is a no-op (success with a warning); removing one is refused.
+- You want to redact bodies: this only affects headers. Bodies cannot be edited in place (`network_query` is read-only); `bodies_purge` deletes stored bodies.
+- You want capture-time redaction: this applies when a tool renders headers. Original header values stay in the DB.
+- Local debugging with `redact:false` on `network_get`, `network_replay` or `network_replay_as_test`: that bypasses redaction entirely; this list is irrelevant.
 
 ## Use this when
 
@@ -18,7 +18,12 @@ when_to_use: When the project has custom auth/sensitive headers (X-Tenant-Key, X
 
 ## How it works
 
-Names normalized to lowercase. `network_replay` reads `redactedHeaderSet()` (built-ins + extras) on every call — changes take effect immediately.
+Names are trimmed and lowercased before storing, and matched case-insensitively. Every consumer reads `redactedHeaderSet()` (built-ins + extras) on each call, so changes take effect immediately:
+- `network_get`, `network_replay`, `network_replay_as_test`: redact by default; `redact:false` shows real values.
+- `network_diff`: always redacts in the header diff.
+- `session_export`: only when called with `redact:true` (its default is false).
+
+Extras persist in the DB across restarts. The tool exists only when the `admin` capability is enabled.
 
 ## Args
 
@@ -49,7 +54,9 @@ Names normalized to lowercase. `network_replay` reads `redactedHeaderSet()` (bui
  "name":"x-tenant-key", "removed":true}
 ```
 
-Attempting to add a built-in returns success with `inserted:false` and a `warnings` array noting the no-op. Attempting to remove a built-in returns an error with a clear explanation.
+Attempting to add a built-in returns success with `inserted:false` and a `warnings` array noting the no-op. Re-adding an existing extra returns `inserted:false` and refreshes its reason and timestamp. Removing a name that is not stored succeeds with `removed:false`. `reason` is omitted from extras that have none.
+
+Errors: `bad_argument` for a missing `name` on add/remove, an unknown `action`, or an attempt to remove a built-in (its nextSteps point at `redact:false` for local debugging); `internal` for anything else.
 
 ## Pairs well with
 

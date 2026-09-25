@@ -20,34 +20,44 @@ when_to_use: When alerts are too noisy (disable rules), too sensitive (raise slo
 
 ## How it works
 
-`get` (default when `set` not given) reads the `AlertRules` singleton.
-`set:{slowThresholdMs?, rules?:{...}}` mutates the singleton in place. Missing fields keep their values. Changes apply IMMEDIATELY to subsequent capture writer ticks and log events — no restart needed.
+Every call returns the current config of the `AlertRules` singleton. When `set` is present the call mutates first, then reports (`mutated:true`); without `set` it only reads. The `get` flag is accepted but has no effect: omitting `set` is what makes a call read-only.
 
-Rule keys: `http_5xx`, `http_4xx`, `http_error`, `http_slow`, `log_keyword`, `flutter_error`.
+`set:{slowThresholdMs?, retentionDays?, rules?:{...}}` mutates the singleton in place. Missing fields keep their values. Changes apply immediately to subsequent capture writer ticks and log events, no restart needed. Everything is per-process and resets on restart.
+
+Values the engine rejects are dropped silently, not reported as errors: `slowThresholdMs` <= 0, a negative `retentionDays`, and unknown keys inside `rules`. Re-read `config` in the reply to confirm what actually changed.
+
+Rule keys: `http_5xx`, `http_4xx`, `http_error`, `http_slow`, `log_keyword`, `flutter_error`, `http_anomaly`. `http_anomaly` toggles the baseline-relative detector, which emits both the `http_anomaly` (latency) and `http_anomaly_errors` (error rate) alert kinds. Custom `alert_patterns` have no toggle here; remove them with `alert_patterns action:"remove"`.
+
+`retentionDays` controls the alert retention sweep (first run about 8s after start, then hourly): alerts older than N days are deleted, except those of a currently attached session. 0 keeps alerts forever. The initial value comes from `FLUTTER_NETWORK_MCP_ALERT_RETENTION_DAYS` (default 14). The same sweep always caps pending alerts at 200 per session, dropping the oldest.
 
 ## Args
 
-- `get` (bool, optional, default true when `set` omitted).
-- `set` (object, optional) — `{slowThresholdMs?: int, rules?: {<rule_key>: bool}}`.
+- `get` (bool, optional): accepted, no effect. Omit `set` to read.
+- `set` (object, optional): `{slowThresholdMs?: int, retentionDays?: int, rules?: {<rule_key>: bool}}`.
+  - `slowThresholdMs`: `http_slow` fires when the exchange takes longer than this (default 3000). Must be > 0.
+  - `retentionDays`: alert retention window in days, 0 = keep forever. Must be >= 0.
+  - `rules`: per-rule enable flags; omitted rules keep their state. A non-bool value fails the call.
 
 ## Returns
 
 ```json
 {
-  "summary": "Updated alert config: slowThresholdMs=5000, enabled=[http_5xx, http_error, log_keyword, flutter_error], disabled=[http_4xx, http_slow].",
+  "summary": "Updated alert config: slowThresholdMs=5000, retention=14d, enabled=[http_5xx, http_error, http_slow, log_keyword, flutter_error, http_anomaly], disabled=[http_4xx].",
   "mutated": true,
   "config": {
     "slowThresholdMs": 5000,
-    "rules": {"http_5xx":true, "http_4xx":false, ...}
+    "retentionDays": 14,
+    "rules": {"http_5xx":true, "http_4xx":false, "http_error":true, "http_slow":true, "log_keyword":true, "flutter_error":true, "http_anomaly":true}
   },
-  "nextSteps": [
-    "alerts_drain — see what fires under the new config",
-    "alerts_clear — wipe alerts that predate this rule change"
-  ]
+  "nextSteps": ["alerts_drain ... see what fires under the new config", "alerts_clear ... wipe alerts that predate this rule change"]
 }
 ```
 
-`warnings: []` fires when all rules are off (pipeline silent) or `slowThresholdMs` < 500 (noisy).
+A read (no `set`) returns `mutated:false`, a summary like `"Alert config: slowThresholdMs=3000, retention=14d, 7/7 rule(s) enabled."` (`retention=off` when `retentionDays` is 0), and nextSteps pointing at `alerts_config set:{...}` and `alert_patterns action:list`.
+
+`warnings` appears when all rules are off (the pipeline surfaces nothing) or `slowThresholdMs` < 500 (noisy).
+
+Errors: a value of the wrong type inside `set` (for example `rules:{http_4xx:"no"}`) returns `errorKind: "bad_argument"` with nextSteps to re-read the config and retry.
 
 ## Pairs well with
 
