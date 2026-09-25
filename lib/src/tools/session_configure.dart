@@ -2,8 +2,11 @@ import 'dart:async';
 
 import 'package:dart_mcp/server.dart';
 
+import '../config/body_decryption.dart';
 import '../config/session_filters.dart';
+import '../storage/plaintext_index.dart';
 import '../util/filters.dart';
+import 'error_kind.dart';
 import 'result.dart';
 
 final sessionConfigureTool = Tool(
@@ -41,6 +44,34 @@ final sessionConfigureTool = Tool(
             'big reads from flooding the agent context.',
       ),
       'clear': Schema.bool(description: 'Reset ALL sticky defaults to none.'),
+      'bodyDecryption': Schema.object(
+        description: 'Decrypt app-encrypted HTTP bodies on read, and let '
+            'network_search / network_correlate match their plaintext. The key '
+            'and the plaintext stay in this process\'s memory; neither is '
+            'written to the capture DB. Replies show a key fingerprint, never '
+            'the key. Replay and export keep the original bytes. {off:true} '
+            'turns it off and drops the plaintext index.',
+        properties: {
+          'algorithm': Schema.string(
+              description: 'aes-256-ctr (default) or aes-128-ctr.'),
+          'key': Schema.string(description: 'The app\'s key.'),
+          'keyEncoding':
+              Schema.string(description: 'utf8 (default), hex or base64.'),
+          'encoding': Schema.string(
+              description: 'How the body holds the payload: hex (default), '
+                  'base64 or raw bytes.'),
+          'ivMode': Schema.string(
+              description: 'prefix (default), suffix, or infused: the IV '
+                  'spliced into the payload at ivOffset.'),
+          'ivOffset': Schema.int(
+              description: 'infused: where the IV starts. Hex: in hex '
+                  'characters; base64/raw: in decoded bytes.'),
+          'ivLength': Schema.int(
+              description: 'IV length in the same unit: 32 hex characters '
+                  'or 16 bytes (the default).'),
+          'off': Schema.bool(description: 'true turns decryption off.'),
+        },
+      ),
     },
   ),
 );
@@ -72,6 +103,25 @@ FutureOr<CallToolResult> sessionConfigure(CallToolRequest request) async {
   if (args.containsKey('maxResponseTokens')) {
     sf.maxResponseTokens = args['maxResponseTokens'] as int?;
   }
+  if (args['clear'] == true) _setDecryption(null);
+
+  final decryptionArg = args['bodyDecryption'];
+  if (decryptionArg is Map && decryptionArg['off'] == true) {
+    _setDecryption(null);
+  } else if (decryptionArg != null) {
+    final parsed = BodyDecryption.parse(decryptionArg);
+    if (parsed.error != null) {
+      return errorResult('bodyDecryption: ${parsed.error}',
+          kind: ErrorKind.badArgument,
+          extra: {
+            'nextSteps': const [
+              'session_configure bodyDecryption:{key:"<32-char key>", '
+                  'encoding:"hex", ivMode:"infused", ivOffset:10, ivLength:32}',
+            ],
+          });
+    }
+    _setDecryption(parsed.config);
+  }
 
   final block = sf.toBlock();
   final summary = sf.isEmpty
@@ -81,9 +131,20 @@ FutureOr<CallToolResult> sessionConfigure(CallToolRequest request) async {
           'network_list inherit these when you omit the arg; an arg you pass '
           'still wins for that call.';
 
+  final decryption = BodyDecryptionConfig.active;
   return jsonResult({
-    'summary': summary,
+    'summary': decryption == null
+        ? summary
+        : '$summary Body decryption is on (${decryption.algorithm}, key '
+            '${decryption.keyFingerprint}); network_search reads the '
+            'plaintext through an index kept in memory, never written to disk.',
     'defaults': block,
+    'bodyDecryption': decryption?.toBlock() ?? const {'active': false},
+    if (decryption != null)
+      'warnings': const [
+        'decrypted bodies are returned as plaintext, so they land in this '
+            'transcript; turn it off with bodyDecryption:{off:true} when done',
+      ],
     'nextSteps': sf.isEmpty
         ? const [
             'session_configure levelMin:1000 messageContains:["[EventTracker]"] to default to those logs',
@@ -94,4 +155,10 @@ FutureOr<CallToolResult> sessionConfigure(CallToolRequest request) async {
             'session_configure clear:true to drop all sticky defaults',
           ],
   });
+}
+
+/// A new scheme (or none) makes any plaintext already indexed in memory stale.
+void _setDecryption(BodyDecryption? config) {
+  BodyDecryptionConfig.active = config;
+  PlaintextIndex.instance.clear();
 }

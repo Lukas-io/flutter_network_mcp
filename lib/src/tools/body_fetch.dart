@@ -1,7 +1,9 @@
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:dart_mcp/server.dart';
 
+import '../config/body_decryption.dart';
 import '../state/session.dart';
 import '../storage/captures_db.dart';
 import '../util/body_decoder.dart';
@@ -15,12 +17,56 @@ import 'result.dart';
 /// triple is meaningful: when [error] != null the caller should return it
 /// verbatim; otherwise [bytes] may still be null/empty (a genuinely no-body
 /// response), which the caller renders via [noBodyResult].
-typedef BodyFetch = ({
+typedef RawBodyFetch = ({
   Uint8List? bytes,
   String? mimeType,
   String source,
   CallToolResult? error,
 });
+
+/// [RawBodyFetch] after body decryption (#105): [decryption] holds the `decrypted` / `decryptionFailed` flags to merge into the reply, empty when decryption is off.
+typedef BodyFetch = ({
+  Uint8List? bytes,
+  String? mimeType,
+  String source,
+  CallToolResult? error,
+  Map<String, Object?> decryption,
+});
+
+/// A body as the agent should read it: decrypted when body decryption is on and the body fits the scheme, else as captured; [flags] says which.
+({Uint8List bytes, String? mimeType, Map<String, Object?> flags}) bodyForReading(
+    Uint8List bytes, String? mimeType) {
+  final scheme = BodyDecryptionConfig.active;
+  if (scheme == null || bytes.isEmpty) {
+    return (bytes: bytes, mimeType: mimeType, flags: const {});
+  }
+  final out = scheme.decrypt(bytes);
+  if (!out.decrypted) {
+    return (
+      bytes: bytes,
+      mimeType: mimeType,
+      flags: {'decrypted': false, 'decryptionFailed': out.failure},
+    );
+  }
+  final text = utf8.decode(out.bytes).trimLeft();
+  final looksJson = text.startsWith('{') || text.startsWith('[');
+  return (
+    bytes: out.bytes,
+    mimeType: looksJson ? 'application/json' : 'text/plain; charset=utf-8',
+    flags: const {'decrypted': true},
+  );
+}
+
+/// [decodeBody] of a body [bodyForReading] has decrypted, with its flags folded in.
+Map<String, Object?>? readableBodyJson(
+    Uint8List? bytes, String? mimeType, {required int maxBytes}) {
+  if (bytes == null) return null;
+  final readable = bodyForReading(bytes, mimeType);
+  final decoded =
+      decodeBody(readable.bytes, readable.mimeType, maxBytes: maxBytes)?.toJson();
+  if (decoded == null) return null;
+  return {...decoded, ...readable.flags};
+}
 
 /// Resolves the raw bytes of one captured body, shared by `network_body` and
 /// `network_body_outline` so both flows fetch identically (live VM with a
@@ -28,6 +74,33 @@ typedef BodyFetch = ({
 /// in a live session try every HTTP-profiling isolate, then fall back to the
 /// stored blob; in history read straight from the DB.
 Future<BodyFetch> fetchBodyBytes(
+  Scope scope,
+  String id,
+  String which, {
+  String? isolateId,
+}) async {
+  final raw = await _fetchRawBodyBytes(scope, id, which, isolateId: isolateId);
+  final bytes = raw.bytes;
+  if (raw.error != null || bytes == null || bytes.isEmpty) {
+    return (
+      bytes: bytes,
+      mimeType: raw.mimeType,
+      source: raw.source,
+      error: raw.error,
+      decryption: const <String, Object?>{},
+    );
+  }
+  final readable = bodyForReading(bytes, raw.mimeType);
+  return (
+    bytes: readable.bytes,
+    mimeType: readable.mimeType,
+    source: raw.source,
+    error: null,
+    decryption: readable.flags,
+  );
+}
+
+Future<RawBodyFetch> _fetchRawBodyBytes(
   Scope scope,
   String id,
   String which, {
@@ -59,7 +132,7 @@ Future<BodyFetch> fetchBodyBytes(
             }),
       );
     }
-    mimeType = row['content_type'] as String?;
+    mimeType = storedContentType(row, which);
     return (bytes: bytes, mimeType: mimeType, source: source, error: null);
   }
 
@@ -114,7 +187,7 @@ Future<BodyFetch> fetchBodyBytes(
       final dbRow = CapturesDao().getHttpRequest(scope.sessionId, id);
       return (
         bytes: dbBytes,
-        mimeType: dbRow?['content_type'] as String?,
+        mimeType: dbRow == null ? null : storedContentType(dbRow, which),
         source: 'live-db-fallback',
         error: null,
       );
@@ -124,16 +197,28 @@ Future<BodyFetch> fetchBodyBytes(
       mimeType: null,
       source: source,
       error: errorResult(
-        'body fetch failed: ${lastError ?? "no isolate had id $id"}',
-        kind: ErrorKind.unresponsiveVm,
+        looksLikeVmIdMiss(lastError)
+            ? 'No request with id "$id" is known to the live VM or the '
+                'persisted DB — the id is stale or mistyped.'
+            : 'body fetch failed: ${lastError ?? "no isolate had id $id"}',
+        // D3: a clean "no such id" answer from a healthy VM is not_found,
+        // not unresponsive_vm.
+        kind: looksLikeVmIdMiss(lastError)
+            ? ErrorKind.notFound
+            : ErrorKind.unresponsiveVm,
         extra: {
           'id': id,
           'triedIsolates': candidateIsolates,
-          'nextSteps': const [
-            'network_query sql:"SELECT which,size FROM http_bodies WHERE vm_id=\'<id>\'" — check whether the body is persisted',
-            'network_get id:<id> — confirm the request still exists',
-            'network_status — check whether the VM service is responsive (the app may be paused at a breakpoint)',
-          ],
+          'nextSteps': looksLikeVmIdMiss(lastError)
+              ? const [
+                  'network_list — copy a valid request id',
+                  'network_search query:"..." — find the request by content',
+                ]
+              : const [
+                  'network_query sql:"SELECT which,size FROM http_bodies WHERE vm_id=\'<id>\'" — check whether the body is persisted',
+                  'network_get id:<id> — confirm the request still exists',
+                  'network_status — check whether the VM service is responsive (the app may be paused at a breakpoint)',
+                ],
         },
       ),
     );
@@ -162,9 +247,16 @@ CallToolResult noBodyResult(
   final bodyStatus = status['bodyStatus'];
   final warnings = <String>[];
   if (bodyStatus == 'pending') {
+    // A history view of a session some server process still captures into is not ended.
+    final ended = !scope.isLive &&
+        CapturesDao().getSession(scope.sessionId)?['ended_at'] != null;
     warnings.add(
-      '$which body not captured yet — the writer backfills async. Retry '
-      'in ~2s, or fetch in live mode.',
+      !ended
+          ? '$which body not captured yet — the writer backfills async. Retry '
+              'in ~2s, or fetch in live mode.'
+          : 'The session ended before this $which body was persisted; the '
+              'bytes are unrecoverable. Relaunch the app and reproduce the '
+              'request to capture it.',
     );
   } else if (bodyStatus == 'unavailable') {
     warnings.add(
@@ -186,5 +278,5 @@ CallToolResult noBodyResult(
     'nextSteps': const [
       'network_get id:<id> — confirm the request exists and check headers',
     ],
-  }, scopeSessionId: scope.sessionId);
+  }, scopeSessionId: scope.sessionId, scopeNote: scope.note);
 }

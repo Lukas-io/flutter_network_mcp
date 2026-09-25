@@ -8,6 +8,7 @@ import '../util/json_shape.dart';
 import '../util/scope.dart';
 import 'body_fetch.dart';
 import 'error_kind.dart';
+import '../util/suggest.dart';
 import 'result.dart';
 
 /// Above this decoded size, grep is refused (a pathological regex over a huge
@@ -105,6 +106,7 @@ FutureOr<CallToolResult> networkBodyQuery(CallToolRequest request) async {
     final bytes = fetch.bytes;
     final mimeType = fetch.mimeType;
     final source = fetch.source;
+    final decryption = fetch.decryption;
 
     if (bytes == null || bytes.isEmpty) {
       return noBodyResult(scope, id, which, source, mimeType);
@@ -117,6 +119,7 @@ FutureOr<CallToolResult> networkBodyQuery(CallToolRequest request) async {
         id: id,
         which: which,
         source: source,
+        decryption: decryption,
         mimeType: mimeType,
         bytes: bytes,
         total: total,
@@ -132,6 +135,7 @@ FutureOr<CallToolResult> networkBodyQuery(CallToolRequest request) async {
       id: id,
       which: which,
       source: source,
+      decryption: decryption,
       mimeType: mimeType,
       bytes: bytes,
       total: total,
@@ -157,6 +161,7 @@ CallToolResult _grep({
   required String id,
   required String which,
   required String source,
+  Map<String, Object?> decryption = const {},
   required String? mimeType,
   required List<int> bytes,
   required int total,
@@ -181,7 +186,8 @@ CallToolResult _grep({
   final text = utf8.decode(bytes, allowMalformed: true);
   final RegExp re;
   try {
-    re = RegExp(pattern, caseSensitive: !ignoreCase, multiLine: true);
+    final norm = normalizeGrep(pattern, ignoreCase);
+    re = RegExp(norm.pattern, caseSensitive: !norm.ignoreCase, multiLine: true);
   } catch (e) {
     return errorResult('Invalid grep regex: $e',
         kind: ErrorKind.badArgument,
@@ -207,6 +213,7 @@ CallToolResult _grep({
   final truncated = totalMatches > matches.length;
   return jsonResult({
     'source': source,
+    ...decryption,
     'scope': scope.toBlock(),
     'sessionId': scope.sessionId,
     'summary': totalMatches == 0
@@ -225,7 +232,7 @@ CallToolResult _grep({
       if (matches.isNotEmpty)
         'network_body id:"$id" which:$which offset:${matches.first['offset']} length:16384 — read full bytes around the first match',
     ],
-  }, scopeSessionId: scope.sessionId);
+  }, scopeSessionId: scope.sessionId, scopeNote: scope.note);
 }
 
 CallToolResult _jsonPath({
@@ -233,6 +240,7 @@ CallToolResult _jsonPath({
   required String id,
   required String which,
   required String source,
+  Map<String, Object?> decryption = const {},
   required String? mimeType,
   required List<int> bytes,
   required int total,
@@ -282,6 +290,7 @@ CallToolResult _jsonPath({
   final truncated = totalHits > shown.length;
   return jsonResult({
     'source': source,
+    ...decryption,
     'scope': scope.toBlock(),
     'sessionId': scope.sessionId,
     'summary': totalHits == 0
@@ -299,7 +308,7 @@ CallToolResult _jsonPath({
     'nextSteps': const [
       'network_body_outline id:<id> — see the full structure if the path missed',
     ],
-  }, scopeSessionId: scope.sessionId);
+  }, scopeSessionId: scope.sessionId, scopeNote: scope.note);
 }
 
 String _cap(String s, int max) =>

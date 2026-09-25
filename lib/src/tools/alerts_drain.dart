@@ -5,6 +5,7 @@ import 'package:dart_mcp/server.dart';
 import '../config/capabilities.dart';
 import '../storage/captures_db.dart';
 import '../util/scope.dart';
+import '../util/guidance.dart';
 import 'error_kind.dart';
 import 'result.dart';
 
@@ -42,6 +43,8 @@ FutureOr<CallToolResult> alertsDrain(CallToolRequest request) async {
   scope!;
   final sessionId = scope.sessionId;
   final severityMin = args['severityMin'] as String?;
+  final badSeverity = invalidSeverityMin(severityMin, 'alerts_drain');
+  if (badSeverity != null) return badSeverity;
   final limitRaw = (args['limit'] as int?) ?? 50;
   final limit = limitRaw <= 0 ? 50 : (limitRaw > 200 ? 200 : limitRaw);
 
@@ -67,6 +70,21 @@ FutureOr<CallToolResult> alertsDrain(CallToolRequest request) async {
       ],
     });
   }
+}
+
+CallToolResult? invalidSeverityMin(String? severityMin, String tool) {
+  if (severityMin == null || CapturesDao.isSeverity(severityMin)) return null;
+  return errorResult(
+    'Unknown severityMin "$severityMin". Expected one of: '
+    '${CapturesDao.severities.join(", ")}.',
+    kind: ErrorKind.badArgument,
+    extra: {
+      'nextSteps': [
+        '$tool severityMin:"warning"',
+        '$tool without severityMin for every severity',
+      ],
+    },
+  );
 }
 
 /// Shared builder for drain + peek responses so the shape stays consistent.
@@ -120,10 +138,17 @@ Map<String, Object?> buildAlertsResponse({
 
   final nextSteps = <String>[];
   if (rows.isEmpty) {
-    if (action == 'drain') {
+    final emptyState = SessionStateView.of(scope.sessionId);
+    if (!emptyState.canGenerateTraffic) {
+      nextSteps.add(
+          'Nothing pending — and this session\'s capture is complete, so no '
+          'new alerts will arrive.');
+    } else if (action == 'drain') {
       nextSteps.add('Nothing to handle right now. Re-check with alerts_peek to avoid disturbing the queue.');
     } else {
-      nextSteps.add('Nothing pending. Drive the app or wait for the detector to flag new events.');
+      nextSteps.add(SessionStateView.of(scope.sessionId).canGenerateTraffic
+          ? 'Nothing pending. Drive the app or wait for the detector to flag new events.'
+          : 'Nothing pending — and this session\'s capture is complete, so no new alerts will arrive.');
     }
   } else {
     if (firstHttp.isNotEmpty && caps.isEnabled(Category.http)) {

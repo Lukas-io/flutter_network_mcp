@@ -59,22 +59,25 @@ class VmClient {
   VmService? _service;
   Uri? _connectedUri;
 
-  /// VM service extension the `flutter_network_mcp_hooks` companion registers
-  /// to surface captured WebSocket frames (0.9.0 / schema v8).
-  static const String realtimeExtension =
-      'ext.flutter_network_mcp.getRealtimeProfile';
-
   /// All known HTTP-profiling isolates, keyed by isolate id. Populated by
   /// [discoverHttpProfilingIsolates] and refreshed by the capture writer's
   /// periodic re-scan (Phase 10).
   final Map<String, IsolateInfo> _isolates = {};
 
-  /// Isolates that expose [realtimeExtension] (the companion package's drain
-  /// endpoint). Subset of [_isolates], populated by discovery. Empty when the
-  /// app does not install `flutter_network_mcp_hooks`.
-  final Set<String> _realtimeIsolates = {};
-
   bool get isConnected => _service != null;
+
+  /// True when the VM answers `getVersion` within [timeout]. False when not
+  /// connected, on any error, or on timeout — the heartbeat's whole question.
+  Future<bool> isResponsive({Duration timeout = const Duration(seconds: 3)}) async {
+    final svc = _service;
+    if (svc == null) return false;
+    try {
+      await svc.getVersion().timeout(timeout);
+      return true;
+    } on Object {
+      return false;
+    }
+  }
   Uri? get connectedUri => _connectedUri;
 
   /// Back-compat: first known HTTP-profiling isolate id, or null if no
@@ -86,13 +89,6 @@ class VmClient {
   /// Snapshot of every currently-tracked HTTP-profiling isolate.
   List<IsolateInfo> get httpProfilingIsolates =>
       List.unmodifiable(_isolates.values);
-
-  /// Isolate ids exposing the companion's realtime drain extension.
-  List<String> get realtimeIsolates => List.unmodifiable(_realtimeIsolates);
-
-  /// True when the app has installed `flutter_network_mcp_hooks` (at least one
-  /// isolate exposes [realtimeExtension]).
-  bool get hasRealtimeExtension => _realtimeIsolates.isNotEmpty;
 
   VmService get service =>
       _service ?? (throw StateError('VM service is not connected.'));
@@ -134,6 +130,13 @@ class VmClient {
     );
   }
 
+  /// RC4: invoked at most once when the VM WebSocket closes WITHOUT
+  /// [disconnect] having been called — i.e. the app process went away
+  /// (quit, crash, device disconnect, `flutter run` stopped). Deliberate
+  /// [disconnect] / reconnect never fires it.
+  void Function()? onUnexpectedDisconnect;
+  bool _deliberateDisconnect = false;
+
   Future<void> connect(Uri vmServiceUri) async {
     if (_service != null) await disconnect();
     final svc = await vmServiceConnectUri(_toWsUri(vmServiceUri));
@@ -149,6 +152,16 @@ class VmClient {
     }
     _service = svc;
     _connectedUri = vmServiceUri;
+    _deliberateDisconnect = false;
+    unawaited(svc.onDone.then((_) {
+      // Stale callback from a previous connection, or a disconnect() we
+      // initiated ourselves — not an app death.
+      if (_deliberateDisconnect || !identical(_service, svc)) return;
+      _service = null;
+      _isolates.clear();
+      _connectedUri = null;
+      onUnexpectedDisconnect?.call();
+    }));
   }
 
   /// Scans the connected VM and returns every isolate that exposes
@@ -160,7 +173,6 @@ class VmClient {
     final vm = service;
     final info = await _bounded('getVM', vm.getVM());
     final found = <String, IsolateInfo>{};
-    final realtime = <String>{};
     for (final ref in info.isolates ?? const <IsolateRef>[]) {
       final id = ref.id;
       if (id == null) continue;
@@ -173,14 +185,10 @@ class VmClient {
           number: isolate.number ?? ref.number,
         );
       }
-      if (rpcs.contains(realtimeExtension)) realtime.add(id);
     }
     _isolates
       ..clear()
       ..addAll(found);
-    _realtimeIsolates
-      ..clear()
-      ..addAll(realtime);
     return httpProfilingIsolates;
   }
 
@@ -256,26 +264,71 @@ class VmClient {
     return _bounded('clearSocketProfile', service.clearSocketProfile(isolateId));
   }
 
-  /// Drains the companion package's WebSocket capture buffer via
-  /// [realtimeExtension]. Returns the decoded payload
-  /// (`{ok, installed, connections, frames}` on drain; `{ok, cleared}` when
-  /// `clear` is set). Bounded by the RPC deadline like every other call.
-  /// Throws if the isolate does not expose the extension (i.e. the app has not
-  /// installed `flutter_network_mcp_hooks`).
-  Future<Map<String, Object?>> getRealtimeProfile(
-    String isolateId, {
-    bool clear = false,
-  }) {
-    return _bounded(
-      'getRealtimeProfile',
-      service
-          .callServiceExtension(
-            realtimeExtension,
-            isolateId: isolateId,
-            args: clear ? {'clear': 'true'} : null,
-          )
-          .then((r) => r.json ?? const <String, Object?>{}),
+  /// Adds the `Dart` stream to the VM's recorded timeline streams (dart:io writes its WebSocket events there), keeping any streams DevTools already records. False when the VM refuses.
+  Future<bool> recordDartTimelineStream() async {
+    try {
+      final flags =
+          await _bounded('getVMTimelineFlags', service.getVMTimelineFlags());
+      final recorded = flags.recordedStreams ?? const <String>[];
+      if (recorded.contains('Dart')) return true;
+      await _bounded(
+        'setVMTimelineFlags',
+        service.setVMTimelineFlags([...recorded, 'Dart']),
+      );
+      return true;
+    } on Object {
+      return false;
+    }
+  }
+
+  /// Whether the app's dart:io emits WebSocket timeline events (Dart 3.13+); null until [checkWebSocketTimelineSupport] has run.
+  bool? get webSocketTimelineSupported => _webSocketTimelineSupported;
+  bool? _webSocketTimelineSupported;
+
+  /// Looks for dart:io's WebSocket timeline logger class in [isolateId]'s `dart:_http`; unknown (null) when the VM cannot say.
+  Future<bool?> checkWebSocketTimelineSupport(String isolateId) async {
+    try {
+      final isolate = await _bounded('getIsolate', service.getIsolate(isolateId));
+      final http = (isolate.libraries ?? const <LibraryRef>[])
+          .where((l) => l.uri == 'dart:_http')
+          .firstOrNull;
+      if (http?.id == null) return null;
+      final lib = await _bounded(
+        'getObject',
+        service.getObject(isolateId, http!.id!),
+      );
+      if (lib is! Library) return null;
+      return _webSocketTimelineSupported = (lib.classes ?? const <ClassRef>[])
+          .any((c) => c.name == '_WebSocketTimelineLogger');
+    } on Object {
+      return null;
+    }
+  }
+
+  /// The VM timeline clock now, in microseconds.
+  Future<int> timelineNowMicros() async {
+    final t = await _bounded('getVMTimelineMicros', service.getVMTimelineMicros());
+    return t.timestamp ?? 0;
+  }
+
+  /// Raw `WebSocket.*` trace events recorded between [originMicros] and [untilMicros] on the timeline clock.
+  Future<List<Map<String, Object?>>> webSocketTimelineEvents(
+    int originMicros,
+    int untilMicros,
+  ) async {
+    final timeline = await _bounded(
+      'getVMTimeline',
+      service.getVMTimeline(
+        timeOriginMicros: originMicros,
+        timeExtentMicros: untilMicros - originMicros + 1,
+      ),
     );
+    return [
+      for (final e in timeline.traceEvents ?? const <TimelineEvent>[])
+        if (e.json case final json?
+            when '${json['name']}'.startsWith('WebSocket.'))
+          json.cast<String, Object?>(),
+    ];
   }
 
   Future<HttpTimelineLoggingState> enableHttpLogging() {
@@ -309,12 +362,28 @@ class VmClient {
     return clearSocketProfileForIsolate(_requireIsolate());
   }
 
+  /// The target VM's start time (ms since epoch), best-effort. Used at
+  /// attach to tell the agent how long the app was running BEFORE capture
+  /// began — dart:io HTTP/socket profiling records nothing before it is
+  /// enabled, so pre-attach traffic is simply absent (audit F17). Returns
+  /// null if the VM doesn't report it or the call fails.
+  Future<int?> vmStartTimeMs() async {
+    try {
+      final vm = await _bounded('getVM', service.getVM());
+      final t = vm.startTime;
+      return (t == null || t <= 0) ? null : t;
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<void> disconnect() async {
+    _deliberateDisconnect = true;
     final svc = _service;
     _service = null;
     _isolates.clear();
-    _realtimeIsolates.clear();
     _connectedUri = null;
+    _webSocketTimelineSupported = null;
     if (svc != null) await svc.dispose();
   }
 

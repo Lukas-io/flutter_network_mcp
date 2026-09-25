@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:dart_mcp/server.dart';
 
 import '../storage/captures_db.dart';
+import '../util/body_decoder.dart';
 import '../util/scope.dart';
 import 'error_kind.dart';
 import 'result.dart';
@@ -99,23 +100,26 @@ FutureOr<CallToolResult> networkReplayAsTest(CallToolRequest request) async {
 
   String? bodyLiteral;
   var bodyTruncated = false;
+  var bodyIsBinary = false;
+  var sentSize = 0;
   if (bodyBytes != null && bodyBytes.isNotEmpty) {
-    final clipped = bodyBytes.length > _kBodyTruncate
-        ? bodyBytes.sublist(0, _kBodyTruncate)
-        : bodyBytes;
     bodyTruncated = bodyBytes.length > _kBodyTruncate;
+    final clipped = bodyTruncated
+        ? bodyBytes.sublist(0, utf8SafeCut(bodyBytes, _kBodyTruncate))
+        : bodyBytes;
+    sentSize = clipped.length;
     try {
       bodyLiteral = _dartStr(utf8.decode(clipped));
     } catch (_) {
-      bodyLiteral = null;
+      bodyIsBinary = true;
     }
   }
 
   final path = Uri.tryParse(url)?.path ?? url;
-  final testName = '$method $path replays'.replaceAll("'", '');
+  final testName = _dartStr('$method $path replays');
 
   final b = StringBuffer();
-  b.writeln("    final request = http.Request('$method', Uri.parse('${_dartStr(url)}'));");
+  b.writeln("    final request = http.Request('${_dartStr(method)}', Uri.parse('${_dartStr(url)}'));");
   if (headerLines.isNotEmpty) {
     b.writeln('    request.headers.addAll({');
     for (final h in headerLines) {
@@ -153,8 +157,12 @@ FutureOr<CallToolResult> networkReplayAsTest(CallToolRequest request) async {
     if (redactedCount > 0)
       '$redactedCount auth header(s) are redacted (commented out); fill them '
           'in for the test to pass.',
-    if (bodyTruncated)
-      'Request body truncated at $_kBodyTruncate bytes.',
+    if (bodyTruncated && !bodyIsBinary)
+      'Request body truncated to $sentSize of ${bodyBytes!.length} bytes '
+          '(cut on a character boundary).',
+    if (bodyIsBinary)
+      'Request body (${bodyBytes!.length} bytes) is not UTF-8 text, so the '
+          'test sends no body; set request.bodyBytes to the raw bytes yourself.',
     if (status == null)
       'Original request had no captured status (in-flight); the test asserts a '
           '2xx-5xx range instead.',
@@ -171,12 +179,13 @@ FutureOr<CallToolResult> networkReplayAsTest(CallToolRequest request) async {
     'id': id,
     'language': 'dart',
     'test': code,
+    if (bodyIsBinary) 'bodyIsBinary': true,
     if (warnings.isNotEmpty) 'warnings': warnings,
     'nextSteps': [
       'Save the `test` string to test/<name>_test.dart and run `dart test`',
       'network_replay id:"$id" — get the equivalent curl instead',
     ],
-  }, scopeSessionId: sid);
+  }, scopeSessionId: sid, scopeNote: scope.note);
 }
 
 Map<String, dynamic>? _parseHeaders(Object? json) {

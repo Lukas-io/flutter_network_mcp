@@ -5,7 +5,9 @@ import 'package:dart_mcp/server.dart';
 import '../storage/captures_db.dart';
 import '../util/path_template.dart';
 import '../util/scope.dart';
+import '../util/guidance.dart';
 import 'error_kind.dart';
+import '../util/suggest.dart';
 import 'result.dart';
 
 final networkSummarizeTool = Tool(
@@ -52,7 +54,13 @@ FutureOr<CallToolResult> networkSummarize(CallToolRequest request) async {
   if (scopeErr != null) return scopeErr;
   scope!;
 
-  final sinceMsRaw = (args['sinceMs'] as int?) ?? _kSinceMsDefault;
+  // D4 (audit RC7/F5): the 1h default is a live-session convenience. For an
+  // ended/history session it produced "No HTTP over 1h" on traffic that was
+  // days ago, plus a "drive the app" hint. Default to the whole session
+  // when this isn't a live attach.
+  final summarizeState = SessionStateView.of(scope.sessionId);
+  final sinceMsRaw = (args['sinceMs'] as int?) ??
+      (summarizeState.canGenerateTraffic ? _kSinceMsDefault : 0);
   final hostContains = args['hostContains'] as String?;
   final limitRaw = (args['limit'] as int?) ?? _kLimitDefault;
   final limit = limitRaw <= 0
@@ -96,16 +104,19 @@ FutureOr<CallToolResult> networkSummarize(CallToolRequest request) async {
   final hitRawCap = rows.length >= _kRawRowsCap;
 
   final summary = endpoints.isEmpty
-      ? 'No HTTP requests captured over $windowDesc$hostDesc.'
+      ? 'No HTTP requests captured over $windowDesc$hostDesc. $kCaptureBoundary'
       : '${endpoints.length} distinct endpoint(s) over $windowDesc$hostDesc, '
           '${rows.length} total request(s) considered'
           '${hitRawCap ? " (raw-row cap of $_kRawRowsCap hit — widen sinceMs or hostContains)" : ""}.';
 
   final nextSteps = <String>[];
   if (returned.isEmpty) {
-    nextSteps.add(
-      'Drive the app to generate traffic, then re-run network_summarize.',
-    );
+    // D1: state-correct guidance — never tell the agent to drive an app
+    // that is ended, interrupted, or dead.
+    nextSteps.add(emptyCaptureHint(
+      SessionStateView.of(scope.sessionId),
+      reRun: 'network_summarize',
+    ));
   } else {
     final top = returned.first;
     final topEndpoint = top['endpoint'] as String;
@@ -150,7 +161,7 @@ FutureOr<CallToolResult> networkSummarize(CallToolRequest request) async {
 ///
 /// Row contract: each map must expose `method` (String?), `host`
 /// (String?), `path` (String?), `status_code` (int?), `duration_us`
-/// (int?). Extra columns are ignored.
+/// (int?), `end_us` (int?) and `has_error` (int?). Extra columns are ignored.
 List<Map<String, Object?>> summarizeRequests(
   List<Map<String, Object?>> rows, {
   int minCount = 1,
@@ -189,6 +200,7 @@ class _Bucket {
 
   int count = 0;
   int errorCount = 0;
+  int inFlight = 0;
   final Map<int, int> statusDist = {};
   final List<int> durationsMs = [];
 
@@ -198,6 +210,8 @@ class _Bucket {
     if (status != null) {
       statusDist[status] = (statusDist[status] ?? 0) + 1;
       if (status >= 400) errorCount++;
+    } else if (row['has_error'] != 1 && row['end_us'] == null) {
+      inFlight++;
     } else {
       errorCount++;
       statusDist[0] = (statusDist[0] ?? 0) + 1;
@@ -212,12 +226,14 @@ class _Bucket {
     final sortedDur = [...durationsMs]..sort();
     final p50 = _percentile(sortedDur, 0.50);
     final p95 = _percentile(sortedDur, 0.95);
-    final errorRate = count == 0 ? 0.0 : errorCount / count;
+    final completed = count - inFlight;
+    final errorRate = completed == 0 ? 0.0 : errorCount / completed;
     final endpoint = '$method ${host.isEmpty ? "" : host}$template'.trim();
     final statusOut = <String, int>{};
     for (final entry in statusDist.entries) {
       statusOut[entry.key == 0 ? 'error' : entry.key.toString()] = entry.value;
     }
+    if (inFlight > 0) statusOut['inFlight'] = inFlight;
     return {
       'endpoint': endpoint,
       'method': method,

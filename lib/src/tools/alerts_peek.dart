@@ -5,7 +5,7 @@ import 'package:dart_mcp/server.dart';
 import '../config/capabilities.dart';
 import '../storage/captures_db.dart';
 import '../util/scope.dart';
-import 'alerts_drain.dart' show buildAlertsResponse;
+import 'alerts_drain.dart' show buildAlertsResponse, invalidSeverityMin;
 import 'error_kind.dart';
 import 'result.dart';
 
@@ -42,6 +42,8 @@ FutureOr<CallToolResult> alertsPeek(CallToolRequest request) async {
   scope!;
   final sessionId = scope.sessionId;
   final severityMin = args['severityMin'] as String?;
+  final badSeverity = invalidSeverityMin(severityMin, 'alerts_peek');
+  if (badSeverity != null) return badSeverity;
   final limitRaw = (args['limit'] as int?) ?? 20;
   final limit = limitRaw <= 0 ? 20 : (limitRaw > 200 ? 200 : limitRaw);
 

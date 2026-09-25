@@ -74,7 +74,7 @@ FutureOr<CallToolResult> captureAllow(CallToolRequest request) async {
               });
         }
         final isNew = dao.addCaptureAllow(pattern, reason: reason);
-        Session.instance.captureWriter.refreshIgnoredHosts();
+        SessionRegistry.instance.refreshCaptureFilters();
         return jsonResult({
           'action': 'add',
           'summary': isNew
@@ -99,7 +99,7 @@ FutureOr<CallToolResult> captureAllow(CallToolRequest request) async {
               });
         }
         final removed = dao.removeCaptureAllow(pattern);
-        Session.instance.captureWriter.refreshIgnoredHosts();
+        SessionRegistry.instance.refreshCaptureFilters();
         return jsonResult({
           'action': 'remove',
           'summary': removed

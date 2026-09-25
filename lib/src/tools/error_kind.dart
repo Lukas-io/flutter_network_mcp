@@ -29,6 +29,16 @@ enum ErrorKind {
   /// another tool.
   capabilityDisabled('capability_disabled'),
 
+  /// The call ran past the per-tool deadline. Recovery: narrow it or retry.
+  timeout('timeout'),
+
+  /// captures.db stayed locked by another process past busy_timeout.
+  /// Recovery: close the other server or point this one at another data dir.
+  unresponsiveDb('unresponsive_db'),
+
+  /// The session is still capturing, here or in another server process sharing the DB. Recovery: detach it first.
+  sessionInUse('session_in_use'),
+
   /// An unexpected failure with no more specific classification.
   internal('internal');
 
@@ -36,4 +46,16 @@ enum ErrorKind {
 
   /// Stable wire string emitted as `errorKind`. Never rename.
   final String wire;
+}
+
+
+/// D3 (audit RC5/F26): the VM's id-lookup miss ("Unable to find request
+/// with id", surfaced as a -32602 Invalid params RPC error) means the VM is
+/// HEALTHY and the id is wrong — the opposite diagnosis of a transport
+/// failure. Shared by every live-read tool so the taxonomy stays uniform.
+bool looksLikeVmIdMiss(Object? e) {
+  if (e == null) return false;
+  final s = e.toString();
+  return s.contains('Unable to find request') ||
+      (s.contains('-32602') && s.contains('Invalid params'));
 }

@@ -1,11 +1,15 @@
 import 'dart:convert';
+import 'dart:io' as io;
 // ignore: unused_import — Uint8List used in BLOB type check below.
 import 'dart:typed_data';
 
 import 'package:sqlite3/sqlite3.dart' as sql;
 import 'package:vm_service/vm_service.dart';
 
+import '../util/http_timing.dart';
 import 'database.dart';
+import '../util/searchable_text.dart';
+import '../util/body_decoder.dart';
 
 /// Typed accessors for the captures database. Holds no state of its own —
 /// all calls go directly through [CapturesDatabase.instance].
@@ -18,11 +22,36 @@ class CapturesDao {
     required String? isolateId,
     required String? projectPath,
   }) {
-    _db.execute(
-      'INSERT INTO sessions(started_at, app_name, vm_service_uri, isolate_id, project_path) VALUES (?,?,?,?,?)',
-      [DateTime.now().millisecondsSinceEpoch, appName, vmServiceUri, isolateId, projectPath],
-    );
-    return _db.lastInsertRowId;
+    // #97: reuse the open row for this VM URI when one exists, so several
+    // server processes attaching to the same app do not each create a
+    // duplicate session. A UNIQUE index on the live URI (schema v12) makes
+    // this race-safe across processes on the shared DB.
+    if (vmServiceUri != null) {
+      final existing = _db.select(
+        'SELECT id FROM sessions WHERE vm_service_uri=? AND ended_at IS NULL '
+        'ORDER BY id LIMIT 1',
+        [vmServiceUri],
+      );
+      if (existing.isNotEmpty) return existing.first['id'] as int;
+    }
+    try {
+      _db.execute(
+        'INSERT INTO sessions(started_at, app_name, vm_service_uri, isolate_id, project_path) VALUES (?,?,?,?,?)',
+        [DateTime.now().millisecondsSinceEpoch, appName, vmServiceUri, isolateId, projectPath],
+      );
+      return _db.lastInsertRowId;
+    } on sql.SqliteException {
+      // Lost a cross-process insert race on the unique index: reuse the winner.
+      if (vmServiceUri != null) {
+        final r = _db.select(
+          'SELECT id FROM sessions WHERE vm_service_uri=? AND ended_at IS NULL '
+          'ORDER BY id LIMIT 1',
+          [vmServiceUri],
+        );
+        if (r.isNotEmpty) return r.first['id'] as int;
+      }
+      rethrow;
+    }
   }
 
   void endSession(int sessionId) {
@@ -32,18 +61,127 @@ class CapturesDao {
     );
   }
 
+  /// Records that this server process ([pid], default this one) captures into [sessionId].
+  void attachProcess(int sessionId, {int? pid}) {
+    _db.execute(
+      'INSERT OR REPLACE INTO session_attachments(session_id, pid, attached_at) '
+      'VALUES (?,?,?)',
+      [sessionId, pid ?? io.pid, DateTime.now().millisecondsSinceEpoch],
+    );
+  }
+
+  /// This process stops capturing into [sessionId] but leaves the row open (detach keep:true), so no other process treats it as still being captured here.
+  void releaseAttachment(int sessionId, {int? pid}) {
+    _db.execute(
+      'DELETE FROM session_attachments WHERE session_id=? AND pid=?',
+      [sessionId, pid ?? io.pid],
+    );
+  }
+
+  /// This process stops capturing into [sessionId]; the row ends only when no other live process still captures into it. Returns whether it ended.
+  bool leaveSession(int sessionId, {int? pid}) {
+    _db.execute(
+      'DELETE FROM session_attachments WHERE session_id=? AND pid=?',
+      [sessionId, pid ?? io.pid],
+    );
+    _pruneDeadAttachments(sessionId: sessionId);
+    final others = _db.select(
+      'SELECT COUNT(*) AS n FROM session_attachments WHERE session_id=?',
+      [sessionId],
+    ).first['n'] as int;
+    if (others > 0) return false;
+    endSession(sessionId);
+    return true;
+  }
+
+  /// Server processes other than this one still capturing into [sessionId].
+  int otherAttachedProcesses(int sessionId) {
+    _pruneDeadAttachments(sessionId: sessionId);
+    return _db.select(
+      'SELECT COUNT(*) AS n FROM session_attachments WHERE session_id=? AND pid<>?',
+      [sessionId, io.pid],
+    ).first['n'] as int;
+  }
+
+  /// Sessions a live server process other than this one captures into.
+  Set<int> sessionsCapturedElsewhere() {
+    _pruneDeadAttachments();
+    return {
+      for (final r in _db.select(
+          'SELECT DISTINCT session_id FROM session_attachments WHERE pid<>?',
+          [io.pid]))
+        r['session_id'] as int,
+    };
+  }
+
+  void _pruneDeadAttachments({int? sessionId}) {
+    final rows = _db.select(
+      sessionId == null
+          ? 'SELECT pid, MIN(attached_at) AS since FROM session_attachments GROUP BY pid'
+          : 'SELECT pid, MIN(attached_at) AS since FROM session_attachments '
+              'WHERE session_id=? GROUP BY pid',
+      [if (sessionId != null) sessionId],
+    );
+    final attachedAt = {
+      for (final r in rows) r['pid'] as int: r['since'] as int,
+    };
+    final alive = livePids(attachedAt);
+    for (final pid in attachedAt.keys) {
+      if (!alive.contains(pid)) {
+        _db.execute('DELETE FROM session_attachments WHERE pid=?', [pid]);
+      }
+    }
+  }
+
+  /// Ends session rows left open by processes that are gone (crash, kill, or a failed attach that never registered), except [keepOpen]; a row another live server process still captures into stays open. Returns how many were closed. Run once at startup, before anything attaches.
+  int endOrphanedSessions({Set<int> keepOpen = const {}}) {
+    _pruneDeadAttachments();
+    final placeholders = keepOpen.isEmpty ? '' : ' AND id NOT IN (${List.filled(keepOpen.length, '?').join(',')})';
+    const orphan = 'ended_at IS NULL AND id NOT IN '
+        '(SELECT session_id FROM session_attachments)';
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final n = _db.select(
+      'SELECT COUNT(*) AS n FROM sessions WHERE $orphan$placeholders',
+      keepOpen.toList(),
+    ).first['n'] as int;
+    if (n == 0) return 0;
+    _db.execute(
+      "UPDATE sessions SET ended_at=?, note=COALESCE(note || ' ', '') || '[orphaned]' "
+      'WHERE $orphan$placeholders',
+      [now, ...keepOpen],
+    );
+    return n;
+  }
+
   /// Repoints an existing session row at a new VM service URI / isolate after
   /// a hot-restart reattach (issue #16), so captures keep flowing into the
   /// same session id instead of starting a new row each restart.
-  void repointSession(
+  /// Returns the session id to keep capturing into: [id], or the open row another server process already created for [vmServiceUri], in which case this process leaves [id].
+  int repointSession(
     int id, {
     required String? vmServiceUri,
     required String? isolateId,
   }) {
-    _db.execute(
-      'UPDATE sessions SET vm_service_uri=?, isolate_id=? WHERE id=?',
-      [vmServiceUri, isolateId, id],
-    );
+    // ended_at=NULL: a full app relaunch closes the old VM socket, which
+    // the RC4 death handler records as session end — a successful repoint
+    // means the same logical session is live again.
+    try {
+      _db.execute(
+        'UPDATE sessions SET vm_service_uri=?, isolate_id=?, ended_at=NULL '
+        'WHERE id=?',
+        [vmServiceUri, isolateId, id],
+      );
+      return id;
+    } on sql.SqliteException {
+      final other = _db.select(
+        'SELECT id FROM sessions WHERE vm_service_uri=? AND ended_at IS NULL '
+        'AND id<>? ORDER BY id LIMIT 1',
+        [vmServiceUri, id],
+      );
+      if (other.isEmpty) rethrow;
+      leaveSession(id);
+      return other.first['id'] as int;
+    }
   }
 
   List<Map<String, Object?>> listSessions({
@@ -71,6 +209,7 @@ class CapturesDao {
       'SELECT s.id, s.started_at, s.ended_at, s.app_name, s.vm_service_uri, s.isolate_id, s.project_path, s.note, '
       '(SELECT COUNT(*) FROM http_requests h WHERE h.session_id=s.id) AS http_count, '
       '(SELECT COUNT(*) FROM socket_events sk WHERE sk.session_id=s.id) AS socket_count, '
+      '(SELECT COUNT(*) FROM websocket_connections w WHERE w.session_id=s.id) AS websocket_count, '
       '(SELECT COUNT(*) FROM log_records l WHERE l.session_id=s.id) AS log_count '
       'FROM sessions s$where ORDER BY started_at DESC LIMIT ?',
       [...params, limit],
@@ -92,6 +231,7 @@ class CapturesDao {
       'SELECT s.*, '
       '(SELECT COUNT(*) FROM http_requests h WHERE h.session_id=s.id) AS http_count, '
       '(SELECT COUNT(*) FROM socket_events sk WHERE sk.session_id=s.id) AS socket_count, '
+      '(SELECT COUNT(*) FROM websocket_connections w WHERE w.session_id=s.id) AS websocket_count, '
       '(SELECT COUNT(*) FROM log_records l WHERE l.session_id=s.id) AS log_count, '
       '(SELECT COUNT(*) FROM alerts a WHERE a.session_id=s.id) AS alert_count '
       'FROM sessions s WHERE s.id=?',
@@ -121,7 +261,18 @@ class CapturesDao {
         : null;
     final contentType = _firstHeader(r.response?.headers, 'content-type') ??
         _firstHeader(r.request?.headers, 'content-type');
-    final endUs = r.endTime?.microsecondsSinceEpoch;
+    // D7/F22: dart:io collapses a followed redirect chain into ONE profile
+    // entry; the hops live in response.redirects. Persist them so
+    // network_get can show the chain and HAR export can fill redirectURL.
+    final redirects = r.response?.redirects;
+    final redirectsJson = (redirects != null && redirects.isNotEmpty)
+        ? jsonEncode(redirects)
+        : null;
+    // RC1: exchange end, not request-upload end — see util/http_timing.dart.
+    // In-flight requests persist NULL end/duration; the poller's
+    // updatedSince cursor re-delivers them when the response completes and
+    // the upsert refreshes end_us/duration_us to the real values.
+    final endUs = exchangeEndTime(r)?.microsecondsSinceEpoch;
     final startUs = r.startTime.microsecondsSinceEpoch;
     final durationUs = endUs == null ? null : endUs - startUs;
 
@@ -132,8 +283,8 @@ class CapturesDao {
     final isNew = before.isEmpty;
 
     _db.execute(
-      'INSERT INTO http_requests(session_id, vm_id, isolate_id, method, url, host, path, status_code, reason_phrase, start_us, end_us, duration_us, request_size, response_size, content_type, request_headers_json, response_headers_json, has_error) '
-      'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) '
+      'INSERT INTO http_requests(session_id, vm_id, isolate_id, method, url, host, path, status_code, reason_phrase, start_us, end_us, duration_us, request_size, response_size, content_type, request_headers_json, response_headers_json, has_error, redirects_json) '
+      'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) '
       'ON CONFLICT(session_id, vm_id) DO UPDATE SET '
       '  isolate_id=COALESCE(excluded.isolate_id, isolate_id), '
       '  method=excluded.method, url=excluded.url, host=excluded.host, path=excluded.path, '
@@ -143,7 +294,8 @@ class CapturesDao {
       '  content_type=excluded.content_type, '
       '  request_headers_json=excluded.request_headers_json, '
       '  response_headers_json=excluded.response_headers_json, '
-      '  has_error=excluded.has_error',
+      '  has_error=excluded.has_error, '
+      '  redirects_json=COALESCE(excluded.redirects_json, redirects_json)',
       [
         sessionId,
         r.id,
@@ -163,6 +315,7 @@ class CapturesDao {
         headersReq,
         headersResp,
         ((r.request?.hasError ?? false) || (r.response?.hasError ?? false)) ? 1 : 0,
+        redirectsJson,
       ],
     );
     return isNew;
@@ -233,6 +386,19 @@ class CapturesDao {
     ];
   }
 
+  /// How many requests in a session have no stored body yet (bodies_fetched=0).
+  /// Used to qualify search's "everything is indexed" claim (#100): body text
+  /// is only searchable once persisted, so unpersisted bodies mean a
+  /// response-content miss cannot be treated as a definite absence.
+  int countUnpersistedBodies(int sessionId) {
+    final r = _db.select(
+      'SELECT COUNT(*) AS n FROM http_requests '
+      'WHERE session_id=? AND bodies_fetched=0',
+      [sessionId],
+    );
+    return r.first['n'] as int;
+  }
+
   /// Marks a request's bodies as terminally fetched (success, or a complete
   /// request that genuinely has no body, e.g. 204 / HEAD) so it leaves the
   /// backfill queue.
@@ -256,6 +422,7 @@ class CapturesDao {
   List<Map<String, Object?>> queryHttpRequests({
     required int sessionId,
     int? sinceUs,
+    int? beforeUs,
     List<String>? methods,
     String? hostContains,
     int? statusMin,
@@ -268,6 +435,13 @@ class CapturesDao {
     if (sinceUs != null) {
       clauses.add('start_us > ?');
       params.add(sinceUs);
+    }
+    // D4 (audit RC7/F6): descending page bound. History reads are
+    // newest-first, so paging DEEPER means going OLDER — `since` alone
+    // could never reach past row `limit`.
+    if (beforeUs != null) {
+      clauses.add('start_us < ?');
+      params.add(beforeUs);
     }
     if (methods != null && methods.isNotEmpty) {
       final placeholders = List.filled(methods.length, '?').join(',');
@@ -374,121 +548,260 @@ class CapturesDao {
     return _rowToMap(rows.first);
   }
 
-  // ----- websocket frames (0.9.0) -----
-
-  /// Records (or refreshes) one captured WebSocket connection. `conn_id` is the
-  /// companion package's per-process id; idempotent across polls since the
-  /// companion re-reports open connections on every drain.
-  void upsertWsConnection(
+  /// Records a `WebSocket.Connect` begin; a later end or a re-delivery never overwrites what is known.
+  void wsConnectStarted(
     int sessionId, {
-    required int connId,
-    String? host,
-    int? port,
-    String? path,
-    int? startedMs,
-    String? isolateId,
+    required String connKey,
+    required String? isolateId,
+    required String? uri,
+    required int startedUs,
   }) {
     _db.execute(
-      'INSERT INTO websocket_connections(session_id, conn_id, host, port, path, started_ms, isolate_id) '
-      'VALUES (?,?,?,?,?,?,?) '
-      'ON CONFLICT(session_id, conn_id) DO UPDATE SET '
-      '  host=COALESCE(excluded.host, host), '
-      '  port=COALESCE(excluded.port, port), '
-      '  path=COALESCE(excluded.path, path), '
-      '  started_ms=COALESCE(started_ms, excluded.started_ms), '
-      '  isolate_id=COALESCE(excluded.isolate_id, isolate_id)',
-      [sessionId, connId, host, port, path, startedMs, isolateId],
+      'INSERT INTO websocket_connections(session_id, conn_key, isolate_id, uri, connect_started_us, state) '
+      "VALUES (?,?,?,?,?,'connecting') "
+      'ON CONFLICT(session_id, conn_key) DO UPDATE SET '
+      '  uri=COALESCE(uri, excluded.uri), '
+      '  connect_started_us=COALESCE(connect_started_us, excluded.connect_started_us)',
+      [sessionId, connKey, isolateId, uri, startedUs],
     );
   }
 
-  /// Appends one reassembled, decompressed WebSocket message. Frames are
-  /// drained exactly once from the companion buffer, so plain inserts (no
-  /// dedup) are correct.
-  void insertWsFrame(
+  /// Records a `WebSocket.Connect` end: `open` on success, `failed` with [error] otherwise.
+  void wsConnectFinished(
     int sessionId, {
-    required int connId,
-    int? tsMs,
-    required String direction,
-    required String opcode,
-    int? length,
-    required bool isText,
-    required bool compressed,
-    String? preview,
+    required String connKey,
+    required String? isolateId,
+    required int endUs,
+    String? error,
+    int? httpStatus,
   }) {
+    final state = error == null ? 'open' : 'failed';
     _db.execute(
-      'INSERT INTO websocket_frames(session_id, conn_id, ts_ms, direction, opcode, length, is_text, compressed, preview) '
-      'VALUES (?,?,?,?,?,?,?,?,?)',
+      'INSERT INTO websocket_connections(session_id, conn_key, isolate_id, opened_us, closed_us, error, http_status, state) '
+      'VALUES (?,?,?,?,?,?,?,?) '
+      'ON CONFLICT(session_id, conn_key) DO UPDATE SET '
+      '  opened_us=COALESCE(opened_us, excluded.opened_us), '
+      '  closed_us=COALESCE(closed_us, excluded.closed_us), '
+      '  error=COALESCE(error, excluded.error), '
+      '  http_status=COALESCE(http_status, excluded.http_status), '
+      "  state=CASE WHEN state='connecting' THEN excluded.state ELSE state END",
       [
         sessionId,
-        connId,
-        tsMs,
-        direction,
-        opcode,
-        length,
-        isText ? 1 : 0,
-        compressed ? 1 : 0,
-        preview,
+        connKey,
+        isolateId,
+        error == null ? endUs : null,
+        error == null ? null : endUs,
+        error,
+        httpStatus,
+        state,
       ],
     );
   }
 
-  /// One row per WebSocket connection with frame counts, byte totals, and last
-  /// activity. Newest-first by start time.
-  List<Map<String, Object?>> queryWsConnections({
-    required int sessionId,
-    int limit = 50,
-  }) {
+  /// The row already bound to dart:io's per-isolate [connectionId], if any.
+  String? wsConnKeyFor(int sessionId, String? isolateId, int connectionId) {
     final rows = _db.select(
-      'SELECT c.session_id, c.conn_id, c.host, c.port, c.path, c.started_ms, c.isolate_id, '
-      '  COUNT(f.id) AS frame_count, '
-      "  SUM(CASE WHEN f.direction='out' THEN 1 ELSE 0 END) AS out_count, "
-      "  SUM(CASE WHEN f.direction='in' THEN 1 ELSE 0 END) AS in_count, "
-      '  COALESCE(SUM(f.length),0) AS total_bytes, '
-      '  MAX(f.ts_ms) AS last_ms '
-      'FROM websocket_connections c '
-      'LEFT JOIN websocket_frames f '
-      '  ON f.session_id=c.session_id AND f.conn_id=c.conn_id '
-      'WHERE c.session_id=? '
-      'GROUP BY c.session_id, c.conn_id '
-      'ORDER BY c.started_ms DESC LIMIT ?',
-      [sessionId, limit],
+      'SELECT conn_key FROM websocket_connections '
+      'WHERE session_id=? AND isolate_id IS ? AND connection_id=? LIMIT 1',
+      [sessionId, isolateId, connectionId],
     );
-    return rows.map(_rowToMap).toList();
+    return rows.isEmpty ? null : rows.first['conn_key'] as String;
   }
 
-  /// Frames for one connection, newest-first by insertion order, optionally
-  /// filtered by direction ('out' | 'in').
-  List<Map<String, Object?>> queryWsFrames({
-    required int sessionId,
-    required int connId,
-    String? direction,
-    int limit = 100,
+  /// Binds [connectionId] to a still unbound connect on [isolateId] that opened by [firstSeenUs]. dart:io numbers WebSockets consecutively in the order their connects finish, so the gap to the nearest bound number picks the connect; without one the earliest waiting connect is taken and marked `inferred`.
+  ({String connKey, bool inferred})? wsBindConnection(
+    int sessionId, {
+    required String? isolateId,
+    required int connectionId,
+    required int firstSeenUs,
   }) {
-    final clauses = <String>['session_id = ?', 'conn_id = ?'];
-    final params = <Object?>[sessionId, connId];
-    if (direction != null && direction.isNotEmpty) {
-      clauses.add('direction = ?');
-      params.add(direction);
+    Map<String, Object?>? bound(String op, String order) {
+      final rows = _db.select(
+        'SELECT connection_id, opened_us FROM websocket_connections '
+        'WHERE session_id=? AND isolate_id IS ? AND connection_id $op ? '
+        'ORDER BY connection_id $order LIMIT 1',
+        [sessionId, isolateId, connectionId],
+      );
+      return rows.isEmpty ? null : _rowToMap(rows.first);
+    }
+
+    final lower = bound('<', 'DESC');
+    final upper = bound('>', 'ASC');
+    final lowerOpened = lower?['opened_us'] as int?;
+    final upperOpened = upper?['opened_us'] as int?;
+    final candidates = _db
+        .select(
+          'SELECT conn_key FROM websocket_connections '
+          "WHERE session_id=? AND isolate_id IS ? AND connection_id IS NULL AND state='open' "
+          'AND opened_us <= ? AND opened_us > ? AND opened_us < ? ORDER BY opened_us, id',
+          [
+            sessionId,
+            isolateId,
+            firstSeenUs,
+            lowerOpened ?? -1,
+            upperOpened ?? firstSeenUs + 1,
+          ],
+        )
+        .map((r) => r['conn_key'] as String)
+        .toList();
+    if (candidates.isEmpty) return null;
+    final gap = lowerOpened == null
+        ? null
+        : connectionId - (lower!['connection_id'] as int) - 1;
+    final byGap = gap != null && gap >= 0 && gap < candidates.length;
+    final inferred = candidates.length > 1 && !byGap;
+    final key = candidates[byGap ? gap : 0];
+    _db.execute(
+      'UPDATE websocket_connections SET connection_id=?, uri_inferred=? '
+      'WHERE session_id=? AND conn_key=? AND connection_id IS NULL',
+      [connectionId, inferred ? 1 : 0, sessionId, key],
+    );
+    if (_db.updatedRows == 1) return (connKey: key, inferred: inferred);
+    final raced = wsConnKeyFor(sessionId, isolateId, connectionId);
+    return raced == null ? null : (connKey: raced, inferred: false);
+  }
+
+  /// A row for a connection whose connect this capture never saw (opened before attach).
+  void wsConnectionSeen(
+    int sessionId, {
+    required String connKey,
+    required String? isolateId,
+    required int connectionId,
+  }) {
+    _db.execute(
+      'INSERT OR IGNORE INTO websocket_connections(session_id, conn_key, isolate_id, connection_id, state) '
+      "VALUES (?,?,?,?,'open')",
+      [sessionId, connKey, isolateId, connectionId],
+    );
+  }
+
+  /// Stores one message, ping, pong, close or error event; false when another process already stored it.
+  bool insertWsMessage(
+    int sessionId, {
+    required String connKey,
+    required int tsUs,
+    required String kind,
+    String? direction,
+    int? bytes,
+    String? detail,
+    required String dedupKey,
+  }) {
+    _db.execute(
+      'INSERT OR IGNORE INTO websocket_messages(session_id, conn_key, ts_us, direction, kind, bytes, detail, dedup_key) '
+      'VALUES (?,?,?,?,?,?,?,?)',
+      [sessionId, connKey, tsUs, direction, kind, bytes, detail, dedupKey],
+    );
+    return _db.updatedRows == 1;
+  }
+
+  /// Marks the connection closed; the first close seen (app or server) names who closed it.
+  void wsConnectionClosed(
+    int sessionId, {
+    required String connKey,
+    required int tsUs,
+    int? code,
+    String? reason,
+    String? closedBy,
+  }) {
+    _db.execute(
+      'UPDATE websocket_connections SET '
+      '  closed_us=COALESCE(closed_us, ?), close_code=COALESCE(close_code, ?), '
+      '  close_reason=COALESCE(close_reason, ?), closed_by=COALESCE(closed_by, ?), '
+      "  state='closed' "
+      'WHERE session_id=? AND conn_key=?',
+      [tsUs, code, reason, closedBy, sessionId, connKey],
+    );
+  }
+
+  /// Records a transport error on an open connection.
+  void wsConnectionError(int sessionId,
+      {required String connKey, required String error}) {
+    _db.execute(
+      'UPDATE websocket_connections SET error=COALESCE(error, ?), '
+      "state=CASE WHEN state='closed' THEN state ELSE 'error' END "
+      'WHERE session_id=? AND conn_key=?',
+      [error, sessionId, connKey],
+    );
+  }
+
+  static const _wsConnectionColumns = 'c.*, COUNT(m.id) AS events, '
+      "SUM(CASE WHEN m.direction='out' AND m.kind IN ('text','binary') THEN 1 ELSE 0 END) AS sent, "
+      "SUM(CASE WHEN m.direction='in' AND m.kind IN ('text','binary') THEN 1 ELSE 0 END) AS received, "
+      "SUM(CASE WHEN m.direction='out' AND m.kind IN ('text','binary') THEN COALESCE(m.bytes,0) ELSE 0 END) AS bytes_sent, "
+      "SUM(CASE WHEN m.direction='in' AND m.kind IN ('text','binary') THEN COALESCE(m.bytes,0) ELSE 0 END) AS bytes_received, "
+      'MIN(m.ts_us) AS first_us, MAX(m.ts_us) AS last_us';
+
+  /// Connections of a session with message counts and byte totals, newest first.
+  List<Map<String, Object?>> queryWsConnections({
+    required int sessionId,
+    String? uriContains,
+    String? state,
+    int limit = 50,
+  }) {
+    final clauses = <String>['c.session_id = ?'];
+    final params = <Object?>[sessionId];
+    if (uriContains != null && uriContains.isNotEmpty) {
+      clauses.add('LOWER(c.uri) LIKE ?');
+      params.add('%${uriContains.toLowerCase()}%');
+    }
+    if (state != null && state.isNotEmpty) {
+      clauses.add('c.state = ?');
+      params.add(state);
     }
     final rows = _db.select(
-      'SELECT * FROM websocket_frames WHERE ${clauses.join(' AND ')} ORDER BY id DESC LIMIT ?',
+      'SELECT $_wsConnectionColumns FROM websocket_connections c '
+      'LEFT JOIN websocket_messages m ON m.session_id=c.session_id AND m.conn_key=c.conn_key '
+      'WHERE ${clauses.join(' AND ')} GROUP BY c.id '
+      'ORDER BY COALESCE(c.connect_started_us, c.opened_us, MIN(m.ts_us)) DESC, c.id DESC LIMIT ?',
       [...params, limit],
     );
     return rows.map(_rowToMap).toList();
   }
 
-  Map<String, Object?>? getWsConnection(int sessionId, int connId) {
+  /// One connection by its row id, with the same totals as [queryWsConnections].
+  Map<String, Object?>? getWsConnection(int sessionId, int id) {
     final rows = _db.select(
-      'SELECT * FROM websocket_connections WHERE session_id=? AND conn_id=?',
-      [sessionId, connId],
+      'SELECT $_wsConnectionColumns FROM websocket_connections c '
+      'LEFT JOIN websocket_messages m ON m.session_id=c.session_id AND m.conn_key=c.conn_key '
+      'WHERE c.session_id=? AND c.id=? GROUP BY c.id',
+      [sessionId, id],
     );
-    if (rows.isEmpty) return null;
-    return _rowToMap(rows.first);
+    return rows.isEmpty ? null : _rowToMap(rows.first);
   }
 
-  // ----- logs -----
+  /// A connection's events in time order, after [afterId] when paging.
+  List<Map<String, Object?>> queryWsMessages({
+    required int sessionId,
+    required String connKey,
+    String? kind,
+    String? direction,
+    int? afterId,
+    int limit = 100,
+  }) {
+    final clauses = <String>['session_id = ?', 'conn_key = ?'];
+    final params = <Object?>[sessionId, connKey];
+    if (kind != null && kind.isNotEmpty) {
+      clauses.add('kind = ?');
+      params.add(kind);
+    }
+    if (direction != null && direction.isNotEmpty) {
+      clauses.add('direction = ?');
+      params.add(direction);
+    }
+    if (afterId != null) {
+      clauses.add('id > ?');
+      params.add(afterId);
+    }
+    final rows = _db.select(
+      'SELECT id, ts_us, direction, kind, bytes, detail FROM websocket_messages '
+      'WHERE ${clauses.join(' AND ')} ORDER BY ts_us, id LIMIT ?',
+      [...params, limit],
+    );
+    return rows.map(_rowToMap).toList();
+  }
 
-  int insertLog({
+  /// The new row id, or null when another process already stored this record.
+  int? insertLog({
     required int sessionId,
     required int timestampMs,
     required String source,
@@ -498,12 +811,14 @@ class CapturesDao {
     String? error,
     String? stackTrace,
     String? isolateId,
+    String? dedupKey,
   }) {
+    // Every server process sharing the session receives the same record; the dedup key keeps one copy.
     _db.execute(
-      'INSERT INTO log_records(session_id, isolate_id, timestamp_ms, source, level, logger, message, error, stack_trace) VALUES (?,?,?,?,?,?,?,?,?)',
-      [sessionId, isolateId, timestampMs, source, level, logger, message, error, stackTrace],
+      'INSERT OR IGNORE INTO log_records(session_id, isolate_id, timestamp_ms, source, level, logger, message, error, stack_trace, dedup_key) VALUES (?,?,?,?,?,?,?,?,?,?)',
+      [sessionId, isolateId, timestampMs, source, level, logger, message, error, stackTrace, dedupKey],
     );
-    return _db.lastInsertRowId;
+    return _db.updatedRows == 0 ? null : _db.lastInsertRowId;
   }
 
   List<Map<String, Object?>> queryLogs({
@@ -761,30 +1076,51 @@ class CapturesDao {
     int? tsMs,
   }) {
     final ts = tsMs ?? DateTime.now().millisecondsSinceEpoch;
+    final level = normalizeSeverity(severity);
 
     final existing = _db.select(
-      'SELECT id, severity FROM alerts '
+      'SELECT id, severity, last_source_id FROM alerts '
       'WHERE session_id = ? AND signature = ? AND drained = 0 LIMIT 1',
       [sessionId, signature],
     );
 
     if (existing.isNotEmpty) {
       final row = existing.first;
+      // Idempotency: the capture writer re-evaluates the same source across
+      // ticks (a request re-delivered in-flight → complete). Counting a
+      // re-evaluation of the SAME source would inflate occurrence_count,
+      // contradicting the detector's "dedupe repeat evaluations of the same
+      // source" contract. Only bump for a genuinely NEW source; a repeat of
+      // the last source just refreshes last_seen_ms.
+      final isSameSource =
+          sourceId != null && sourceId == (row['last_source_id'] as String?);
       final existingSeverity = row['severity'] as String;
       final escalated =
-          _severityRank(severity) > _severityRank(existingSeverity)
-              ? severity
+          _severityRank(level) > _severityRank(existingSeverity)
+              ? level
               : existingSeverity;
       _db.execute(
         'UPDATE alerts SET '
-        '  occurrence_count = occurrence_count + 1, '
+        '  occurrence_count = occurrence_count + ?, '
         '  last_seen_ms = ?, '
         '  last_source_id = ?, '
         '  severity = ? '
         'WHERE id = ?',
-        [ts, sourceId, escalated, row['id']],
+        [isSameSource ? 0 : 1, ts, sourceId, escalated, row['id']],
       );
       return false;
+    }
+
+    // `critical` is for the first crash of a session; every later crash
+    // signature is an error. 280 "critical" rows in one report devalued
+    // the word for hours.
+    var effectiveSeverity = level;
+    if (level == 'critical' && kind == 'flutter_error') {
+      final prior = _db.select(
+        'SELECT 1 FROM alerts WHERE session_id = ? AND kind = ? LIMIT 1',
+        [sessionId, kind],
+      );
+      if (prior.isNotEmpty) effectiveSeverity = 'error';
     }
 
     try {
@@ -793,7 +1129,7 @@ class CapturesDao {
         'detail, source_kind, source_id, signature, occurrence_count, '
         'last_seen_ms, last_source_id) '
         'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)',
-        [sessionId, ts, severity, kind, title, detail, sourceKind,
+        [sessionId, ts, effectiveSeverity, kind, title, detail, sourceKind,
          sourceId, signature, ts, sourceId],
       );
       return true;
@@ -801,6 +1137,45 @@ class CapturesDao {
       if (e.extendedResultCode == 2067) return false;
       rethrow;
     }
+  }
+
+  /// Occurrences of [kind] alerts in [sessionId] whose title mentions [host]
+  /// since [sinceMs] — the "5xx storm" test.
+  int recentAlertOccurrences({
+    required int sessionId,
+    required String kind,
+    required String host,
+    required int sinceMs,
+  }) {
+    final rows = _db.select(
+      'SELECT COALESCE(SUM(occurrence_count), 0) AS n FROM alerts '
+      'WHERE session_id = ? AND kind = ? AND last_seen_ms >= ? AND title LIKE ?',
+      [sessionId, kind, sinceMs, '%$host%'],
+    );
+    return rows.first['n'] as int;
+  }
+
+  /// Keeps at most [maxPerSession] pending alerts per session, dropping the
+  /// oldest-seen beyond that. Returns how many were deleted.
+  int capPendingAlerts({int maxPerSession = 200}) {
+    final over = _db.select(
+      'SELECT session_id, COUNT(*) AS n FROM alerts WHERE drained = 0 '
+      'GROUP BY session_id HAVING n > ?',
+      [maxPerSession],
+    );
+    var deleted = 0;
+    for (final row in over) {
+      final sid = row['session_id'] as int;
+      final excess = (row['n'] as int) - maxPerSession;
+      _db.execute(
+        'DELETE FROM alerts WHERE id IN ('
+        '  SELECT id FROM alerts WHERE session_id = ? AND drained = 0 '
+        '  ORDER BY last_seen_ms ASC, id ASC LIMIT ?)',
+        [sid, excess],
+      );
+      deleted += excess;
+    }
+    return deleted;
   }
 
   /// Sum of `occurrence_count` across pending alerts matching the filter.
@@ -927,8 +1302,19 @@ class CapturesDao {
     return rows.map(_rowToMap).toList();
   }
 
+  static const List<String> severities = ['info', 'warning', 'error', 'critical'];
+
+  /// [s] trimmed and lowercased; throws [ArgumentError] for an unknown severity.
+  static String normalizeSeverity(String s) {
+    final n = s.trim().toLowerCase();
+    _severityRank(n);
+    return n;
+  }
+
+  static bool isSeverity(String s) => severities.contains(s.trim().toLowerCase());
+
   static int _severityRank(String s) {
-    switch (s.toLowerCase()) {
+    switch (s.trim().toLowerCase()) {
       case 'info':
         return 1;
       case 'warning':
@@ -943,7 +1329,7 @@ class CapturesDao {
   }
 
   static String _severityRankSql(String col, String op, int rank) {
-    return '(CASE $col '
+    return '(CASE lower($col) '
         '''WHEN 'critical' THEN 4 '''
         '''WHEN 'error' THEN 3 '''
         '''WHEN 'warning' THEN 2 '''
@@ -1031,6 +1417,18 @@ class CapturesDao {
 
   /// Indexes a (utf8-decoded) request/response body pair into the FTS table.
   /// Pass `null` for empty bodies. Idempotent on (session_id, vm_id).
+  /// D7/F23: the FTS-indexable URL string. Appends the percent-decoded
+  /// form when it differs so i18n query params (e.g. ÜMLAUT) match the
+  /// human spelling as well as the wire encoding.
+  /// The raw URL plus its percent-decoded form, so a search for decoded text still matches.
+  static String urlForIndex(String url) {
+    try {
+      final decoded = Uri.decodeFull(url);
+      if (decoded != url) return '$url $decoded';
+    } catch (_) {/* malformed escape — index raw only */}
+    return url;
+  }
+
   void indexForSearch({
     required int sessionId,
     required String vmId,
@@ -1039,6 +1437,11 @@ class CapturesDao {
     String? responseText,
     String? isolateId,
   }) {
+    // D7/F23: index the DECODED URL alongside the raw percent-encoded one at
+    // this single choke point (covers all three callers: writer first-sight,
+    // body-backfill re-index, and the repair pass). Before this, a search for
+    // "ÜMLAUT" missed `%C3%9CMLAUT` in the stored URL — invisible i18n.
+    final indexedUrl = urlForIndex(url);
     final existing = _db.select(
       'SELECT rowid FROM http_search_map WHERE session_id=? AND vm_id=?',
       [sessionId, vmId],
@@ -1048,7 +1451,7 @@ class CapturesDao {
       _db.execute('DELETE FROM http_search WHERE rowid=?', [rowid]);
       _db.execute(
         'INSERT INTO http_search(rowid, url, content_request, content_response) VALUES (?,?,?,?)',
-        [rowid, url, requestText ?? '', responseText ?? ''],
+        [rowid, indexedUrl, requestText ?? '', responseText ?? ''],
       );
       _db.execute(
         'UPDATE http_search_map SET isolate_id = COALESCE(?, isolate_id) '
@@ -1059,13 +1462,38 @@ class CapturesDao {
     }
     _db.execute(
       'INSERT INTO http_search(url, content_request, content_response) VALUES (?,?,?)',
-      [url, requestText ?? '', responseText ?? ''],
+      [indexedUrl, requestText ?? '', responseText ?? ''],
     );
     final rowid = _db.lastInsertRowId;
     _db.execute(
       'INSERT INTO http_search_map(rowid, session_id, vm_id, isolate_id) VALUES (?,?,?,?)',
       [rowid, sessionId, vmId, isolateId],
     );
+  }
+
+  /// The FTS5 MATCH expression for a phrase search of [query] in the [which] column (request / response / url / any).
+  static String ftsMatchExpr(String query, String which) {
+    final phrase = '"${query.replaceAll('"', '""')}"';
+    return switch (which) {
+      'request' => 'content_request:$phrase',
+      'response' => 'content_response:$phrase',
+      'url' => 'url:$phrase',
+      _ => phrase,
+    };
+  }
+
+  /// Method, URL, host, path, status and timing of [vmIds] in [sessionId], keyed by vm_id.
+  Map<String, Map<String, Object?>> requestSummaries(
+      int sessionId, Iterable<String> vmIds) {
+    final ids = vmIds.toSet().toList();
+    if (ids.isEmpty) return const {};
+    final rows = _db.select(
+      'SELECT vm_id, method, url, host, path, status_code, start_us, end_us '
+      'FROM http_requests WHERE session_id=? AND vm_id IN '
+      '(${List.filled(ids.length, '?').join(',')})',
+      [sessionId, ...ids],
+    );
+    return {for (final r in rows) r['vm_id'] as String: _rowToMap(r)};
   }
 
   List<Map<String, Object?>> searchRequests({
@@ -1075,22 +1503,7 @@ class CapturesDao {
     String? isolateId,
     int limit = 20,
   }) {
-    final phrase = '"${query.replaceAll('"', '""')}"';
-    final String matchExpr;
-    switch (which) {
-      case 'request':
-        matchExpr = 'content_request:$phrase';
-        break;
-      case 'response':
-        matchExpr = 'content_response:$phrase';
-        break;
-      case 'url':
-        matchExpr = 'url:$phrase';
-        break;
-      case 'any':
-      default:
-        matchExpr = phrase;
-    }
+    final matchExpr = ftsMatchExpr(query, which);
     const matchClause = 'http_search MATCH ?';
     final params = <Object?>[matchExpr];
     String sessionFilter = '';
@@ -1145,22 +1558,7 @@ class CapturesDao {
     int perSessionLimit = 100,
   }) {
     if (sessionIds.isEmpty) return const [];
-    final phrase = '"${pattern.replaceAll('"', '""')}"';
-    final String matchExpr;
-    switch (which) {
-      case 'request':
-        matchExpr = 'content_request:$phrase';
-        break;
-      case 'response':
-        matchExpr = 'content_response:$phrase';
-        break;
-      case 'url':
-        matchExpr = 'url:$phrase';
-        break;
-      case 'any':
-      default:
-        matchExpr = phrase;
-    }
+    final matchExpr = ftsMatchExpr(pattern, which);
     final out = <Map<String, Object?>>[];
     for (final sid in sessionIds) {
       final rows = _db.select(
@@ -1194,6 +1592,35 @@ class CapturesDao {
 
   /// Deletes a session and (via CASCADE) all its requests, bodies, sockets,
   /// logs, alerts, and FTS index rows.
+  /// Alert retention: deletes alerts older than [cutoffMs] (ts_ms) EXCEPT
+  /// those belonging to a currently-attached session (protected — a
+  /// long-lived live session keeps all its alerts regardless of age).
+  /// Returns the number of rows deleted. Used by [AlertRetention] to keep
+  /// the pending banner reflecting recent state instead of months of
+  /// accumulated noise. No-op contract: cutoff in the past + empty protect
+  /// set is fine.
+  int expireOldAlerts({
+    required int cutoffMs,
+    required Set<int> protectedSessionIds,
+  }) {
+    final where = StringBuffer('ts_ms < ?');
+    final params = <Object?>[cutoffMs];
+    if (protectedSessionIds.isNotEmpty) {
+      final placeholders = List.filled(protectedSessionIds.length, '?').join(',');
+      where.write(' AND session_id NOT IN ($placeholders)');
+      params.addAll(protectedSessionIds);
+    }
+    // Count first (DELETE doesn't report affected rows through this driver
+    // uniformly), then delete in one statement.
+    final n = _db.select(
+      'SELECT COUNT(*) AS c FROM alerts WHERE $where',
+      params,
+    ).first['c'] as int;
+    if (n == 0) return 0;
+    _db.execute('DELETE FROM alerts WHERE $where', params);
+    return n;
+  }
+
   bool deleteSession(int sessionId) {
     final exists = _db.select('SELECT 1 FROM sessions WHERE id=?', [sessionId]);
     if (exists.isEmpty) return false;
@@ -1206,26 +1633,52 @@ class CapturesDao {
     return true;
   }
 
-  /// Drops captured BLOB bodies (request + response) for matching requests.
-  /// Keeps the http_requests metadata row intact.
-  /// [olderThanMs] is millis-since-epoch; requests with start_us older than
-  /// `olderThanMs * 1000` lose their bodies.
-  int purgeBodies({int? sessionId, int? olderThanMs}) {
+  /// Drops captured BLOB bodies (request + response) for matching requests, keeping the http_requests rows. Only the purged requests go back to `bodies_fetched=0` and lose their body text from the search index (their URL stays searchable). [olderThanMs] matches requests of the same session that started before it. Returns the bodies dropped and the sessions they came from.
+  ({int purged, Set<int> sessions}) purgeBodies({int? sessionId, int? olderThanMs}) {
     final (where, params, _) = _bodyPurgeWhere(sessionId, olderThanMs);
+    final targets = _db.select(
+      'SELECT DISTINCT session_id, vm_id FROM http_bodies$where',
+      params,
+    );
+    if (targets.isEmpty) return (purged: 0, sessions: const <int>{});
     final before = _db
         .select('SELECT COUNT(*) AS n FROM http_bodies$where', params)
         .first['n'] as int;
-    if (before == 0) return 0;
-    _db.execute('DELETE FROM http_bodies$where', params);
-    if (sessionId != null) {
-      _db.execute(
-        'UPDATE http_requests SET bodies_fetched=0 WHERE session_id=?',
-        [sessionId],
-      );
-    } else {
-      _db.execute('UPDATE http_requests SET bodies_fetched=0');
+    _db.execute('BEGIN');
+    try {
+      _db.execute('DELETE FROM http_bodies$where', params);
+      _forgetBodies([
+        for (final t in targets) (t['session_id'] as int, t['vm_id'] as String),
+      ]);
+      _db.execute('COMMIT');
+    } catch (_) {
+      _db.execute('ROLLBACK');
+      rethrow;
     }
-    return before;
+    return (
+      purged: before,
+      sessions: {for (final t in targets) t['session_id'] as int},
+    );
+  }
+
+  /// Marks [requests] as having no stored bodies and blanks their body text in the search index, keeping the URL.
+  void _forgetBodies(Iterable<(int, String)> requests) {
+    final unfetch = _db.prepare(
+        'UPDATE http_requests SET bodies_fetched=0 WHERE session_id=? AND vm_id=?');
+    final unindex = _db.prepare(
+      "UPDATE http_search SET content_request='', content_response='' "
+      'WHERE rowid IN (SELECT rowid FROM http_search_map '
+      'WHERE session_id=? AND vm_id=?)',
+    );
+    try {
+      for (final (sid, vmId) in requests) {
+        unfetch.execute([sid, vmId]);
+        unindex.execute([sid, vmId]);
+      }
+    } finally {
+      unfetch.close();
+      unindex.close();
+    }
   }
 
   /// Dry-run count + total bytes for [purgeBodies] with the same filters.
@@ -1252,7 +1705,9 @@ class CapturesDao {
       params.add(sessionId);
     }
     if (olderThanMs != null) {
-      clauses.add('vm_id IN (SELECT vm_id FROM http_requests WHERE start_us < ?)');
+      clauses.add('EXISTS (SELECT 1 FROM http_requests r '
+          'WHERE r.session_id = http_bodies.session_id '
+          'AND r.vm_id = http_bodies.vm_id AND r.start_us < ?)');
       params.add(olderThanMs * 1000);
     }
     final where = clauses.isEmpty ? '' : ' WHERE ${clauses.join(' AND ')}';
@@ -1289,7 +1744,7 @@ class CapturesDao {
       'http_bodies',
       'socket_events',
       'websocket_connections',
-      'websocket_frames',
+      'websocket_messages',
       'log_records',
       'alerts',
       'http_search_map',
@@ -1349,12 +1804,12 @@ class CapturesDao {
   /// across all sessions except [protectedSessionIds], stopping once at least
   /// [targetBytes] of body content has been freed (or nothing is left). Keeps
   /// the `http_requests` metadata rows (their shape/latency stays useful) and
-  /// clears their `bodies_fetched`. Returns the count + bytes freed.
-  ({int dropped, int bytesFreed}) evictOldestBodies({
+  /// clears their `bodies_fetched` and indexed body text. Returns the count, bytes freed and sessions touched.
+  ({int dropped, int bytesFreed, Set<int> sessions}) evictOldestBodies({
     required int targetBytes,
     Set<int> protectedSessionIds = const {},
   }) {
-    if (targetBytes <= 0) return (dropped: 0, bytesFreed: 0);
+    if (targetBytes <= 0) return (dropped: 0, bytesFreed: 0, sessions: const <int>{});
     final notIn = _notInClause('b.session_id', protectedSessionIds);
     final rows = _db.select(
       'SELECT b.rowid AS rid, b.session_id AS sid, b.vm_id AS vid, b.size AS sz '
@@ -1372,18 +1827,17 @@ class CapturesDao {
       freed += (row['sz'] as int?) ?? 0;
       if (freed >= targetBytes) break;
     }
-    if (rowids.isEmpty) return (dropped: 0, bytesFreed: 0);
+    if (rowids.isEmpty) return (dropped: 0, bytesFreed: 0, sessions: const <int>{});
     _db.execute(
       'DELETE FROM http_bodies WHERE rowid IN (${rowids.map((_) => '?').join(',')})',
       rowids,
     );
-    for (final (sid, vid) in touched) {
-      _db.execute(
-        'UPDATE http_requests SET bodies_fetched=0 WHERE session_id=? AND vm_id=?',
-        [sid, vid],
-      );
-    }
-    return (dropped: rowids.length, bytesFreed: freed);
+    _forgetBodies(touched);
+    return (
+      dropped: rowids.length,
+      bytesFreed: freed,
+      sessions: {for (final (sid, _) in touched) sid},
+    );
   }
 
   /// Deletes up to [maxRows] of the oldest `log_records` (by `timestamp_ms`)
@@ -1462,18 +1916,23 @@ class CapturesDao {
     return rows.map(_rowToMap).toList();
   }
 
+  static const List<String> builtInRedactedHeaders = [
+    'authorization',
+    'cookie',
+    'proxy-authorization',
+    'set-cookie',
+    'x-api-key',
+    'x-auth-token',
+  ];
+
   /// Returns the lowercase set of header names that should be redacted.
   /// Always includes the built-in defaults.
   Set<String> redactedHeaderSet() {
-    final defaults = {
-      'authorization',
-      'cookie',
-      'proxy-authorization',
-      'x-api-key',
-      'x-auth-token',
-    };
     final extra = _db.select('SELECT name FROM redacted_headers');
-    return {...defaults, ...extra.map((r) => r['name'] as String)};
+    return {
+      ...builtInRedactedHeaders,
+      ...extra.map((r) => r['name'] as String),
+    };
   }
 
   int addAlertPattern({
@@ -1485,11 +1944,11 @@ class CapturesDao {
     if (kind.trim().isEmpty || regex.trim().isEmpty) {
       throw ArgumentError('kind and regex are required');
     }
-    _severityRank(severity);
+    final normalized = normalizeSeverity(severity);
     RegExp(regex, multiLine: true);
     _db.execute(
       'INSERT INTO alert_patterns(kind, regex, severity, label, added_at) VALUES (?,?,?,?,?)',
-      [kind.trim(), regex, severity, label, DateTime.now().millisecondsSinceEpoch],
+      [kind.trim(), regex, normalized, label, DateTime.now().millisecondsSinceEpoch],
     );
     return _db.lastInsertRowId;
   }
@@ -1584,6 +2043,17 @@ class CapturesDao {
     return [for (final r in rows) r['host'] as String];
   }
 
+  /// Distinct request paths in [sessionId], most frequent first.
+  List<String> distinctPaths(int sessionId, {int limit = 300}) {
+    final rows = _db.select(
+      'SELECT path, COUNT(*) AS n FROM http_requests '
+      'WHERE session_id=? AND path IS NOT NULL AND path != \'\' '
+      'GROUP BY path ORDER BY n DESC LIMIT ?',
+      [sessionId, limit],
+    );
+    return [for (final r in rows) r['path'] as String];
+  }
+
   /// Number of requests in [sessionId] whose bodies are indexed for full-text
   /// search. Lets network_search tell "nothing indexed yet" (writer still
   /// backfilling) apart from "your term did not match".
@@ -1594,6 +2064,75 @@ class CapturesDao {
     );
     return (rows.first['n'] as int?) ?? 0;
   }
+
+  /// Total captured requests in [sessionId]. Paired with [searchIndexSize]
+  /// so network_search can report index COVERAGE honestly instead of
+  /// asserting "the capture is indexed" while rows are missing (RC2).
+  int httpRequestCount(int sessionId) {
+    final rows = _db.select(
+      'SELECT COUNT(*) AS n FROM http_requests WHERE session_id=?',
+      [sessionId],
+    );
+    return (rows.first['n'] as int?) ?? 0;
+  }
+
+  /// RC2 repair pass: FTS rows used to be written only by the body
+  /// backfill's has-body branch, so requests that were in-flight at first
+  /// sight (slow, redirected, upgraded) or whose bodies were empty /
+  /// gave up were NEVER indexed — ~14% of historical rows. Indexes every
+  /// http_requests row missing from http_search_map: URL always, plus any
+  /// stored textish bodies. Idempotent; returns the number repaired.
+  int repairSearchIndex({int limit = 50000}) {
+    final missing = _db.select(
+      'SELECT r.session_id, r.vm_id, r.isolate_id, r.url, r.content_type, '
+      'r.request_headers_json, r.response_headers_json '
+      'FROM http_requests r '
+      'LEFT JOIN http_search_map m '
+      '  ON m.session_id = r.session_id AND m.vm_id = r.vm_id '
+      'WHERE m.rowid IS NULL LIMIT ?',
+      [limit],
+    );
+    if (missing.isEmpty) return 0;
+    _db.execute('BEGIN');
+    try {
+      for (final row in missing) {
+        final sid = row['session_id'] as int;
+        final vmId = row['vm_id'] as String;
+        String? requestText;
+        String? responseText;
+        final bodies = _db.select(
+          'SELECT which, bytes FROM http_bodies WHERE session_id=? AND vm_id=?',
+          [sid, vmId],
+        );
+        for (final b in bodies) {
+          final text = searchableText(
+            b['bytes'] as Uint8List?,
+            storedContentType(_rowToMap(row), b['which'] as String),
+          );
+          if (text == null) continue;
+          if (b['which'] == 'request') {
+            requestText = text;
+          } else {
+            responseText = text;
+          }
+        }
+        indexForSearch(
+          sessionId: sid,
+          vmId: vmId,
+          isolateId: row['isolate_id'] as String?,
+          url: (row['url'] as String?) ?? '',
+          requestText: requestText,
+          responseText: responseText,
+        );
+      }
+      _db.execute('COMMIT');
+    } catch (_) {
+      _db.execute('ROLLBACK');
+      rethrow;
+    }
+    return missing.length;
+  }
+
 
   Map<String, Object?> _rowToMap(sql.Row r) {
     return {for (final k in r.keys) k: r[k]};
@@ -1611,4 +2150,40 @@ class CapturesDao {
     }
     return null;
   }
+}
+
+/// Of the pids in [attachedAt] (pid to when it attached, epoch ms), those still held by the process that attached: running and started before the attach, since a reused pid starts later. One `ps` scan covers them all (macOS `ps -p` prints nothing when any listed pid is gone). A failed scan counts every pid as alive, so a session another process may still use is never ended on a guess.
+Set<int> livePids(Map<int, int> attachedAt) {
+  final others = [for (final pid in attachedAt.keys) if (pid != io.pid) pid];
+  final alive = {if (attachedAt.containsKey(io.pid)) io.pid};
+  if (others.isEmpty) return alive;
+  final String out;
+  try {
+    out = io.Process.runSync('ps', ['-ax', '-o', 'pid=,etime=']).stdout as String;
+  } on Object {
+    return {...alive, ...others};
+  }
+  final wanted = others.toSet();
+  final now = DateTime.now().millisecondsSinceEpoch;
+  for (final line in out.split('\n')) {
+    final parts = line.trim().split(RegExp(r'\s+'));
+    if (parts.length != 2) continue;
+    final pid = int.tryParse(parts[0]);
+    if (pid == null || !wanted.contains(pid)) continue;
+    final elapsed = parseElapsed(parts[1]);
+    // etime has one-second resolution.
+    if (elapsed == null ||
+        now - elapsed.inMilliseconds <= attachedAt[pid]! + 2000) {
+      alive.add(pid);
+    }
+  }
+  return alive;
+}
+
+/// `ps` etime (`[[dd-]hh:]mm:ss`) as a duration; null when unreadable.
+Duration? parseElapsed(String etime) {
+  final m = RegExp(r'^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)$').firstMatch(etime.trim());
+  if (m == null) return null;
+  int n(int g) => int.parse(m.group(g) ?? '0');
+  return Duration(days: n(1), hours: n(2), minutes: n(3), seconds: n(4));
 }

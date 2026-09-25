@@ -7,7 +7,7 @@ when_to_use: After `network_attach` returns `autoAttachSuggestion` and the user 
 ## DO NOT USE THIS TOOL WHEN
 
 - The user hasn't confirmed — the `autoAttachSuggestion` field's `agentAction` is explicit: "ASK THE USER" first. Persisting without confirmation is a trust violation.
-- You're trying to reconfigure for THIS process — the file is read at startup; env vars / CLI flags override per-launch. To affect the current process, use those.
+- You're trying to change the allowlist for THIS process. The auto-attach watcher reads its allowlist at startup, so `add` / `remove` / `clear` take effect at the next MCP-host launch; env vars / CLI flags override per-launch. (`action:"set"` is different: `logBufferSize` / `nativeLogs` apply to the next attach in this process too.)
 - The user wants per-machine fine-grained control they want versioned in their dotfiles — the JSON file is per-user-data-dir. Direct them to set `FLUTTER_NETWORK_MCP_AUTO_ATTACH` in shell rc instead.
 
 ## Use this when
@@ -15,6 +15,7 @@ when_to_use: After `network_attach` returns `autoAttachSuggestion` and the user 
 - `network_attach` returned `autoAttachSuggestion` and the user said "yes, add it."
 - The user explicitly wants to see / clean up their current allowlist (`action:"list"` or `action:"clear"`).
 - Removing an app the user no longer debugs.
+- The user wants a bigger log buffer or the native device log on every attach, auto or manual (`action:"set"`).
 
 ## How it works
 
@@ -24,6 +25,8 @@ The file lives at `<data-dir>/auto-attach.json`:
 {
   "allowed": ["eats_mobile", "eats_driver"],
   "denied": ["iPhone 7"],
+  "logBufferSize": 8000,
+  "nativeLogs": true,
   "writtenAtMs": 1780462000000
 }
 ```
@@ -40,9 +43,13 @@ This closes the `claude mcp remove + claude mcp add --auto-attach=...` friction 
 
 ## Args
 
-- `action` (string, default `"list"`) — `"list"` | `"add"` | `"remove"` | `"clear"`.
+- `action` (string, default `"list"`): `"list"` | `"add"` | `"remove"` | `"clear"` | `"set"`. Any other value errors with `errorKind: bad_argument`.
 - `app` (string) — required for `"add"` and `"remove"`. Case-insensitive substring matched against DTD app names.
 - `deny` (string) — optional, supplied alongside `app` on an `"add"` to also extend the denylist.
+- `logBufferSize` (int, 50 to 20000): with `action:"set"`, the log ring capacity every attach uses unless the call passes its own. Without it, attaches use `FLUTTER_NETWORK_MCP_LOG_BUFFER` or 2000. Out of range errors with `bad_argument`.
+- `nativeLogs` (bool): with `action:"set"`, also stream the device's native log (`simctl log stream` / `adb logcat`) on every attach.
+
+`action:"set"` needs at least one of `logBufferSize` / `nativeLogs` (else `bad_argument`). `add` / `remove` without `app` error with `bad_argument`. `clear` empties `allowed` and `denied` but keeps `logBufferSize` and `nativeLogs`.
 
 ## Returns
 
@@ -52,6 +59,8 @@ This closes the `claude mcp remove + claude mcp add --auto-attach=...` friction 
   "enabled": true,
   "allowed": ["eats_mobile"],
   "denied": [],
+  "logBufferSize": 8000,
+  "nativeLogs": true,
   "filePath": "/Users/me/Library/Application Support/flutter_network_mcp/auto-attach.json",
   "nextSteps": [...]
 }
@@ -73,6 +82,22 @@ This closes the `claude mcp remove + claude mcp add --auto-attach=...` friction 
   ]
 }
 ```
+
+`logBufferSize` / `nativeLogs` appear in the `list` reply only when set.
+
+**`action:"set"`:**
+```jsonc
+{
+  "action": "set",
+  "logBufferSize": 8000,
+  "persisted": true,
+  "filePath": "/Users/me/.../auto-attach.json",
+  "summary": "Applies to the next attach (auto or manual); sessions already attached keep their current buffer.",
+  "nextSteps": ["network_status ..."]
+}
+```
+
+`remove` returns `{action, app, removed, allowed, denied, persisted, filePath, nextSteps}`; `clear` returns `{action, allowed:[], denied:[], persisted, filePath, nextSteps}`.
 
 `persisted:false` means the in-memory state was updated but the write failed (filesystem permissions, full disk, etc.) — the change reverts at next process restart.
 

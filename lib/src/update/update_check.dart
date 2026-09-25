@@ -164,6 +164,12 @@ class UpdateCheck {
   /// True when [upstream] is strictly newer than [current]. Both must be
   /// semver triples (`major.minor.patch`); non-parseable inputs return
   /// false (treat as "not newer" to avoid spurious nudges).
+  /// Public read-time re-verification seam: network_status uses this to
+  /// suppress a stale `.update-status.json` claim after an upgrade (the
+  /// daily cache blocks a rewrite until tomorrow).
+  static bool isNewerVersion(String upstream, String current) =>
+      _isNewer(upstream, current);
+
   static bool _isNewer(String upstream, String current) {
     final u = _parseTriple(upstream);
     final c = _parseTriple(current);

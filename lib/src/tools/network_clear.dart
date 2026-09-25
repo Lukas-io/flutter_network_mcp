@@ -28,6 +28,35 @@ final networkClearTool = Tool(
   ),
 );
 
+/// The error reply when a live clear reached no isolate; null when at least one was cleared.
+CallToolResult? clearFailedResult({
+  required String what,
+  required int sessionId,
+  required List<String> cleared,
+  required List<Map<String, Object?>> failed,
+}) {
+  if (cleared.isNotEmpty) return null;
+  final idMiss = failed.any((f) => looksLikeVmIdMiss(f['error']));
+  return errorResult(
+    failed.isEmpty
+        ? 'No isolates to clear the $what profile on in session $sessionId.'
+        : 'Nothing cleared: the $what profile clear failed on all '
+            '${failed.length} isolate(s) of session $sessionId.',
+    kind: failed.isEmpty || idMiss
+        ? ErrorKind.notFound
+        : ErrorKind.unresponsiveVm,
+    extra: {
+      'cleared': false,
+      if (failed.isNotEmpty) 'failed': failed,
+      'nextSteps': [
+        if (idMiss) 'network_status to list this session\'s isolate ids',
+        'Retry once the app is in the foreground and not paused',
+        'network_detach then network_attach for a full reset',
+      ],
+    },
+  );
+}
+
 FutureOr<CallToolResult> networkClear(CallToolRequest request) async {
   final args = request.arguments ?? const <String, Object?>{};
   final (scope, scopeErr) = resolveScope(args);
@@ -75,13 +104,23 @@ FutureOr<CallToolResult> networkClear(CallToolRequest request) async {
       failed.add({'isolateId': isoId, 'error': e.toString()});
     }
   }
+  final nothingCleared = clearFailedResult(
+    what: 'HTTP',
+    sessionId: scope.sessionId,
+    failed: failed,
+    cleared: cleared,
+  );
+  if (nothingCleared != null) return nothingCleared;
   attached.lastHttpCursor = null;
+  attached.httpCursorByIsolate.clear();
+  attached.unreturnedHttp.clear();
   final liveSid = scope.sessionId;
   return jsonResult({
     'cleared': true,
+    if (failed.isNotEmpty) 'partial': true,
     'scope': scope.toBlock(),
     'summary':
-        'Live VM HTTP profile cleared for session $liveSid${scope.appName != null ? " (${scope.appName})" : ""}: ${cleared.length} isolate(s). Persistent DB is untouched (captured rows remain queryable).',
+        'Live VM HTTP profile cleared for session $liveSid${scope.appName != null ? " (${scope.appName})" : ""}: ${cleared.length} of ${isolates.length} isolate(s). Persistent DB is untouched (captured rows remain queryable).',
     'liveSessionId': liveSid,
     'clearedIsolates': cleared,
     if (failed.isNotEmpty) 'failed': failed,
@@ -94,5 +133,5 @@ FutureOr<CallToolResult> networkClear(CallToolRequest request) async {
       'network_list — confirm the live profile is empty',
       'Drive the app, then network_list — fresh isolated capture',
     ],
-  }, scopeSessionId: scope.sessionId);
+  }, scopeSessionId: scope.sessionId, scopeNote: scope.note);
 }

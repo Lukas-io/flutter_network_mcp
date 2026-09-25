@@ -4,6 +4,7 @@ import 'package:dart_mcp/server.dart';
 
 import '../config/capabilities.dart';
 import '../state/session.dart';
+import '../util/guidance.dart';
 import '../storage/captures_db.dart';
 import '../util/filters.dart';
 import 'error_kind.dart';
@@ -55,6 +56,13 @@ FutureOr<CallToolResult> sessionList(CallToolRequest request) async {
     );
     final live = Session.instance.liveSessionId;
     final viewed = Session.instance.viewedSessionId;
+    final elsewhere = rows.any((r) => r['ended_at'] == null)
+        ? CapturesDao().sessionsCapturedElsewhere()
+        : const <int>{};
+    bool capturedElsewhere(Map<String, Object?> r) =>
+        r['ended_at'] == null &&
+        SessionRegistry.instance.attachedById(r['id'] as int) == null &&
+        elsewhere.contains(r['id']);
     final sessions = [
       for (final r in rows)
         {
@@ -62,12 +70,22 @@ FutureOr<CallToolResult> sessionList(CallToolRequest request) async {
           'startedMs': r['started_at'],
           if (r['ended_at'] != null) 'endedMs': r['ended_at'],
           'isLive': r['id'] == live && r['ended_at'] == null,
+      // F11 tri-state: distinguish crashed/never-detached captures from
+      // genuinely running ones.
+      'status': sessionStatusLabel(
+        isAttached: SessionRegistry.instance.attachedById(r['id'] as int) != null,
+        endedAtMs: r['ended_at'],
+        capturedElsewhere: capturedElsewhere(r),
+      ),
+          if (capturedElsewhere(r)) 'capturedElsewhere': true,
           if (r['app_name'] != null) 'appName': r['app_name'],
           if (r['project_path'] != null) 'projectPath': r['project_path'],
           if (r['note'] != null) 'note': r['note'],
           'counts': {
             'http': r['http_count'],
             'sockets': r['socket_count'],
+            if ((r['websocket_count'] as int? ?? 0) > 0)
+              'websockets': r['websocket_count'],
             'logs': r['log_count'],
           },
         },

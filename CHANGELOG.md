@@ -4,6 +4,139 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added: WebSocket capture with nothing added to the app
+
+- `ws_list` lists the app's WebSocket connections: url, state (`connecting`, `open`, `closed`, `failed`, `error`), connect time, duration, who closed it with which code and reason, and messages and bytes each way. `ws_get` returns one connection's event timeline (time since start, direction, text / binary / ping / pong / close / error, size), paged with `afterId`.
+- Read from the `WebSocket.*` events dart:io writes to the VM timeline (Dart 3.13+, Flutter 3.47+). The server adds the `Dart` stream to the recorded timeline streams (keeping any DevTools already records) and reads new events when the socket byte counters moved or a WebSocket tool is called, so an animating app is not re-read every poll. Message contents are not in those events and are not captured.
+- Apps built with an older Dart are detected at attach, and `ws_list` says why it is empty instead of returning nothing.
+- New capability `websockets`. Schema v14 adds `websocket_connections` and `websocket_messages`; `session_list` and `session_delete` count WebSockets, `network_query` names the tables. Events re-read by an overlapping poll or by a second server process on the same app are stored once.
+
+
+### Fixed: error kinds, validation and descriptions
+
+- Scope errors now carry `errorKind`: `no_session` when nothing is attached or opened, or no attached session matches `appNameContains`; `bad_argument` when several match.
+- Every `network_attach` error carries `errorKind` (`bad_argument`, `not_found`, `unresponsive_vm`, `timeout` for an attach already in progress, or `internal`); `network_status attachIfOne` passes it through in `autoAttached`.
+- `logs_tail` honours `session_configure maxResponseTokens` and takes its own `maxTokens`, keeping the newest records and reporting `budget.dropped`.
+- An unknown `severityMin` on `alerts_drain` / `alerts_peek` / `alerts_clear` is `bad_argument`, not `internal`. Alert and pattern severities are stored lowercase and `severityMin` compares case-insensitively, so custom `"ERROR"` alerts pass the filter.
+- `alerts_config` reports `applied` and `rejected` (with reasons) instead of dropping bad values silently, fails with `bad_argument` when nothing in `set` is valid, and no longer throws on a non-object `set`.
+- `network_summarize`, `network_report` and `network_diff_session` no longer count in-flight requests as errors (`statusDist.inFlight`, left out of `errorRate`).
+- `network_report` leaves out `hostContains` for an endpoint with no host instead of passing its path.
+- `network_clear` / `socket_clear` fail with `cleared:false` when no isolate was cleared, and mark a partial clear with `partial:true`.
+- `set-cookie` is a built-in redacted header, so `session_export redact:true` masks response cookies; `redacted_headers` trims the name before the built-in check.
+- `network_correlate` nextSteps name the earlier request of a pair as the likely originator instead of the first session listed.
+- Descriptions: `network_query` names real columns, `auto_attach_config` lists `set` among valid actions, `network_attach logBufferSize` says 50-20000, `network_replay` no longer calls `redact:false` the default.
+
+### Added: body decryption for app-encrypted bodies (#110, #111)
+
+- `session_configure bodyDecryption:{...}` sets an AES-CTR scheme (`aes-256-ctr` or `aes-128-ctr`; key as utf8, hex or base64; payload as hex, base64 or raw; IV as prefix, suffix, or infused at `ivOffset`). Hex offsets count hex characters; base64 and raw offsets count decoded bytes. `{off:true}` or `clear:true` turns it off.
+- The key stays in process memory and is never written to the capture DB. Replies show `keyFingerprint` (first 12 hex characters of its SHA-256), never the key.
+- `network_get`, `network_body`, `network_body_outline` and `network_body_query` return plaintext with `decrypted: true`. A body that does not fit the scheme comes back as captured with `decrypted: false` and a `decryptionFailed` reason. `network_diff` and `network_drift` compare the decrypted bodies.
+- `network_search` and `network_correlate` match plaintext through an in-memory FTS index, built per session on first use and dropped when the key changes, decryption is turned off, or the process exits. Nothing decrypted is persisted (#111 replaced #110's on-disk reindex).
+- `network_replay`, `network_replay_as_test` and HAR export keep the original bytes.
+- New dependency: `pointycastle`.
+
+### Fixed: attach and wait_for_app (#108)
+
+- VM service URIs are canonicalised (`ws://host:port/token/ws` and `http://host:port/token/` are one app), so the same app can no longer be attached twice under two spellings.
+- `network_attach` on an app that is already attached returns success with `alreadyAttached: true` and that session's id instead of an error.
+- `network_wait_for_app` returns straight away (`bad_argument`) when several apps match or the session cap is reached, treats an already-attached app as success, and without `appNameContains` looks across every running DTD.
+- The continuation hint uses the real exit time, and a failed DTD probe is no longer read as the app having exited.
+- A pending body read from a history view is called unrecoverable only once its session row has ended.
+
+### Fixed: logs_tail keeps developer.log messages whole (#109)
+
+- Message, logger name, error and stack trace are refetched past the VM's 128-character preview before storing, and a non-String `error:` is stored via `toString()`. When the VM cannot expand a value, the text says how much it cut.
+- `messageTruncateBytes` counts characters (64 to 65536, default 2048), and `truncated` / `totalLength` now reflect real cuts.
+
+### Fixed: sessions shared across server processes (#107, schema v13)
+
+- New `session_attachments` table: a session row ends only when the last server process capturing into it leaves, and the startup sweep no longer ends rows another live process holds. `network_detach` says when a session stays open and sets `stillCapturedByOtherProcess`.
+- Log records are de-duplicated across processes (`log_records.dedup_key`).
+- Two processes opening the same DB at once no longer fail with `database is locked`.
+- DBs created fresh at v12 get the live-URI unique index they were missing.
+
+### Fixed: bounded teardown body flush (#106)
+
+- The body flush on detach or app exit now keeps to its 3 s deadline: each pending body is tried once, each fetch has a 1 s timeout, and the flush stops as soon as the VM disconnects.
+
+### Docs
+
+- Refreshed the per-tool guides against the code, and added guides for `network_wait_for_app`, `network_replay_as_test`, `network_diff_session`, `network_drift` and `network_report`.
+
+### Added — alert retention (auto-expire old alerts)
+
+The pending-alerts banner grew unbounded over weeks of use (observed at 14k+). New `AlertRetention` service auto-expires alerts from **non-attached** sessions older than a configurable window, so the banner reflects recent state instead of accumulated noise. A currently-attached session keeps all its alerts regardless of age. Window via `FLUTTER_NETWORK_MCP_ALERT_RETENTION_DAYS` (default **14**, `0` = keep forever); runtime-tunable via `alerts_config set:{retentionDays:N}`; surfaced in `db_stats.alertRetention`. Runs a deferred first sweep on start + hourly, independent of attach. Delete-based (cross-session `priorOccurrences` still works within the window). +5 tests.
+
+### Fixed — pre-attach messaging (F17) + alert re-eval idempotency
+
+- `network_attach` now detects the VM's uptime and warns when the app was running before attach ("capture starts NOW; traffic before this moment was not recorded"), with a machine-readable `preAttachUptimeMs` — dart:io profiling records nothing pre-attach, and a near-empty capture was being misread as a broken tool.
+- `insertAlert` re-selected only `(id, severity)`, so re-evaluating the SAME source across writer ticks inflated `occurrence_count`. Now reads `last_source_id` and bumps by 0 on a repeat. Verified 0 duplicate rows across 14,222 real alerts.
+
+## [0.10.0] — 2026-07-02
+
+Design-sprint release: every remaining audit finding fixed at the system-design level (docs/agent-ux-audit-2026-07-02.md, D1–D10). Landed across four PRs; sections below grow per PR.
+
+### PR D — policy & docs (D5 redaction, D6 MCP resources)
+
+- **Redaction is a serialization-layer policy (D5/RC9/F7).** New `redactHeaders` behavior lives inside the one function every header display goes through (`truncateHeaders`). `network_get` redacts auth headers by default (opt out with `redact:false` to debug auth); `network_diff` always redacts (an auth-header change no longer prints both tokens); `network_replay` now defaults to `redact:true` (the emitted curl routinely lands in a transcript — a consciously re-decided #57); `session_export` gains an opt-in `redact:true` for a scrubbed HAR/NDJSON, with the loud unredacted-bodies warning kept. Three inline redaction loops collapsed to one shared policy.
+- **Docs are in-band as MCP resources (D6/RC10/F8).** The server now mixes in `ResourcesSupport` and serves every `docs/tools/**` guide + `RESPONSE_CONTRACT.md` as `flutter-network://docs/...` (resolved from the git-activated checkout, the same ladder `install` uses). A fresh agent with no repo can finally read the guides the tool descriptions reference. `network_query`'s description now embeds the compact table/column schema (times in µs) — killing the 53%-error-rate cause at the source — and still returns the live `schema` map on failure.
+- +7 tests (redaction matrix + doc discovery). 362 green.
+
+### PR C — capture pipeline (D7 ingestion classification, D9 self-heal, D10 recovery)
+
+- **Events classified at ingestion (D7).** New `util/http_classify.dart`: a successful WebSocket upgrade (101 "Switching Protocols") no longer raises a phantom `http_error` when dart:io flags the adopted socket as "detached" (F21); alert titles use `displayUrl` which strips the meaningless `:0` port and default ports (F30).
+- **Redirect chains captured (F22).** Schema **v11** adds `redirects_json`; `network_get` surfaces `response.redirects` (the `{location, method, statusCode}` hops), and HAR export fills `redirectURL` from the last hop.
+- **i18n-safe search (F23).** URLs are indexed with their percent-DECODED form alongside the raw one at the single `indexForSearch` choke point, so a search for `ÜMLAUT` matches `%C3%9CMLAUT`.
+- **Degraded attaches self-heal (D9/F28).** Capability flags are now mutable; the capture writer's rescan retries a failed HTTP/socket enable across all isolates and flips the flag on success — a session that attached mid-boot recovers within ~20s instead of staying degraded forever.
+- **Crash-safe capture batches (D10).** `_pollHttp` advances its per-isolate cursor only AFTER the batch is processed, with per-request try/catch — one poisoned request can no longer drop the rest of a tick's requests.
+- **DTD default no longer pins a dead URI (D10/F10/F27).** When the startup DTD URI is stale, `network_status` rediscovers a live DTD and retries once; a failed connect now routes to `network_discover_dtd`.
+- +10 tests. 355 green.
+
+### PR B — read policy (D3 taxonomy, D4 history cursors, D8 size discipline)
+
+- **Honest error taxonomy (RC5/F26).** A healthy VM answering "no such id" now returns `errorKind: not_found` (with list/search recovery), not `unresponsive_vm` — across network_get and body_fetch via a shared `looksLikeVmIdMiss` classifier. Stops poisoning usage_stats and misrouting agents to VM-recovery for a typo'd id.
+- **History-aware cursors (RC7/F6).** `network_list` gains a `before:<µs>` cursor that pages OLDER (the productive direction in a newest-first history read); `nextCursor` now feeds it, and the dead "since:<newest> — page beyond the newest" hint is gone. Empty-result hints are cursor-aware (nothing-older / nothing-newer) instead of always blaming filters. The `_liveDbFallback` path got the same fix; the budget-trim warning points at `before:`.
+- **Whole-session windows for history (RC7/F5).** `network_summarize` defaults to the entire session (not a 1h window) when the session is ended/interrupted — no more "No HTTP over 1h" on a session whose traffic was days ago.
+- **Bounded correlate (F24).** `network_correlate`'s `sessions[]` now previews the first 10 matches per session in compact form (`matchesShown`/`matchesTotal`), snippets reserved for the tight `pairs` — a zero-pair answer no longer costs thousands of tokens.
+- **Semantic-truncation paging (F15).** After semantic body truncation, `network_get`'s follow-up hint points at `offset:0` (raw from the start) instead of a transformed-byte offset that mapped to nothing.
+- +4 read-policy tests + 2 taxonomy tests. 348 green.
+
+### PR A — honest state (D1 guidance, D2 scope, D9 tri-state)
+
+- **Guidance is now a function of session state (RC8/F5/F12).** New `util/guidance.dart` (`SessionStateView`, `emptyCaptureHint`, `sessionStatusLabel`); "Drive the app…" only appears for a healthy live attach — ended/interrupted/app-died sessions get "this is its complete capture" across summarize/report/logs_tail/alerts_drain, and network_get's history warning distinguishes "never captured before the session ended" from "writer may still be backfilling" (F12).
+- **Scope shadowing is loud (RC6/F4).** An agent-initiated attach (network_attach tool, network_status attachIfOne) closes an open session_open view with a warning; background attaches never touch it. When a view shadows live sessions, every scoped read now carries a "Reading HISTORY session N…" warning (`Scope.note`, promoted by `jsonResult`). `pendingAlerts` gains a `scope: session|all-sessions` label (F9); `network_query` echoes `scope: all-sessions` (F14).
+- **Session liveness is a tri-state (F11).** live / ended / **interrupted** (no clean end recorded) in session_open + session_list — crashed captures no longer read "still live".
+- **alerts_config can no longer drift from the rule engine (F13).** Schema, toggles, and the enabled-count derive from `AlertRules.ruleKeys` (7 rules incl. `http_anomaly`, now toggleable).
+- **updateAvailable re-verified at read time.** The pre-upgrade status file no longer advertises an "update" to an older version than the one running.
+- **Reattach misses are explicit (F25).** `reattach:true` that matched no prior session reports `reattachRequested/reattachMatched/reattachMissReason` instead of silently starting fresh.
+- +8 contract tests (`test/tools/guidance_contract_test.dart`) pinning (tool × state) guidance. 342 green.
+
+## [0.9.18] — 2026-07-02
+
+### Fixed — mid-session filter changes reach every attached session (audit RC3)
+
+`ignored_hosts` / `capture_allow` add/remove refreshed `Session.instance.captureWriter`, which resolves to `soleAttached ?? stub` — with 2+ sessions attached the "refresh" hit a stub writer, so the tool reported "Capture writer refreshed" while no live capture changed at all (the phase-3 audit repro). New `SessionRegistry.refreshCaptureFilters()` pushes the tables to EVERY attached writer; all four tool call sites now use it, and `CaptureWriter.activeCaptureFilter` is exposed so the behavior is testable. 334 tests green (+1: two registered sessions, one add → both writers filter).
+
+## [0.9.17] — 2026-07-02
+
+### Fixed — durations measure the exchange, not the upload (audit RC1)
+
+`HttpProfileRequest.endTime` marks the end of the REQUEST phase (dart:io's own getter is `isRequestComplete`), so every captured duration was µs-scale — a demonstrably 1.6 s request recorded as 186 µs, `http_slow` unfireable, p50/p95 garbage in summarize/report/diff_session. New `util/http_timing.dart` defines the single source of truth (`response.endTime`, falling back to the error time for failed requests, null while in flight) and is used by the DB writer, network_list, network_get, and the alert detector. In-flight requests now persist NULL durations and self-heal via the poller's updatedSince re-delivery. +5 unit tests.
+
+### Fixed — every request is searchable, and search reports coverage honestly (audit RC2)
+
+FTS rows were only written inside the body-backfill's has-body branch, so requests still in flight at first sight (slow, redirected, upgraded) or with empty bodies were NEVER indexed — ~14% of all historical rows — while the no-match warning asserted "the capture is indexed". Now: the writer indexes the URL at first upsert (body text upgrades the same row later), a deferred startup repair pass (`repairSearchIndex`) indexes every historical row missing from the map (bodies included when stored and textish), and the no-match warning reports actual coverage (indexed-of-total) instead of a blanket claim. +4 tests.
+
+### Fixed — app death ends the session instead of leaving a zombie attach (audit RC4 / F18)
+
+Nothing listened for the VM WebSocket closing, so a killed app left an attach that network_status reported healthy and reads answered with "drive the app to generate traffic" (observed live: a session whose app died 10 minutes earlier still claimed streamActive). `VmClient` now exposes `onUnexpectedDisconnect` (deliberate disconnects excluded); the registry ends the DB session, stops the writer, unregisters, and records the death — surfaced as `recentlyEnded` in network_status and in the scope resolver's not-attached error, which now routes to `session_open id:<n>`. Hot-restart migration still works: `repointSession` clears `ended_at`. +2 e2e tests (kill a real VM → handler fires; own disconnect → it doesn't).
+
+### Fixed — server no longer outlives its MCP host (orphaned-process leak)
+
+The server had no shutdown path: once `_runMain` returned, the auto-attach / session-migrator timers, the sqlite handle, and any DTD/VM WebSockets kept the VM alive forever. Killing or reconnecting the MCP host (a `/mcp` reconnect, a crashed IDE, a closed terminal) therefore leaked a full server process — observed in the wild as six multi-day `flutter_network_mcp` processes re-parented to PID 1, one per host restart. The pub `sh` shim compounds it by neither exec-ing nor forwarding signals, so SIGTERM aimed at the wrapper never reaches the VM. New lifecycle guard in `bin/`: `server.done` (stdio channel closed → stdin EOF) and SIGTERM/SIGINT now share one exit path — best-effort WAL checkpoint via `CapturesDatabase.close()`, a stderr notice, then `exit(0)`; lingering timers and sockets do not get a vote. 322 tests green (+2: spawn the real bin, close stdin → exits 0 within 20 s; SIGTERM → exits 0).
+
 ## [0.9.16] — 2026-06-30
 
 ### Added — capture_allow tool: manage the allowlist mid-session (#64 follow-up)
@@ -426,7 +559,7 @@ Trust-breaking bug fixes from the first round of real dogfooding (issues #13, #1
 
 **Fix:** the backfill gate now also picks up response-incomplete requests once they're older than a short grace window, capped by a new `body_fetch_attempts` counter (schema **v6**) so genuinely body-less or transport-invisible requests stop being re-polled instead of looping forever. The misleading `network_get` warning ("bodies may grow on a subsequent call") is replaced with an accurate one that tells the agent when a response is terminally unreachable via vm_service and to fall back to `logs_tail`.
 
-> Note: responses from transports that bypass `dart:io HttpClient` (custom `HttpClientAdapter`, native HTTP) remain invisible at the vm_service layer — that's the realtime-capture gap tracked for the 0.9.x companion package. This fix restores everything the profiler *does* capture.
+> Note: responses from transports that bypass `dart:io HttpClient` (custom `HttpClientAdapter`, native HTTP) remain invisible at the vm_service layer — that's the realtime-capture gap. This fix restores everything the profiler *does* capture.
 
 ### Fixed — `network_attach appNameContains` failed across DTDs (#14)
 

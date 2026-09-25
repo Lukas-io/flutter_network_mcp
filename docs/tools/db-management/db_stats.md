@@ -18,9 +18,13 @@ when_to_use: When deciding whether to prune or vacuum, or to confirm a cleanup a
 
 ## How it works
 
-Sums `page_count * page_size` for file size, `SUM(size)` from `http_bodies` for body BLOB total, COUNT(*) per table. Reads `PRAGMA journal_mode` and the undrained-alerts count. The `summary` line synthesizes the key numbers in one sentence; `warnings` fire on big-DB thresholds.
+Multiplies `PRAGMA page_count` by `page_size` for file size, sums `size` from `http_bodies` for the body BLOB total, and counts rows in `sessions`, `http_requests`, `http_bodies`, `socket_events`, `log_records`, `alerts`, `http_search_map`, `ignored_hosts`, `redacted_headers`, `alert_patterns` (a table that cannot be read reports `-1`). Reads `PRAGMA journal_mode` and the undrained-alerts count across the whole DB. The `summary` line synthesizes the key numbers in one sentence and ends with `(NO-PERSIST: in-memory only)` when the server runs with `--no-persist` (`ephemeral: true`).
 
-**Rolling size cap (#58).** A `sizeCap` block reports the auto-eviction cap (default ~2 GB, `FLUTTER_NETWORK_MCP_MAX_DB_BYTES`, `0`/`off` disables). When the DB exceeds the cap a low-frequency watchdog evicts OLDEST-first — bodies, then logs, then whole sessions — never touching the currently-attached session(s). The most recent sweep shows up as `lastEviction: {bytesFreed, bodiesDropped, logsDropped, sessionsDropped, oldestRetainedMs}` so the loss is visible, never silent. With the cap on, the manual-cleanup warnings stay quiet — you only see them if you turn it off.
+Warnings: the DB is over 100 MB; bodies are over 70% of the file and over 5 MB; 50 or more sessions while the rolling cap is off. `nextSteps`: `session_list` (sessions capability), `bodies_purge` + `db_vacuum` when the DB is over 100 MB or bodies are over 70% of it (admin capability), `alerts_drain` when alerts are pending (alerts capability), else "No action needed".
+
+**Rolling size cap (#58).** A `sizeCap` block reports the auto-eviction cap (default 2 GB, `FLUTTER_NETWORK_MCP_MAX_DB_BYTES` in bytes with a 1 MB floor, `0`/`off` disables; `maxBytes` / `maxMb` are omitted when off). When the DB exceeds the cap, a low-frequency watchdog evicts OLDEST-first (bodies, then logs, then whole sessions) down to about 90% of the cap and vacuums, never touching a session this server process is attached to or another live server process sharing the DB captures into. Evicted bodies also leave the search index (their URLs stay searchable). `lastEviction: {bytesFreed, bodiesDropped, logsDropped, sessionsDropped, oldestRetainedMs, atMs}` shows this process's most recent sweep that dropped something, so the loss is visible; it is absent until then and resets when the server restarts. With the cap on, only the many-sessions warning stays quiet; the size and bodies warnings still fire.
+
+**Alert retention.** An `alertRetention: {days, enabled, note}` block reports alert auto-expiry: alerts older than `days` (default 14, `FLUTTER_NETWORK_MCP_ALERT_RETENTION_DAYS`) from sessions that are not attached are deleted hourly; `0` disables it (`alerts_config set:{retentionDays:N}`).
 
 ## Args
 
@@ -32,6 +36,7 @@ None.
 {
   "summary": "DB at 45.20 MB across 3 session(s) (38.10 MB in bodies, 0 undrained alert(s)).",
   "path": "/Users/me/.local/share/flutter_network_mcp/captures.db",
+  "ephemeral": false,
   "rowCounts": {"sessions":3, "http_requests":182, "http_bodies":156, ...},
   "sizeBytes": 47349760,
   "sizeMb": "45.20",
@@ -42,9 +47,9 @@ None.
   "journalMode": "wal",
   "pendingAlerts": 0,
   "sizeCap": {"enabled": true, "maxBytes": 2147483648, "maxMb": "2048", "env": "FLUTTER_NETWORK_MCP_MAX_DB_BYTES (0/off disables)"},
+  "alertRetention": {"days": 14, "enabled": true, "note": "alerts from non-attached sessions older than 14d auto-expire hourly"},
   "lastEviction": {"bytesFreed": 4841472, "bodiesDropped": 30, "logsDropped": 0, "sessionsDropped": 1, "oldestRetainedMs": 1782738710015, "atMs": 1782738714136},
   "warnings": [
-    "DB is 45.20 MB — consider bodies_purge / session_delete + db_vacuum to shrink.",
     "Bodies are 84% of the DB — bodies_purge is the highest-impact cleanup."
   ],
   "nextSteps": [
@@ -54,6 +59,8 @@ None.
   ]
 }
 ```
+
+Errors: an unexpected DB failure returns `errorKind: "internal"`.
 
 ## Pairs well with
 

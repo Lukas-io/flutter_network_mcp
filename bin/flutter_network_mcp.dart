@@ -10,6 +10,9 @@ import 'package:flutter_network_mcp/src/install/setup.dart';
 import 'package:flutter_network_mcp/src/install/update.dart';
 import 'package:flutter_network_mcp/src/server.dart';
 import 'package:flutter_network_mcp/src/session_migrator.dart';
+import 'package:flutter_network_mcp/src/alerts/alert_retention.dart';
+import 'package:flutter_network_mcp/src/state/session.dart';
+import 'package:flutter_network_mcp/src/storage/captures_db.dart';
 import 'package:flutter_network_mcp/src/storage/database.dart';
 import 'package:flutter_network_mcp/src/telemetry/audit_subcommand.dart';
 import 'package:flutter_network_mcp/src/telemetry/usage_reporter.dart';
@@ -123,7 +126,7 @@ Future<void> _runMain(List<String> args) async {
       'capabilities',
       help:
           'Comma-separated allowlist of categories to enable. Options: '
-          'http, sockets, realtime, logs, alerts, search, sessions, sql, '
+          'http, sockets, websockets, logs, alerts, search, sessions, sql, '
           'admin. '
           'Lifecycle (status/attach/detach) is always on. Falls back to '
           'FLUTTER_NETWORK_MCP_CAPABILITIES. Mutually exclusive with --disable.',
@@ -262,8 +265,44 @@ Future<void> _runMain(List<String> args) async {
   try {
     alert_patterns.loadCustomPatternsFromDb();
   } catch (_) {/* table may be empty / freshly migrated */}
+  if (!noPersist) {
+    try {
+      final orphaned = CapturesDao().endOrphanedSessions();
+      if (orphaned > 0) {
+        io.stderr.writeln(
+          'flutter_network_mcp: ended $orphaned session(s) left open by an '
+          'earlier process; their captures stay readable as history.',
+        );
+      }
+    } catch (e) {
+      io.stderr.writeln('flutter_network_mcp: orphan sweep failed: $e');
+    }
+  }
 
-  FlutterNetworkMcpServer.stdio(defaultDtdUri: dtdUri);
+  // RC2 repair pass: index any historical requests missing from the FTS
+  // map (the old writer only indexed inside the body-backfill's has-body
+  // branch, so in-flight-at-first-sight and empty-body requests were never
+  // searchable). One-shot, idempotent, deferred so it can never slow the
+  // MCP handshake.
+  if (!noPersist) {
+    unawaited(Future<void>.delayed(const Duration(seconds: 5), () {
+      try {
+        final repaired = CapturesDao().repairSearchIndex();
+        if (repaired > 0) {
+          io.stderr.writeln(
+            'flutter_network_mcp: search-index repair added $repaired '
+            'previously-unindexed request(s).',
+          );
+        }
+      } catch (e) {
+        io.stderr.writeln('flutter_network_mcp: search-index repair failed: $e');
+      }
+    }));
+  }
+
+  final server = FlutterNetworkMcpServer.stdio(defaultDtdUri: dtdUri);
+  _installLifecycleGuard(server);
+  SessionRegistry.instance.startHeartbeat();
 
   // Background "is there a newer version?" probe. Daily-cached, opt-out
   // via FLUTTER_NETWORK_MCP_NO_UPDATE_CHECK=true. Fire-and-forget — never
@@ -312,6 +351,8 @@ Future<void> _runMain(List<String> args) async {
   AutoAttachConfig.set(
     allowed: autoAttachAllowlist,
     denied: autoAttachDenylist,
+    logBufferSize: fileConfig.logBufferSize,
+    nativeLogs: fileConfig.nativeLogs,
   );
 
   if (autoAttachAllowlist.isNotEmpty) {
@@ -328,6 +369,58 @@ Future<void> _runMain(List<String> args) async {
   // early-returns). Opt out with FLUTTER_NETWORK_MCP_NO_AUTO_MIGRATE=true.
   if (env['FLUTTER_NETWORK_MCP_NO_AUTO_MIGRATE']?.toLowerCase() != 'true') {
     SessionMigrator(defaultDtdUri: dtdUri).start();
+  }
+
+  // Alert retention: auto-expire old alerts from non-attached sessions so
+  // the pending banner reflects recent state instead of accumulating for
+  // weeks. Window via FLUTTER_NETWORK_MCP_ALERT_RETENTION_DAYS (default 14,
+  // 0 = keep forever); runtime-tunable via alerts_config. Runs a deferred
+  // first sweep + hourly, independent of attach.
+  if (!noPersist) {
+    AlertRetention().start();
+  }
+}
+
+/// 0.9.17: exit when the MCP host goes away, instead of living forever.
+///
+/// The VM stays alive on its own after the stdio channel dies: the
+/// auto-attach / session-migrator timers, the sqlite handle, and any DTD /
+/// VM-service WebSockets all hold the event loop open. Before this guard,
+/// killing or reconnecting the MCP host (a `/mcp` reconnect, a crashed IDE,
+/// a closed terminal) orphaned the server — observed in the wild as
+/// multi-day `flutter_network_mcp` processes re-parented to PID 1. The pub
+/// `sh` shim compounds it: it neither execs nor forwards signals, so a
+/// SIGTERM aimed at the wrapper never reaches the Dart VM.
+///
+/// Two triggers, one exit path:
+///  - [MCPServer.done]: dart_mcp completes it when the stdio channel closes
+///    (host exited or reconnected → stdin EOF). The reliable signal.
+///  - SIGTERM / SIGINT: direct kills of the VM process itself.
+///
+/// The WAL checkpoint via [CapturesDatabase.close] is best-effort;
+/// [io.exit] is the point — lingering timers and sockets do not get a vote.
+void _installLifecycleGuard(FlutterNetworkMcpServer server) {
+  var exiting = false;
+  Never shutdown(String reason) {
+    if (!exiting) {
+      exiting = true;
+      io.stderr.writeln('flutter_network_mcp: $reason — shutting down.');
+      try {
+        CapturesDatabase.instance.close();
+      } catch (_) {/* already closed or never opened */}
+    }
+    io.exit(0);
+  }
+
+  unawaited(
+    server.done.then((_) => shutdown('MCP host closed the stdio channel')),
+  );
+  for (final signal in [io.ProcessSignal.sigterm, io.ProcessSignal.sigint]) {
+    try {
+      signal.watch().listen((s) => shutdown('received $s'));
+    } on UnsupportedError {
+      // sigterm cannot be watched on Windows; stdin EOF still covers it.
+    }
   }
 }
 

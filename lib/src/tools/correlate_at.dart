@@ -6,6 +6,7 @@ import '../config/capabilities.dart';
 import '../storage/captures_db.dart';
 import '../util/scope.dart';
 import 'error_kind.dart';
+import 'logs_tail.dart' show truncateMessage;
 import 'result.dart';
 
 final correlateAtTool = Tool(
@@ -49,6 +50,8 @@ const int _kWindowHardCap = 30000;
 const int _kLimitDefault = 20;
 const int _kLimitHardCap = 100;
 const int _kMsgCap = 512;
+const int _kErrorCap = 512;
+const int _kStackCap = 2048;
 
 FutureOr<CallToolResult> correlateAt(CallToolRequest request) async {
   final caps = CapabilityConfig.instance;
@@ -170,13 +173,17 @@ FutureOr<CallToolResult> correlateAt(CallToolRequest request) async {
     'logs': logs,
     'requests': requests,
     'nextSteps': nextSteps,
-  }, scopeSessionId: scope.sessionId);
+  }, scopeSessionId: scope.sessionId, scopeNote: scope.note);
 }
 
 Map<String, Object?> _logEntry(Map<String, Object?> r, int anchorMs) {
   final ts = (r['timestamp_ms'] as int?) ?? anchorMs;
-  final msg = (r['message'] as String?) ?? '';
-  final truncated = msg.length > _kMsgCap;
+  final msg = truncateMessage((r['message'] as String?) ?? '', _kMsgCap);
+  final error = r['error'] as String?;
+  final err = error == null ? null : truncateMessage(error, _kErrorCap);
+  final stackTrace = r['stack_trace'] as String?;
+  final stack =
+      stackTrace == null ? null : truncateMessage(stackTrace, _kStackCap);
   return {
     'id': r['id'],
     'timestampMs': ts,
@@ -185,8 +192,14 @@ Map<String, Object?> _logEntry(Map<String, Object?> r, int anchorMs) {
     if (r['level'] != null) 'level': r['level'],
     if (r['logger'] != null) 'loggerName': r['logger'],
     if (r['isolate_id'] != null) 'isolateId': r['isolate_id'],
-    'message': truncated ? msg.substring(0, _kMsgCap) : msg,
-    if (truncated) 'truncated': true,
+    'message': msg.message,
+    if (msg.truncated) 'truncated': true,
+    if (msg.truncated) 'totalLength': msg.totalLength,
+    if (err != null) 'error': err.message,
+    if (err != null && err.truncated) 'errorTotalLength': err.totalLength,
+    if (stack != null) 'stackTrace': stack.message,
+    if (stack != null && stack.truncated)
+      'stackTraceTotalLength': stack.totalLength,
   };
 }
 
@@ -213,6 +226,6 @@ String _nearestDesc(Map<String, Object?> e, String kind) {
     return '${e['method']} ${e['url']} ($sign${delta}ms)';
   }
   final msg = (e['message'] as String?) ?? '';
-  final short = msg.length > 60 ? '${msg.substring(0, 57)}...' : msg;
+  final short = msg.length > 60 ? '${truncateMessage(msg, 57).message}...' : msg;
   return 'log "$short" ($sign${delta}ms)';
 }

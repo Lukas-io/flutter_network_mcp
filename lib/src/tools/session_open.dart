@@ -4,6 +4,7 @@ import 'package:dart_mcp/server.dart';
 
 import '../config/capabilities.dart';
 import '../state/session.dart';
+import '../util/guidance.dart';
 import '../storage/captures_db.dart';
 import 'error_kind.dart';
 import 'result.dart';
@@ -46,19 +47,36 @@ FutureOr<CallToolResult> sessionOpen(CallToolRequest request) async {
     }
 
     Session.instance.viewedSessionId = id;
+    final isAttached = SessionRegistry.instance.attachedById(id) != null;
     final isLive = Session.instance.liveSessionId == id;
     final appName = row['app_name'] as String?;
     final startedMs = row['started_at'];
     final endedMs = row['ended_at'];
     final isEnded = endedMs != null;
+    final capturedElsewhere =
+        !isAttached && !isEnded && dao.otherAttachedProcesses(id) > 0;
 
-    final summary = isEnded
-        ? 'Viewing session $id (${appName ?? "unnamed"}, ended) — read tools now query history.'
-        : 'Viewing session $id (${appName ?? "unnamed"}, still live${isLive ? " — current attach" : ""}).';
+    // F11 tri-state: "still live" used to mean only ended_at IS NULL, so
+    // crashed/never-detached sessions read as running apps.
+    final statusDesc = switch (sessionStatusLabel(
+      isAttached: isAttached,
+      endedAtMs: endedMs,
+      capturedElsewhere: capturedElsewhere,
+    )) {
+      'live' when capturedElsewhere =>
+        'live, captured by another server process',
+      'live' => 'live — capture still running',
+      'ended' => 'ended',
+      _ => 'interrupted — no clean end recorded (killed process or pre-0.9.17)',
+    };
+    final summary =
+        'Viewing session $id (${appName ?? "unnamed"}, $statusDesc) — read '
+        'tools now query its history (everything persisted so far).';
 
     final warnings = <String>[];
     if (isLive) {
-      warnings.add('You opened the live session — read tools work the same as without session_open.');
+      warnings.add('This session is live: reads now come from the DB, not the '
+          'incremental live profile. session_close to go back to live reads.');
     }
 
     final nextSteps = <String>[];
@@ -78,6 +96,7 @@ FutureOr<CallToolResult> sessionOpen(CallToolRequest request) async {
       if (endedMs != null) 'endedMs': endedMs,
       'isLive': isLive,
       'isEnded': isEnded,
+      if (capturedElsewhere) 'capturedElsewhere': true,
       if (row['project_path'] != null) 'projectPath': row['project_path'],
       if (row['note'] != null) 'note': row['note'],
       if (warnings.isNotEmpty) 'warnings': warnings,

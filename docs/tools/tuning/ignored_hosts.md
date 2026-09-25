@@ -7,15 +7,15 @@ when_to_use: To filter out analytics, crash reporters, noisy telemetry, or one c
 ## DO NOT USE THIS TOOL WHEN
 
 - You want to filter at READ time — use `network_list hostContains:` instead. This drops requests at CAPTURE time; they won't appear in history at all.
-- You're trying to redact bodies — this is a host/path skip filter, not a masker. Use `redacted_headers` for header masking or SQL UPDATE for body redaction.
-- The host has dynamic prefixes (`xyz123.cdn.example.com`) — a bare-host entry is exact-match. Use a glob (`*.cdn.example.com` is NOT supported, but `cdn.example.com/*` is) or filter at read time.
+- You're trying to redact bodies: this is a host/path skip filter, not a masker. Use `redacted_headers` for header masking. Bodies cannot be edited in place (`network_query` is read-only); `bodies_purge` deletes stored bodies.
+- The host has dynamic prefixes (`xyz123.cdn.example.com`) and you add a bare host: an entry without `/` is an exact host match and wildcards are not expanded, so `*.cdn.example.com` matches nothing. Add a glob with a path part instead (`*.cdn.example.com/*`), or filter at read time.
 - The session is already running and you want existing rows gone — entries take effect on the next capture tick. Already-captured rows stay (a warning surfaces).
 
 ## Denylist vs allowlist (#64)
 
 This tool manages the **denylist** (skiplist): matching requests are dropped. An entry with **no `/`** matches a whole host (the original behavior); an entry **with `/`** is a `host/path` glob (`*` = any chars, `?` = one char), so `dev.example.com/socket.io/*` silences just the socket.io polling while the REST API on the same host keeps flowing.
 
-The opt-in **allowlist** is separate: set `FLUTTER_NETWORK_MCP_CAPTURE_ALLOW` (comma-separated host/path globs) at startup to capture ONLY matching requests and drop everything else — for focused debugging ("just `/stock/*`"). It is surfaced in this tool's `list` output as `captureAllowlist`. Deny still wins inside the allowed set.
+The **allowlist** is separate: the `capture_allow` tool (persistent) and the `FLUTTER_NETWORK_MCP_CAPTURE_ALLOW` startup env var (comma-separated) together capture ONLY matching requests and drop everything else, for focused debugging ("just `/stock/*`"). The union of both is surfaced in this tool's `list` output as `captureAllowlist`. Deny still wins inside the allowed set.
 
 ## Use this when
 
@@ -25,9 +25,9 @@ The opt-in **allowlist** is separate: set `FLUTTER_NETWORK_MCP_CAPTURE_ALLOW` (c
 
 ## How it works
 
-`add`: insert into `ignored_hosts`, refresh writer's in-memory set immediately. `remove`: delete + refresh. `list`: SELECT.
+`add`: insert into `ignored_hosts` (persistent across restarts), then refresh the filter of every attached session's capture writer immediately. `remove`: delete + refresh. `list`: reads the table plus the effective allowlist. Entries are stored as given; matching lowercases both sides, but `remove` needs the entry exactly as `list` shows it.
 
-Writer builds a `CaptureFilter` from the entries on every refresh and checks each request's `host + path` against it on every poll tick, skipping upserts (and therefore alerts, FTS indexing, body backfill) for matching requests. The allowlist env is folded into the same filter.
+Writer builds a `CaptureFilter` from the entries on every refresh and checks each request's `host + path` (no scheme, port or query) against it on every poll tick, skipping upserts (and therefore alerts, FTS indexing, body backfill) for matching requests. A glob entry is anchored to the whole `host + path`, so `dev.example.com/socket.io` without a trailing `*` matches only that exact path. The allowlist (table + env) is folded into the same filter. Only HTTP requests are filtered; sockets and logs are unaffected.
 
 ## Args
 
@@ -39,10 +39,12 @@ Writer builds a `CaptureFilter` from the entries on every refresh and checks eac
 
 ```json
 // list
-{"action":"list", "summary":"2 ignored host(s) — new captures from these hosts are skipped.",
+{"action":"list", "summary":"2 skiplist entr(ies) ... matching new captures are dropped.",
  "count":2,
  "hosts":[{"host":"app.crashlytics.com", "addedMs":..., "reason":"telemetry"}],
- "nextSteps":["network_list — confirm noisy hosts are no longer being captured", ...]}
+ "captureAllowlist":{"active":false, "patterns":[],
+   "managedBy":"capture_allow tool (persistent) + FLUTTER_NETWORK_MCP_CAPTURE_ALLOW env"},
+ "nextSteps":["network_list ... confirm noisy paths are no longer being captured", "network_query sql:\"SELECT host, COUNT(*) ...\" ... find noisy hosts to add"]}
 
 // add (with already-captured rows)
 {"action":"add", "summary":"Added \"app.crashlytics.com\" to ignored hosts. Capture writer refreshed.",
@@ -54,6 +56,12 @@ Writer builds a `CaptureFilter` from the entries on every refresh and checks eac
 {"action":"remove", "summary":"Removed \"app.crashlytics.com\" from ignored hosts. New requests will be captured again.",
  "host":"app.crashlytics.com", "removed":true, "nextSteps":[...]}
 ```
+
+When the allowlist is active, `captureAllowlist` has `active:true`, the union of table and env patterns, and a `note`. With no entries the list summary reads `No skiplist entries. The writer captures every request.` (plus `that matches the allowlist` when one is active).
+
+The already-captured warning counts rows across all sessions for an exact bare host only; a glob entry never produces it. Re-adding an existing entry returns `inserted:false` and refreshes its reason and timestamp. Removing an unknown entry succeeds with `removed:false`.
+
+Errors: `bad_argument` for a missing `host` on add/remove or an unknown `action`; `internal` for anything else. Both carry `nextSteps`.
 
 ## Pairs well with
 

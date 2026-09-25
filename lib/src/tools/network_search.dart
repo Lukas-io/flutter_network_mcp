@@ -2,11 +2,14 @@ import 'dart:async';
 
 import 'package:dart_mcp/server.dart';
 
+import '../config/body_decryption.dart';
 import '../config/capabilities.dart';
 import '../storage/captures_db.dart';
+import '../storage/plaintext_index.dart';
 import '../util/filters.dart';
 import '../util/scope.dart';
 import 'error_kind.dart';
+import '../util/suggest.dart';
 import 'result.dart';
 
 final networkSearchTool = Tool(
@@ -75,13 +78,24 @@ FutureOr<CallToolResult> networkSearch(CallToolRequest request) async {
   final limit = clampLimit(args['limit'] as int?, fallback: 20, hardMax: 100);
 
   try {
-    final rows = CapturesDao().searchRequests(
-      query: query,
-      sessionId: sessionId,
-      which: whichArg,
-      isolateId: isolateId,
-      limit: limit,
-    );
+    final scheme = BodyDecryptionConfig.active;
+    // With body decryption on, search runs over plaintext kept in memory; the capture DB only ever holds what was captured.
+    if (scheme != null) PlaintextIndex.instance.refresh(sessionId, scheme);
+    final rows = scheme != null
+        ? PlaintextIndex.instance.search(
+            query: query,
+            sessionId: sessionId,
+            which: whichArg,
+            isolateId: isolateId,
+            limit: limit,
+          )
+        : CapturesDao().searchRequests(
+            query: query,
+            sessionId: sessionId,
+            which: whichArg,
+            isolateId: isolateId,
+            limit: limit,
+          );
 
     final matches = <Map<String, Object?>>[];
     for (final r in rows) {
@@ -102,24 +116,78 @@ FutureOr<CallToolResult> networkSearch(CallToolRequest request) async {
 
     final warnings = <String>[];
     List<String>? availableHosts;
+    var suggestedPaths = const <String>[];
     if (matches.isEmpty) {
+      // RC2: report index COVERAGE, never a blanket "the capture is
+      // indexed" — before the coverage check this asserted full indexing
+      // while ~14% of rows had no FTS entry at all.
       var indexed = -1;
+      var total = -1;
       try {
-        indexed = CapturesDao().searchIndexSize(sessionId);
-        if (indexed > 0) availableHosts = CapturesDao().distinctHosts(sessionId);
+        final dao = CapturesDao();
+        indexed = scheme != null
+            ? PlaintextIndex.instance.indexedCount(sessionId)
+            : dao.searchIndexSize(sessionId);
+        total = dao.httpRequestCount(sessionId);
+        if (indexed > 0) availableHosts = dao.distinctHosts(sessionId);
+        if (indexed > 0) {
+          suggestedPaths = closestPaths(dao.distinctPaths(sessionId), query);
+        }
       } catch (_) {/* best-effort */}
-      if (indexed == 0) {
+      if (indexed == 0 && scheme != null) {
+        warnings.add(
+          'Nothing is in the in-memory decrypted index for session '
+          '$sessionId: it has no captured requests yet. Each search indexes '
+          'every captured request, so retry once the app has made some.',
+        );
+      } else if (indexed == 0) {
         warnings.add(
           'Nothing is indexed for search yet in session $sessionId — the '
-          'writer backfills bodies every ~2s. Retry shortly, or search '
-          'which:"url" which needs no backfill.',
+          'writer indexes URLs on first sight and backfills bodies every '
+          '~2s. Retry shortly.',
+        );
+      } else if (total > indexed && scheme != null) {
+        warnings.add(
+          'No match for "$query", but the in-memory decrypted index holds '
+          'only $indexed of $total captured request(s); the rest were '
+          'captured after this search began. Retry to index them.',
+        );
+      } else if (total > indexed) {
+        warnings.add(
+          'No match for "$query" — but only $indexed of $total captured '
+          'request(s) are indexed so far (bodies backfill every ~2s). The '
+          'term may live in a not-yet-indexed request; retry shortly.',
         );
       } else {
-        warnings.add(
-          'No match for "$query". The capture is indexed, so the term is too '
-          'specific or absent. See availableHosts for what was captured.',
-        );
+        // Body text is only searchable once persisted; a response/any search
+        // cannot rule out a match when some bodies were never stored (#100),
+        // e.g. a session that ended before the writer backfilled them.
+        var unpersisted = 0;
+        if (whichArg != 'url') {
+          try {
+            unpersisted = CapturesDao().countUnpersistedBodies(sessionId);
+          } catch (_) {/* best-effort */}
+        }
+        final where = scheme != null
+            ? 'the in-memory decrypted index'
+            : 'the search index';
+        if (unpersisted > 0) {
+          warnings.add(
+            'No URL match for "$query". URLs are fully indexed in $where, but '
+            '$unpersisted request(s) in this session have no stored body '
+            '(not persisted yet, purged, or the session ended first), so a '
+            'body match cannot be ruled out.'
+            '${scheme != null ? ' Their bodies are decrypted and indexed on the search after they arrive.' : ''}',
+          );
+        } else {
+          warnings.add(
+            'No match for "$query". Every captured request is in $where, so '
+            'the term is absent from this session. See availableHosts (hosts '
+            'seen from Dart) for what was captured.',
+          );
+        }
       }
+      warnings.add(kCaptureBoundary);
     }
 
     final nextSteps = <String>[];
@@ -129,6 +197,9 @@ FutureOr<CallToolResult> networkSearch(CallToolRequest request) async {
         nextSteps.add('network_diff idA:"${matches.first['id']}" idB:"${matches[1]['id']}" — compare the top two');
       }
     } else {
+      if (suggestedPaths.isNotEmpty) {
+        nextSteps.add('did you mean: ${suggestedPaths.map((p) => '"$p"').join(', ')} — search one of these');
+      }
       if (availableHosts != null && availableHosts.isNotEmpty) {
         nextSteps.add('Search a term from availableHosts, e.g. query:"${availableHosts.first}"');
       }
@@ -143,12 +214,14 @@ FutureOr<CallToolResult> networkSearch(CallToolRequest request) async {
       'query': query,
       'which': whichArg,
       'count': matches.length,
+      if (scheme != null) 'index': 'decrypted-in-memory',
       'matches': matches,
       if (availableHosts != null && availableHosts.isNotEmpty)
         'availableHosts': availableHosts,
+      if (suggestedPaths.isNotEmpty) 'suggestedPaths': suggestedPaths,
       if (warnings.isNotEmpty) 'warnings': warnings,
       'nextSteps': nextSteps,
-    }, scopeSessionId: scope.sessionId);
+    }, scopeSessionId: scope.sessionId, scopeNote: scope.note);
   } catch (e) {
     return errorResult('network_search failed: $e',
         kind: ErrorKind.badQuery,

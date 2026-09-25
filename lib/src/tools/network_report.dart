@@ -5,6 +5,7 @@ import 'package:dart_mcp/server.dart';
 import '../config/capabilities.dart';
 import '../storage/captures_db.dart';
 import '../util/scope.dart';
+import '../util/guidance.dart';
 import 'error_kind.dart';
 import 'network_summarize.dart' show summarizeRequests;
 import 'result.dart';
@@ -98,21 +99,29 @@ FutureOr<CallToolResult> networkReport(CallToolRequest request) async {
   final String headline;
   final List<String> nextSteps;
   if (endpoints.isEmpty) {
-    headline = 'No HTTP captured for session $sid yet.';
-    nextSteps = const [
-      'Drive the app to generate traffic, then re-run network_report',
-      'network_status — confirm the session is attached and capturing',
+    final state = SessionStateView.of(sid);
+    headline = state.canGenerateTraffic
+        ? 'No HTTP captured for session $sid yet.'
+        : 'No HTTP captured in session $sid (its capture is complete).';
+    nextSteps = [
+      emptyCaptureHint(state, reRun: 'network_report'),
+      if (state.canGenerateTraffic)
+        'network_status — confirm the session is attached and capturing',
     ];
   } else if (topErrors.isNotEmpty) {
     final worst = topErrors.first;
+    final host = (errorHotspots.first['host'] as String?) ?? '';
+    final hostArg = host.isEmpty ? '' : ' hostContains:"$host"';
     headline = 'Top problem: ${worst['endpoint']} is failing '
         '${((worst['errorRate'] as num) * 100).round()}% of '
         '${worst['count']} call(s).';
     nextSteps = [
-      'network_search query:"${_hostOf(worst)}" — find the failing request, then network_get it',
+      // D1: a host-wide search matches everything on the host; route to the
+      // error rows directly instead.
+      'network_list statusMin:400$hostArg: list the failing requests, then network_get one',
       if (caps.isEnabled(Category.alerts) && pendingAlerts > 0)
         'alerts_drain — $pendingAlerts pending alert(s)',
-      'network_drift hostContains:"${_hostOf(worst)}" — check if the response shape changed',
+      'network_drift$hostArg: check if the response shape changed',
     ];
   } else if (topSlow.isNotEmpty &&
       ((topSlow.first['p95LatencyMs'] as int?) ?? 0) > 1000) {
@@ -135,6 +144,7 @@ FutureOr<CallToolResult> networkReport(CallToolRequest request) async {
   }
 
   return jsonResult({
+    'scope': scope.toBlock(),
     'summary': headline,
     'sessionId': sid,
     'totalRequests': totalRequests,
@@ -142,14 +152,5 @@ FutureOr<CallToolResult> networkReport(CallToolRequest request) async {
     'errorHotspots': topErrors,
     'slowestEndpoints': topSlow,
     'nextSteps': nextSteps,
-  }, scopeSessionId: sid);
-}
-
-String _hostOf(Map<String, Object?> endpoint) {
-  final ep = (endpoint['endpoint'] as String?) ?? '';
-  final parts = ep.split(' ');
-  if (parts.length < 2) return '';
-  final hostPath = parts[1];
-  final slash = hostPath.indexOf('/');
-  return slash <= 0 ? hostPath : hostPath.substring(0, slash);
+  }, scopeSessionId: sid, scopeNote: scope.note);
 }

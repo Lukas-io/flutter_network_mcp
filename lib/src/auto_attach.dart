@@ -105,7 +105,8 @@ class AutoAttacher {
       return;
     }
     if (_timer != null) return;
-    _timer = Timer.periodic(pollInterval, (_) => _tick());
+    _startedAt = DateTime.now();
+    _schedule();
     final denyLine = deniedAppPatterns.isEmpty
         ? ''
         : '; denylist: ${deniedAppPatterns.join(", ")}';
@@ -125,6 +126,31 @@ class AutoAttacher {
 
   /// Returns true when [appName] is matched by at least one allowlist
   /// pattern (case-insensitive substring). Empty app names never match.
+  DateTime? _startedAt;
+
+  /// The cadence for the next tick: fast while nothing is attached (a launch
+  /// or relaunch is expected and every second of startup logs matters) and
+  /// for the first minute after start; the configured interval otherwise.
+  Duration nextInterval({int? liveCount, DateTime? now}) {
+    final live = liveCount ?? SessionRegistry.instance.liveCount;
+    final since = _startedAt == null
+        ? const Duration(days: 1)
+        : (now ?? DateTime.now()).difference(_startedAt!);
+    const fast = Duration(seconds: 1);
+    if (live == 0 || since < const Duration(seconds: 60)) {
+      return fast < pollInterval ? fast : pollInterval;
+    }
+    return pollInterval;
+  }
+
+  void _schedule() {
+    _timer?.cancel();
+    _timer = Timer(nextInterval(), () async {
+      await _tick();
+      if (_timer != null) _schedule();
+    });
+  }
+
   bool _matchesAllowlist(String appName) {
     if (appName.isEmpty) return false;
     final lower = appName.toLowerCase();
@@ -180,6 +206,7 @@ class AutoAttacher {
       }
     }
     final currentUris = currentByUri.keys.toSet();
+    SessionRegistry.instance.recordLiveApps(currentByUri);
 
     final isFirstTick = !_seedComplete;
     _seedComplete = true;
