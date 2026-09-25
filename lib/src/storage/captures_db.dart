@@ -70,6 +70,14 @@ class CapturesDao {
     );
   }
 
+  /// This process stops capturing into [sessionId] but leaves the row open (detach keep:true), so no other process treats it as still being captured here.
+  void releaseAttachment(int sessionId, {int? pid}) {
+    _db.execute(
+      'DELETE FROM session_attachments WHERE session_id=? AND pid=?',
+      [sessionId, pid ?? io.pid],
+    );
+  }
+
   /// This process stops capturing into [sessionId]; the row ends only when no other live process still captures into it. Returns whether it ended.
   bool leaveSession(int sessionId, {int? pid}) {
     _db.execute(
@@ -109,13 +117,17 @@ class CapturesDao {
   void _pruneDeadAttachments({int? sessionId}) {
     final rows = _db.select(
       sessionId == null
-          ? 'SELECT DISTINCT pid FROM session_attachments'
-          : 'SELECT DISTINCT pid FROM session_attachments WHERE session_id=?',
+          ? 'SELECT pid, MIN(attached_at) AS since FROM session_attachments GROUP BY pid'
+          : 'SELECT pid, MIN(attached_at) AS since FROM session_attachments '
+              'WHERE session_id=? GROUP BY pid',
       [if (sessionId != null) sessionId],
     );
-    for (final r in rows) {
-      final pid = r['pid'] as int;
-      if (!processAlive(pid)) {
+    final attachedAt = {
+      for (final r in rows) r['pid'] as int: r['since'] as int,
+    };
+    final alive = livePids(attachedAt);
+    for (final pid in attachedAt.keys) {
+      if (!alive.contains(pid)) {
         _db.execute('DELETE FROM session_attachments WHERE pid=?', [pid]);
       }
     }
@@ -1884,14 +1896,38 @@ class CapturesDao {
   }
 }
 
-/// Whether [pid] is running. True when that cannot be checked, so a session another process may still use is never ended on a guess.
-bool processAlive(int pid) {
-  if (pid == io.pid) return true;
+/// Of the pids in [attachedAt] (pid to when it attached, epoch ms), those still held by the process that attached: running and started before the attach, since a reused pid starts later. One `ps` scan covers them all (macOS `ps -p` prints nothing when any listed pid is gone). A failed scan counts every pid as alive, so a session another process may still use is never ended on a guess.
+Set<int> livePids(Map<int, int> attachedAt) {
+  final others = [for (final pid in attachedAt.keys) if (pid != io.pid) pid];
+  final alive = {if (attachedAt.containsKey(io.pid)) io.pid};
+  if (others.isEmpty) return alive;
+  final String out;
   try {
-    final r = io.Process.runSync('kill', ['-0', '$pid']);
-    if (r.exitCode == 0) return true;
-    return (r.stderr as String).contains('not permitted');
+    out = io.Process.runSync('ps', ['-ax', '-o', 'pid=,etime=']).stdout as String;
   } on Object {
-    return true;
+    return {...alive, ...others};
   }
+  final wanted = others.toSet();
+  final now = DateTime.now().millisecondsSinceEpoch;
+  for (final line in out.split('\n')) {
+    final parts = line.trim().split(RegExp(r'\s+'));
+    if (parts.length != 2) continue;
+    final pid = int.tryParse(parts[0]);
+    if (pid == null || !wanted.contains(pid)) continue;
+    final elapsed = parseElapsed(parts[1]);
+    // etime has one-second resolution.
+    if (elapsed == null ||
+        now - elapsed.inMilliseconds <= attachedAt[pid]! + 2000) {
+      alive.add(pid);
+    }
+  }
+  return alive;
+}
+
+/// `ps` etime (`[[dd-]hh:]mm:ss`) as a duration; null when unreadable.
+Duration? parseElapsed(String etime) {
+  final m = RegExp(r'^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)$').firstMatch(etime.trim());
+  if (m == null) return null;
+  int n(int g) => int.parse(m.group(g) ?? '0');
+  return Duration(days: n(1), hours: n(2), minutes: n(3), seconds: n(4));
 }

@@ -158,7 +158,11 @@ FutureOr<CallToolResult> networkDetach(CallToolRequest request) async {
         logCount = (r.first['log_n'] as int?) ?? 0;
         alertCount = (r.first['alert_n'] as int?) ?? 0;
       }
-      if (!keep && !dao.leaveSession(s.id)) stillShared.add(s.id);
+      if (keep) {
+        dao.releaseAttachment(s.id);
+      } else if (!dao.leaveSession(s.id)) {
+        stillShared.add(s.id);
+      }
     } catch (_) {/* DB may be mid-state */}
     totalHttp += httpCount;
     totalLogs += logCount;
