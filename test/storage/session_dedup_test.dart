@@ -4,6 +4,8 @@ import 'package:flutter_network_mcp/src/storage/captures_db.dart';
 import 'package:flutter_network_mcp/src/storage/database.dart';
 import 'package:test/test.dart';
 
+import '../support/schema_rollback.dart';
+
 /// #97: one open session row per live VM URI. Several server processes attaching
 /// to the same app used to each blind-insert a row, inflating sessionCount and
 /// giving no signal which duplicate to query.
@@ -62,6 +64,7 @@ void main() {
       CapturesDatabase.open(dataDir: dir.path);
       final raw = CapturesDatabase.instance.raw;
       raw.execute('DROP INDEX IF EXISTS idx_sessions_live_uri');
+      rollBackV13(raw);
       raw.execute("UPDATE _meta SET value='11' WHERE key='schema_version'");
       for (var i = 0; i < 4; i++) {
         raw.execute(
