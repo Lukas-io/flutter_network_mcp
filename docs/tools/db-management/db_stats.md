@@ -22,9 +22,9 @@ Multiplies `PRAGMA page_count` by `page_size` for file size, sums `size` from `h
 
 Warnings: the DB is over 100 MB; bodies are over 70% of the file and over 5 MB; 50 or more sessions while the rolling cap is off. `nextSteps`: `session_list` (sessions capability), `bodies_purge` + `db_vacuum` when the DB is over 100 MB or bodies are over 70% of it (admin capability), `alerts_drain` when alerts are pending (alerts capability), else "No action needed".
 
-**Rolling size cap (#58).** A `sizeCap` block reports the auto-eviction cap (default 2 GB, `FLUTTER_NETWORK_MCP_MAX_DB_BYTES` in bytes with a 1 MB floor, `0`/`off` disables; `maxBytes` / `maxMb` are omitted when off). When the DB exceeds the cap, a low-frequency watchdog evicts OLDEST-first (bodies, then logs, then whole sessions) down to about 90% of the cap and vacuums, never touching a session this server process is attached to or another live server process sharing the DB captures into. Evicted bodies also leave the search index (their URLs stay searchable). `lastEviction: {bytesFreed, bodiesDropped, logsDropped, sessionsDropped, oldestRetainedMs, atMs}` shows this process's most recent sweep that dropped something, so the loss is visible; it is absent until then and resets when the server restarts. With the cap on, only the many-sessions warning stays quiet; the size and bodies warnings still fire.
+**Rolling size cap (#58).** A `sizeCap` block reports the auto-eviction cap (default 2 GB, `GLINT_NETWORK_MAX_DB_BYTES` in bytes with a 1 MB floor, `0`/`off` disables; `maxBytes` / `maxMb` are omitted when off). When the DB exceeds the cap, a low-frequency watchdog evicts OLDEST-first (bodies, then logs, then whole sessions) down to about 90% of the cap and vacuums, never touching a session this server process is attached to or another live server process sharing the DB captures into. Evicted bodies also leave the search index (their URLs stay searchable). `lastEviction: {bytesFreed, bodiesDropped, logsDropped, sessionsDropped, oldestRetainedMs, atMs}` shows this process's most recent sweep that dropped something, so the loss is visible; it is absent until then and resets when the server restarts. With the cap on, only the many-sessions warning stays quiet; the size and bodies warnings still fire.
 
-**Alert retention.** An `alertRetention: {days, enabled, note}` block reports alert auto-expiry: alerts older than `days` (default 14, `FLUTTER_NETWORK_MCP_ALERT_RETENTION_DAYS`) from sessions that are not attached are deleted hourly; `0` disables it (`alerts_config set:{retentionDays:N}`).
+**Alert retention.** An `alertRetention: {days, enabled, note}` block reports alert auto-expiry: alerts older than `days` (default 14, `GLINT_NETWORK_ALERT_RETENTION_DAYS`) from sessions that are not attached are deleted hourly; `0` disables it (`alerts_config set:{retentionDays:N}`).
 
 ## Args
 
@@ -46,7 +46,7 @@ None.
   "pageCount": 11560,
   "journalMode": "wal",
   "pendingAlerts": 0,
-  "sizeCap": {"enabled": true, "maxBytes": 2147483648, "maxMb": "2048", "env": "FLUTTER_NETWORK_MCP_MAX_DB_BYTES (0/off disables)"},
+  "sizeCap": {"enabled": true, "maxBytes": 2147483648, "maxMb": "2048", "env": "GLINT_NETWORK_MAX_DB_BYTES (0/off disables)"},
   "alertRetention": {"days": 14, "enabled": true, "note": "alerts from non-attached sessions older than 14d auto-expire hourly"},
   "lastEviction": {"bytesFreed": 4841472, "bodiesDropped": 30, "logsDropped": 0, "sessionsDropped": 1, "oldestRetainedMs": 1782738710015, "atMs": 1782738714136},
   "warnings": [

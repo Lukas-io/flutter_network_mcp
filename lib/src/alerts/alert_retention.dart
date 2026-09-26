@@ -55,12 +55,12 @@ class AlertRetention {
       final capped = _dao.capPendingAlerts();
       if (capped > 0) {
         io.stderr.writeln(
-          'flutter_network_mcp: dropped $capped oldest pending alert(s) beyond '
+          'glint_network: dropped $capped oldest pending alert(s) beyond '
           '200 per session.',
         );
       }
     } catch (e) {
-      io.stderr.writeln('flutter_network_mcp: alert cap sweep failed: $e');
+      io.stderr.writeln('glint_network: alert cap sweep failed: $e');
     }
     final days = AlertRules.instance.alertRetentionDays;
     if (days <= 0) return 0; // disabled
@@ -73,13 +73,13 @@ class AlertRetention {
           _dao.expireOldAlerts(cutoffMs: cutoff, protectedSessionIds: protected);
       if (deleted > 0) {
         io.stderr.writeln(
-          'flutter_network_mcp: alert retention expired $deleted alert(s) '
+          'glint_network: alert retention expired $deleted alert(s) '
           'older than $days day(s).',
         );
       }
       return deleted;
     } catch (e) {
-      io.stderr.writeln('flutter_network_mcp: alert retention sweep failed: $e');
+      io.stderr.writeln('glint_network: alert retention sweep failed: $e');
       return 0;
     }
   }

@@ -16,7 +16,7 @@ when_to_use: When the investigation is over, or to free a slot before attaching 
 ## Use this when
 
 - Investigation is over.
-- The session cap (`FLUTTER_NETWORK_MCP_MAX_ATTACH`) is reached and you need a slot for another app.
+- The session cap (`GLINT_NETWORK_MAX_ATTACH`) is reached and you need a slot for another app.
 - Before exporting HAR (so the session has a proper `ended_at`).
 
 ## How it works

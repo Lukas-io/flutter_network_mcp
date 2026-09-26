@@ -2,7 +2,7 @@
 ///
 /// These are intentionally NOT read from environment / config — they're
 /// baked into the binary so users can audit what their install will do
-/// just by inspecting this file (or running `flutter_network_mcp audit
+/// just by inspecting this file (or running `glint_network audit
 /// show` to see the payloads themselves).
 library;
 
@@ -11,7 +11,7 @@ library;
 /// Live as of 0.8.12: the Cloudflare Worker + D1 collector in `collector/`
 /// is deployed, so crash reports and usage rollups now POST here (the audit
 /// log still records byte-for-byte what was sent), but only for users who
-/// set `FLUTTER_NETWORK_MCP_TELEMETRY=on`. The worker routes by payload
+/// set `GLINT_NETWORK_TELEMETRY=on`. The worker routes by payload
 /// `kind`; see `collector/README.md`.
 const String kCollectorEndpoint =
     'https://flutter-network-telemetry.wisdomiyamu.workers.dev/v1/telemetry';

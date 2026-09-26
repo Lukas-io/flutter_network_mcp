@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: flutter_network_mcp moved to glint
+    url: https://github.com/Lukas-io/glint/issues/new/choose
+    about: This project is now glint_network. Please file bugs and ideas in the glint repository with the network label.

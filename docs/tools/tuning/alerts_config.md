@@ -28,7 +28,7 @@ Every value in `set` is checked before anything changes. Valid values are applie
 
 Rule keys: `http_5xx`, `http_4xx`, `http_error`, `http_slow`, `log_keyword`, `flutter_error`, `http_anomaly`. `http_anomaly` toggles the baseline-relative detector, which emits both the `http_anomaly` (latency) and `http_anomaly_errors` (error rate) alert kinds. Custom `alert_patterns` have no toggle here; remove them with `alert_patterns action:"remove"`.
 
-`retentionDays` controls the alert retention sweep (first run about 8s after start, then hourly): alerts older than N days are deleted, except those of a currently attached session. 0 keeps alerts forever. The initial value comes from `FLUTTER_NETWORK_MCP_ALERT_RETENTION_DAYS` (default 14). The same sweep always caps pending alerts at 200 per session, dropping the oldest.
+`retentionDays` controls the alert retention sweep (first run about 8s after start, then hourly): alerts older than N days are deleted, except those of a currently attached session. 0 keeps alerts forever. The initial value comes from `GLINT_NETWORK_ALERT_RETENTION_DAYS` (default 14). The same sweep always caps pending alerts at 200 per session, dropping the oldest.
 
 ## Args
 

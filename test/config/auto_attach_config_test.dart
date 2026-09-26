@@ -11,7 +11,7 @@ import 'package:test/test.dart';
 /// so the test can write fixtures + clean up afterward.
 String? _resolveDataDir() {
   final env = Platform.environment;
-  final override = env['FLUTTER_NETWORK_MCP_DATA_DIR'];
+  final override = env['GLINT_NETWORK_DATA_DIR'];
   if (override != null && override.isNotEmpty) return override;
   final home = env['HOME'];
   if (home == null || home.isEmpty) return null;

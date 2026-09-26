@@ -8,8 +8,8 @@ when_to_use: When the project has custom auth/sensitive headers (X-Tenant-Key, X
 
 - The header is one of the built-in defaults (`authorization`, `cookie`, `proxy-authorization`, `set-cookie`, `x-api-key`, `x-auth-token`): always redacted. Adding one is a no-op (success with a warning); removing one is refused.
 - You want to redact bodies: this only affects headers. Bodies cannot be edited in place (`network_query` is read-only); `bodies_purge` deletes stored bodies.
-- You want the real values kept for local replay: set `FLUTTER_NETWORK_MCP_STORE_SECRETS=true` before capturing. Otherwise values of these headers are stored as `<redacted>`, and a name added here applies to requests captured from then on (within about 30 seconds).
-- Local debugging with `redact:false` on `network_get`, `network_replay` or `network_replay_as_test`: that shows whatever the capture stored, which is `<redacted>` for these headers unless `FLUTTER_NETWORK_MCP_STORE_SECRETS=true` was set.
+- You want the real values kept for local replay: set `GLINT_NETWORK_STORE_SECRETS=true` before capturing. Otherwise values of these headers are stored as `<redacted>`, and a name added here applies to requests captured from then on (within about 30 seconds).
+- Local debugging with `redact:false` on `network_get`, `network_replay` or `network_replay_as_test`: that shows whatever the capture stored, which is `<redacted>` for these headers unless `GLINT_NETWORK_STORE_SECRETS=true` was set.
 
 ## Use this when
 

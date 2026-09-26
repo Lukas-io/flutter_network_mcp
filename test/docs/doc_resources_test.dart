@@ -22,7 +22,7 @@ void main() {
     expect(uris.any((u) => u.toLowerCase().contains('response_contract')), isTrue,
         reason: 'the response contract must be served');
     expect(
-        uris.any((u) => u.startsWith('flutter-network://docs/tools/')), isTrue);
+        uris.any((u) => u.startsWith('glint-network://docs/tools/')), isTrue);
     // The network_query guide the tool description points at must exist.
     expect(
         uris.any((u) => u.contains('network_query.md')), isTrue,
@@ -31,7 +31,7 @@ void main() {
     // Every resource points at a real, readable markdown file.
     for (final r in resources.take(5)) {
       expect(r.path, endsWith('.md'));
-      expect(r.uri, startsWith('flutter-network://docs/'));
+      expect(r.uri, startsWith('glint-network://docs/'));
     }
   });
 }

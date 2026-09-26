@@ -11,8 +11,8 @@ import '../util/data_dir.dart';
 ///
 /// **Resolution order (0.7.4+):**
 /// 1. Read persistent file `<data-dir>/auto-attach.json` as the BASE.
-/// 2. Apply env vars (`FLUTTER_NETWORK_MCP_AUTO_ATTACH`,
-///    `FLUTTER_NETWORK_MCP_AUTO_ATTACH_DENY`) as overrides.
+/// 2. Apply env vars (`GLINT_NETWORK_AUTO_ATTACH`,
+///    `GLINT_NETWORK_AUTO_ATTACH_DENY`) as overrides.
 /// 3. Apply CLI flags (`--auto-attach`, `--auto-attach-deny`) as final
 ///    overrides.
 ///
@@ -21,7 +21,7 @@ import '../util/data_dir.dart';
 /// per-launch via env vars or flags. The `claude mcp remove + add`
 /// cycle goes away for the common case.
 ///
-/// Wired from `bin/flutter_network_mcp.dart` once at startup. Empty when
+/// Wired from `bin/glint_network.dart` once at startup. Empty when
 /// auto-attach isn't configured (the common case for first-time users).
 /// `network_attach` reads this to decide whether the freshly-attached app
 /// is already covered by auto-attach and, if not, surfaces a hint asking

@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io' as io;
 
 import 'package:path/path.dart' as p;
+import '../util/network_env.dart';
 
 /// One DTD instance discovered on the local filesystem. Built from a
 /// `package:dtd`-written discovery file in the standard per-platform
@@ -87,7 +88,7 @@ class DtdDiscovery {
   /// directory, or null when the env var that anchors it is missing.
   /// Does NOT check that the directory exists — caller handles that.
   static String? discoveryDir() {
-    final env = io.Platform.environment;
+    final env = networkEnv;
     if (io.Platform.isMacOS) {
       final home = env['HOME'];
       if (home == null || home.isEmpty) return null;
@@ -139,7 +140,7 @@ class DtdDiscovery {
       }
     } catch (e) {
       io.stderr.writeln(
-        'flutter_network_mcp: DTD discovery scan failed at $dir ($e). '
+        'glint_network: DTD discovery scan failed at $dir ($e). '
         'Continuing without auto-discovery.',
       );
       return const [];

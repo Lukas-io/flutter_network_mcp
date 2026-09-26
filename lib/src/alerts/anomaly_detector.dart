@@ -83,7 +83,7 @@ class AnomalyDetector {
           await _checkSession(attached.id, nowUs);
         } catch (e, st) {
           io.stderr.writeln(
-            'flutter_network_mcp: anomaly detector tick crashed for session '
+            'glint_network: anomaly detector tick crashed for session '
             '${attached.id} ($e). Continuing other sessions.\n$st',
           );
         }

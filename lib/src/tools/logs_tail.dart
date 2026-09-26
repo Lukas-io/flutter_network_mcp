@@ -301,7 +301,7 @@ Map<String, Object?> _buildResponse({
   if (nearCapacity) {
     warnings.add('Ring buffer near capacity ($bufferSize / $bufferCapacity); '
         'older records may have rotated out. Raise '
-        'FLUTTER_NETWORK_MCP_LOG_BUFFER (or re-attach with a larger '
+        'GLINT_NETWORK_LOG_BUFFER (or re-attach with a larger '
         'logBufferSize), or use history mode (session_open) for the full '
         'record.');
   }
@@ -325,7 +325,7 @@ Map<String, Object?> _buildResponse({
   }
   if (nearCapacity) {
     nextSteps.add('Buffer is ${((bufferSize / bufferCapacity) * 100).round()}% '
-        'full; raise FLUTTER_NETWORK_MCP_LOG_BUFFER if you are missing older '
+        'full; raise GLINT_NETWORK_LOG_BUFFER if you are missing older '
         'records');
   }
 

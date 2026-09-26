@@ -340,7 +340,7 @@ class SessionRegistry {
   void markDead(AttachedSession s, String reason) {
     if (!_attached.containsKey(canonicalVmServiceUri(s.vmServiceUri))) return;
     io.stderr.writeln(
-      'flutter_network_mcp: session ${s.id} (${s.appName ?? s.vmServiceUri}) '
+      'glint_network: session ${s.id} (${s.appName ?? s.vmServiceUri}) '
       'is dead — $reason. Slot freed; capture preserved as history.',
     );
     // Flush pending bodies to the DB before the VM goes away (#95), then

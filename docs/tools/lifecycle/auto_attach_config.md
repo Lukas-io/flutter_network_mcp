@@ -8,7 +8,7 @@ when_to_use: After `network_attach` returns `autoAttachSuggestion` and the user 
 
 - The user hasn't confirmed — the `autoAttachSuggestion` field's `agentAction` is explicit: "ASK THE USER" first. Persisting without confirmation is a trust violation.
 - You're trying to change the allowlist for THIS process. The auto-attach watcher reads its allowlist at startup, so `add` / `remove` / `clear` take effect at the next MCP-host launch; env vars / CLI flags override per-launch. (`action:"set"` is different: `logBufferSize` / `nativeLogs` apply to the next attach in this process too.)
-- The user wants per-machine fine-grained control they want versioned in their dotfiles — the JSON file is per-user-data-dir. Direct them to set `FLUTTER_NETWORK_MCP_AUTO_ATTACH` in shell rc instead.
+- The user wants per-machine fine-grained control they want versioned in their dotfiles — the JSON file is per-user-data-dir. Direct them to set `GLINT_NETWORK_AUTO_ATTACH` in shell rc instead.
 
 ## Use this when
 
@@ -34,7 +34,7 @@ The file lives at `<data-dir>/auto-attach.json`:
 Resolution order at the next MCP-host launch:
 
 1. Read `<data-dir>/auto-attach.json` as the BASE.
-2. Apply `FLUTTER_NETWORK_MCP_AUTO_ATTACH` / `FLUTTER_NETWORK_MCP_AUTO_ATTACH_DENY` env vars (if set) as overrides.
+2. Apply `GLINT_NETWORK_AUTO_ATTACH` / `GLINT_NETWORK_AUTO_ATTACH_DENY` env vars (if set) as overrides.
 3. Apply `--auto-attach` / `--auto-attach-deny` CLI flags (if set) as final overrides.
 
 Step 3 wins over step 2 wins over step 1. The file is the persistent default; env vars + flags are per-launch overrides.
@@ -46,7 +46,7 @@ This closes the `claude mcp remove + claude mcp add --auto-attach=...` friction 
 - `action` (string, default `"list"`): `"list"` | `"add"` | `"remove"` | `"clear"` | `"set"`. Any other value errors with `errorKind: bad_argument`.
 - `app` (string) — required for `"add"` and `"remove"`. Case-insensitive substring matched against DTD app names.
 - `deny` (string) — optional, supplied alongside `app` on an `"add"` to also extend the denylist.
-- `logBufferSize` (int, 50 to 20000): with `action:"set"`, the log ring capacity every attach uses unless the call passes its own. Without it, attaches use `FLUTTER_NETWORK_MCP_LOG_BUFFER` or 2000. Out of range errors with `bad_argument`.
+- `logBufferSize` (int, 50 to 20000): with `action:"set"`, the log ring capacity every attach uses unless the call passes its own. Without it, attaches use `GLINT_NETWORK_LOG_BUFFER` or 2000. Out of range errors with `bad_argument`.
 - `nativeLogs` (bool): with `action:"set"`, also stream the device's native log (`simctl log stream` / `adb logcat`) on every attach.
 
 `action:"set"` needs at least one of `logBufferSize` / `nativeLogs` (else `bad_argument`). `add` / `remove` without `app` error with `bad_argument`. `clear` empties `allowed` and `denied` but keeps `logBufferSize` and `nativeLogs`.
@@ -115,7 +115,7 @@ This closes the `claude mcp remove + claude mcp add --auto-attach=...` friction 
     appName:"Flutter - iPhone 17 - Package: eats_mobile",
     pattern:"eats_mobile",
     agentAction:"ASK THE USER..."}}
-> # agent to user: "Would you like flutter_network_mcp to auto-attach to eats_mobile on future launches?"
+> # agent to user: "Would you like glint_network to auto-attach to eats_mobile on future launches?"
 > # user: "yes"
 > auto_attach_config action:"add" app:"eats_mobile"
 < {persisted:true, allowed:["eats_mobile"]}

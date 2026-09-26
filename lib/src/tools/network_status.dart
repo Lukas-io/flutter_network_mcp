@@ -18,6 +18,7 @@ import 'network_attach.dart' as attach_helper;
 import '../util/suggest.dart';
 import 'result.dart';
 import '../vm/vm_uri.dart';
+import '../util/legacy_install.dart';
 
 /// Per-session entry for `network_status.attached[]`. Carries structured
 /// capability health (issue #17) so socket/log degradation shows up as a
@@ -319,6 +320,11 @@ FutureOr<CallToolResult> networkStatus(
     }
   }
 
+  final legacyNotice = legacyUse.notice;
+  if (legacyNotice != null) {
+    out['warnings'] = [legacyNotice, ...?(out['warnings'] as List?)?.cast<String>()];
+  }
+
   out['nextSteps'] = _suggestNextSteps(registry, session, out);
 
   return jsonResult(out);
@@ -342,13 +348,13 @@ String _formatAgo(int tsMs) {
 /// The agent reads this on every `network_status` call so it can:
 ///   1. Tell the user what version is running ("you're on 0.6.2").
 ///   2. Notice when an upgrade is available without scraping stderr.
-///   3. Hand the user a paste-ready `flutter_network_mcp update` command.
+///   3. Hand the user a paste-ready `glint_network update` command.
 Map<String, Object?> _buildMcpBlock() {
   final block = <String, Object?>{
     'version': packageVersion,
     if (currentCommitSha() != null) 'commit': currentCommitSha(),
     'isAot': isAotBuild,
-    'upgradeCommand': 'flutter_network_mcp update',
+    'upgradeCommand': 'glint_network update',
   };
 
   // Read the agent-readable update-status file written by UpdateCheck.

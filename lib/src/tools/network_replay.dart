@@ -155,7 +155,7 @@ FutureOr<CallToolResult> networkReplay(CallToolRequest request) async {
         warnings.add(
           '${maskedAtCapture.join(', ')} were masked when captured, so the curl '
           'carries <redacted> for them. To keep secret header values for local '
-          'replay, set FLUTTER_NETWORK_MCP_STORE_SECRETS=true before capturing.',
+          'replay, set GLINT_NETWORK_STORE_SECRETS=true before capturing.',
         );
       }
     }

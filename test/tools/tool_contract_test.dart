@@ -13,9 +13,9 @@ void main() {
       Platform.resolvedExecutable,
       ['run', 'bin/flutter_network_mcp.dart', '--no-auto-discover-dtd', '--data-dir', dataDir.path],
       environment: {
-        'FLUTTER_NETWORK_MCP_NO_TELEMETRY': 'true',
-        'FLUTTER_NETWORK_MCP_NO_UPDATE_CHECK': 'true',
-        'FLUTTER_NETWORK_MCP_NO_JIT_NUDGE': 'true',
+        'GLINT_NETWORK_NO_TELEMETRY': 'true',
+        'GLINT_NETWORK_NO_UPDATE_CHECK': 'true',
+        'GLINT_NETWORK_NO_JIT_NUDGE': 'true',
       },
     );
     addTearDown(proc.kill);

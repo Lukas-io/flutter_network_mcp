@@ -4,6 +4,7 @@ import 'dart:io' as io;
 import 'state/session.dart';
 import 'tools/network_attach.dart' show appSessionIdentity, performAttach;
 import 'vm/dtd_probe.dart';
+import 'util/network_env.dart';
 
 /// One planned hot-restart migration: the dead session [priorSessionId] (last
 /// bound to [priorUri]) should reattach to [newUri], which is now serving the
@@ -79,15 +80,15 @@ List<MigrationPlan> planMigrations({
 /// `performAttach(reattach:true)` path (repoint the DB row, restart capture,
 /// drop the stale session), so this class only decides WHEN.
 ///
-/// Opt out with `FLUTTER_NETWORK_MCP_NO_AUTO_MIGRATE=true`. Poll interval:
-/// `FLUTTER_NETWORK_MCP_MIGRATE_POLL_MS` (1000-60000, default 5000).
+/// Opt out with `GLINT_NETWORK_NO_AUTO_MIGRATE=true`. Poll interval:
+/// `GLINT_NETWORK_MIGRATE_POLL_MS` (1000-60000, default 5000).
 class SessionMigrator {
   SessionMigrator({this.defaultDtdUri, Duration? pollInterval})
       : pollInterval = pollInterval ?? _envPollInterval();
 
   static Duration _envPollInterval() {
     final raw =
-        io.Platform.environment['FLUTTER_NETWORK_MCP_MIGRATE_POLL_MS'];
+        networkEnv['GLINT_NETWORK_MIGRATE_POLL_MS'];
     final parsed = raw == null ? null : int.tryParse(raw);
     if (parsed == null) return const Duration(seconds: 5);
     final clamped = parsed < 1000 ? 1000 : (parsed > 60000 ? 60000 : parsed);
@@ -106,9 +107,9 @@ class SessionMigrator {
     if (_timer != null) return;
     _timer = Timer.periodic(pollInterval, (_) => _tick());
     io.stderr.writeln(
-      'flutter_network_mcp: hot-restart migration watcher started '
+      'glint_network: hot-restart migration watcher started '
       '(poll ${pollInterval.inMilliseconds}ms). Set '
-      'FLUTTER_NETWORK_MCP_NO_AUTO_MIGRATE=true to disable.',
+      'GLINT_NETWORK_NO_AUTO_MIGRATE=true to disable.',
     );
     unawaited(_tick());
   }
@@ -125,7 +126,7 @@ class SessionMigrator {
       await _runTick();
     } catch (e, st) {
       io.stderr.writeln(
-        'flutter_network_mcp: migration tick crashed unexpectedly ($e). '
+        'glint_network: migration tick crashed unexpectedly ($e). '
         'Watcher continues polling.\n$st',
       );
     } finally {
@@ -169,18 +170,18 @@ class SessionMigrator {
         );
         if (result['error'] != null) {
           io.stderr.writeln(
-            'flutter_network_mcp: auto-migrate skipped ${plan.newUri}: '
+            'glint_network: auto-migrate skipped ${plan.newUri}: '
             '${result['error']}',
           );
         } else if (result['reattached'] == true) {
           io.stderr.writeln(
-            'flutter_network_mcp: auto-migrated session '
+            'glint_network: auto-migrated session '
             '${plan.priorSessionId} (${result['appName'] ?? "app"}) across a '
             'hot restart: ${plan.priorUri} -> ${plan.newUri}.',
           );
         } else {
           io.stderr.writeln(
-            'flutter_network_mcp: WARNING reattach to ${plan.newUri} did not '
+            'glint_network: WARNING reattach to ${plan.newUri} did not '
             'reuse session ${plan.priorSessionId} (got session '
             '${result['liveSessionId']}). The stale session may linger; '
             'network_detach it manually.',
@@ -188,7 +189,7 @@ class SessionMigrator {
         }
       } catch (e) {
         io.stderr.writeln(
-          'flutter_network_mcp: auto-migrate error for ${plan.newUri}: $e',
+          'glint_network: auto-migrate error for ${plan.newUri}: $e',
         );
       }
     }

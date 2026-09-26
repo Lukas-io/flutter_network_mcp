@@ -21,7 +21,7 @@ when_to_use: When you suspect a network/app issue had a corresponding log messag
 
 ## How it works
 
-Live: reads the attached session's bounded ring buffer, newest-first. Capacity is set per attach: `network_attach logBufferSize`, else `auto_attach_config logBufferSize`, else `FLUTTER_NETWORK_MCP_LOG_BUFFER`, else 2000 (max 20000).
+Live: reads the attached session's bounded ring buffer, newest-first. Capacity is set per attach: `network_attach logBufferSize`, else `auto_attach_config logBufferSize`, else `GLINT_NETWORK_LOG_BUFFER`, else 2000 (max 20000).
 History (a `session_open` view, or a `sessionId` that is not currently attached): SQL on `log_records` for that session, newest-first.
 
 Messages are stored whole. The VM sends each `developer.log` / `package:logging` field (message, logger name, error, stack trace) as a 128-character preview; the server refetches the full string before storing it, in both the live buffer and the DB. An `error:` that is not a String (an Exception, a StateError) is stored as its `toString()`. When the VM cannot expand a value (collected, or no answer within 2s), the stored text is the preview followed by `… [cut by the VM at 128 of N chars]`, so the loss is visible.

@@ -1,8 +1,8 @@
 import 'dart:async';
-import 'dart:io' as io;
 
 import 'package:vm_service/vm_service.dart';
 import 'package:vm_service/vm_service_io.dart';
+import '../util/network_env.dart';
 
 /// Thrown when a VM service RPC does not respond within the configured
 /// deadline. A live VM service connection can accept the WebSocket yet stop
@@ -96,12 +96,12 @@ class VmClient {
   /// Per-RPC deadline. Every `ext.dart.io.*` call is bounded by this so a
   /// live-but-unresponsive VM can never hang a tool indefinitely. Defaults to
   /// 10s (40x the slowest normal call observed in telemetry); override with
-  /// `FLUTTER_NETWORK_MCP_RPC_TIMEOUT_MS` (clamped to a 1s floor).
+  /// `GLINT_NETWORK_RPC_TIMEOUT_MS` (clamped to a 1s floor).
   static final Duration rpcDeadline = _deadlineFromEnv();
 
   static Duration _deadlineFromEnv() {
     final raw =
-        int.tryParse(io.Platform.environment['FLUTTER_NETWORK_MCP_RPC_TIMEOUT_MS'] ?? '');
+        int.tryParse(networkEnv['GLINT_NETWORK_RPC_TIMEOUT_MS'] ?? '');
     if (raw == null || raw < 1000) return const Duration(seconds: 10);
     return Duration(milliseconds: raw);
   }

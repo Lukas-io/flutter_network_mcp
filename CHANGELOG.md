@@ -1,10 +1,29 @@
 # Changelog
 
-All notable changes to this project will be documented in this file.
+All notable changes to glint_network (called flutter_network_mcp up to 0.11.0) are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
+
+## [0.12.0] - 2026-09-26
+
+### Added: the move from flutter_network_mcp is guided
+
+- The old names stop working on 26 December 2026. Until then, an install that still uses them shows one notice with the steps left: in the MCP instructions (so the agent tells the user), first in `network_status` warnings, and on stderr at startup. It covers an install from the old repository, a config that starts the `flutter_network_mcp` command, and `FLUTTER_NETWORK_MCP_*` variables.
+- `update` takes over the `flutter_network_mcp` command with `--overwrite` and removes the old package, so a config that still says `flutter_network_mcp` runs glint_network straight away.
+- `install` builds from either repository layout and puts the native binary behind both commands.
+
+### Changed: flutter_network_mcp is now glint_network
+
+It is the network toolset of glint and lives in the glint repository at `packages/glint_network`.
+
+- Install with `dart pub global activate -s git https://github.com/Lukas-io/glint.git --git-path packages/glint_network`, then `glint_network install`. `glint_network update` and the startup update check follow the new location.
+- The command is `glint_network`, and `setup` registers the server as `glint-network`, so agents see tools as `glint-network__<tool>`. The old `flutter_network_mcp` command stays as an alias, and `setup` points out an old `flutter-network` entry.
+- Environment variables are now `GLINT_NETWORK_*`. The old `FLUTTER_NETWORK_MCP_*` names still work when the new one isn't set; the server warns about them at startup and `network_status` lists them.
+- Doc resources are `glint-network://docs/...`.
+- `report_issue` files to `Lukas-io/glint` with the `network` label.
+- Unchanged on purpose: the data directory (`.../flutter_network_mcp`, so existing captures and settings carry over), tool names and arguments, and the telemetry endpoint.
 
 ## [0.11.0] - 2026-09-25
 
@@ -855,7 +874,7 @@ flutter_network_mcp audit show --signature <sig>
   "errorClass": "StateError",
   "errorMessage": "DTD is not connected.",
   "stackHead": [
-    "#0 DtdClient._requireConnected (package:flutter_network_mcp/src/vm/dtd_client.dart:36)",
+    "#0 DtdClient._requireConnected (package:glint_network/src/vm/dtd_client.dart:36)",
     "..."
   ],
   "signature": "a3f7c8d219b4",    // sha256(errorClass + top-3-frames)[:12]

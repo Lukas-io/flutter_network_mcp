@@ -59,7 +59,7 @@ class HarExporter {
     return {
       'log': {
         'version': '1.2',
-        'creator': {'name': 'flutter_network_mcp', 'version': '0.3.0'},
+        'creator': {'name': 'glint_network', 'version': '0.3.0'},
         'browser': {
           'name': (session['app_name'] as String?) ?? 'Flutter app',
           'version': '',

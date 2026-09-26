@@ -18,6 +18,7 @@ import '../vm/vm_client.dart';
 import 'error_kind.dart';
 import 'result.dart';
 import '../vm/vm_uri.dart';
+import '../util/network_env.dart';
 
 /// One connected app flattened out of a [DtdProbe] listing, tagged with the
 /// DTD that owns it. Used to resolve `appNameContains` across every DTD.
@@ -100,10 +101,10 @@ final networkAttachTool = Tool(
   ),
 );
 
-/// Reads `FLUTTER_NETWORK_MCP_MAX_ATTACH` env var (1–32). Default 8; only
+/// Reads `GLINT_NETWORK_MAX_ATTACH` env var (1–32). Default 8; only
 /// live sessions count, dead ones are evicted by the heartbeat.
 int _maxAttachFromEnv() {
-  final raw = io.Platform.environment['FLUTTER_NETWORK_MCP_MAX_ATTACH'];
+  final raw = networkEnv['GLINT_NETWORK_MAX_ATTACH'];
   final parsed = raw == null ? null : int.tryParse(raw);
   if (parsed == null) return 8;
   if (parsed < 1) return 1;
@@ -172,7 +173,7 @@ void closeStaleViewAfterAttach(Map<String, Object?> result) {
 /// **Multi-attach (Phase 5):** the old "any attach blocks attach" rule +
 /// force:true escape hatch is replaced by a per-vmServiceUri duplicate
 /// guard. Multiple distinct apps can attach concurrently up to
-/// FLUTTER_NETWORK_MCP_MAX_ATTACH (default 8).
+/// GLINT_NETWORK_MAX_ATTACH (default 8).
 ///
 /// Exported so [networkStatus] can reuse it for `attachIfOne:true`.
 Future<Map<String, Object?>> performAttach({
@@ -199,7 +200,7 @@ Future<Map<String, Object?>> performAttach({
       'error':
           'Reached max attached sessions ($maxAttach live). Detach one first '
           '(network_detach keep:true frees the slot without ending the '
-          'session) or raise FLUTTER_NETWORK_MCP_MAX_ATTACH.',
+          'session) or raise GLINT_NETWORK_MAX_ATTACH.',
       'errorKind': ErrorKind.badArgument.wire,
       'attached': [
         for (final a in registry.attached.values)
@@ -577,7 +578,7 @@ Future<Map<String, Object?>> _performAttachLocked({
         registry.unregister(reattachPrior.vmServiceUri);
       }
       io.stderr.writeln(
-        'flutter_network_mcp: hot restart #$reattachCount for session $sid '
+        'glint_network: hot restart #$reattachCount for session $sid '
         '(${appName ?? "app"}): kept the session id, repointed '
         '$previousVmServiceUri -> $resolvedVmServiceUri. Captures continue '
         'uninterrupted.',
@@ -776,7 +777,7 @@ Future<Map<String, Object?>> _performAttachLocked({
         else
           secondStep,
         if (autoAttachSuggestion != null)
-          'autoAttachSuggestion — ask the user whether to add "${autoAttachSuggestion['pattern']}" to FLUTTER_NETWORK_MCP_AUTO_ATTACH for future sessions',
+          'autoAttachSuggestion — ask the user whether to add "${autoAttachSuggestion['pattern']}" to GLINT_NETWORK_AUTO_ATTACH for future sessions',
       ],
     };
   } catch (e, st) {
@@ -853,19 +854,19 @@ Map<String, Object?>? _buildAutoAttachSuggestion(String? appName) {
   final enabled = AutoAttachConfig.isEnabled;
 
   final newAllowlist = [...currentAllowlist, pattern].join(',');
-  final shellLine = 'export FLUTTER_NETWORK_MCP_AUTO_ATTACH=$newAllowlist';
+  final shellLine = 'export GLINT_NETWORK_AUTO_ATTACH=$newAllowlist';
 
   final agentAction = enabled
       ? 'Auto-attach is enabled but "$pattern" isn\'t in the current '
         'allowlist (${currentAllowlist.join(", ")}). ASK THE USER: '
-        '"Would you like flutter_network_mcp to auto-attach to $pattern '
+        '"Would you like glint_network to auto-attach to $pattern '
         'on future MCP launches?" If they confirm, append the '
         'suggestedShellLine below to their shell rc (e.g. ~/.zshrc on '
         'macOS, ~/.bashrc on Linux), then have them restart their MCP '
         'host (e.g. /quit then re-open Claude Code). DO NOT edit the '
         'rc file without explicit user confirmation.'
       : 'Auto-attach isn\'t configured yet. ASK THE USER: "Would you like '
-        'flutter_network_mcp to auto-attach to $pattern on future MCP '
+        'glint_network to auto-attach to $pattern on future MCP '
         'launches? This means future sessions will skip the manual '
         'network_attach step." If they confirm, append the '
         'suggestedShellLine below to their shell rc (e.g. ~/.zshrc on '

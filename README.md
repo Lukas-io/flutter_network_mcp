@@ -1,21 +1,38 @@
-# flutter_network_mcp has moved
+# ⚠️ flutter_network_mcp is deprecated
 
-This project is now **glint_network**, the network toolset of [glint](https://github.com/Lukas-io/glint). It lives at [`packages/glint_network`](https://github.com/Lukas-io/glint/tree/main/packages/glint_network) with its full history, and new releases, issues and pull requests go there.
+> [!CAUTION]
+> **flutter_network_mcp stops working on 26 December 2026.**
+> It is now **glint_network**, the network toolset of [glint](https://github.com/Lukas-io/glint), and all new releases ship from there.
+> After that date this repository is archived, `flutter_network_mcp update` stops finding new versions, and the `flutter_network_mcp` command and `FLUTTER_NETWORK_MCP_*` variables are removed.
 
-This repository is archived and read-only.
+## Move over in two minutes
 
-## Switching over
+1. **Update.** Run this once; it moves your install to the glint repository and keeps your captures, settings and native build:
+   ```bash
+   flutter_network_mcp update
+   ```
+   Not installed yet? Install glint_network directly instead:
+   ```bash
+   dart pub global activate -s git https://github.com/Lukas-io/glint.git --git-path packages/glint_network
+   glint_network install
+   ```
+2. **Rename the server in your MCP config** (`~/.claude.json`, `.mcp.json`, or your client's equivalent): the `flutter-network` entry becomes `glint-network`, and its command becomes `glint_network`.
+   ```json
+   {
+     "mcpServers": {
+       "glint-network": { "type": "stdio", "command": "glint_network" }
+     }
+   }
+   ```
+3. **Rename any environment variables** from `FLUTTER_NETWORK_MCP_*` to `GLINT_NETWORK_*`.
+4. **Restart your agent host.**
 
-```bash
-dart pub global deactivate flutter_network_mcp
-dart pub global activate -s git https://github.com/Lukas-io/glint.git --git-path packages/glint_network
-glint_network install
-```
+Until you finish, the server itself tells your agent what is left, so you don't have to remember. Tool names and arguments are unchanged; agents see them as `glint-network__<tool>` after step 2.
 
-Then, in your MCP config, rename the `flutter-network` entry to `glint-network` and set its `command` to `glint_network`. Your captures stay where they are.
+## Where things are now
 
-- The old `flutter_network_mcp` command still works, as an alias.
-- `FLUTTER_NETWORK_MCP_*` environment variables still work; their new names are `GLINT_NETWORK_*`.
-- Tool names and arguments are unchanged. Agents see them as `glint-network__<tool>` once the entry is renamed.
+- Code, docs and releases: [`Lukas-io/glint/packages/glint_network`](https://github.com/Lukas-io/glint/tree/main/packages/glint_network)
+- Issues: [Lukas-io/glint/issues](https://github.com/Lukas-io/glint/issues), label `network`
+- History: every commit from this repository is in glint, under `packages/glint_network`.
 
-The last release from this repository is [v0.11.0](https://github.com/Lukas-io/flutter_network_mcp/releases/tag/v0.11.0).
+This repository's code is glint_network 0.12.0 under its old name, so that `flutter_network_mcp update` can carry existing installs across.

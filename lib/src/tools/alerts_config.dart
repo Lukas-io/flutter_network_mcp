@@ -30,7 +30,7 @@ final alertsConfigTool = Tool(
             description:
                 'Auto-expire alerts from non-attached sessions older than '
                 'this many days (keeps the pending banner recent). 0 = keep '
-                'forever. Env default FLUTTER_NETWORK_MCP_ALERT_RETENTION_DAYS '
+                'forever. Env default GLINT_NETWORK_ALERT_RETENTION_DAYS '
                 '(14). Applies to the next hourly sweep; per-process.',
           ),
           'rules': Schema.object(

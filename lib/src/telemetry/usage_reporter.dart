@@ -11,6 +11,7 @@ import '../version.dart';
 import 'audit_log.dart';
 import 'telemetry_constants.dart';
 import 'telemetry_env.dart';
+import '../util/network_env.dart';
 
 /// Ships privacy-safe USAGE AGGREGATES to the maintainer collector (issue
 /// #79, Phase 3). The local `tool_events` capture from Phase 1 becomes a
@@ -21,7 +22,7 @@ import 'telemetry_env.dart';
 /// Same trust model as crash telemetry ([TelemetryReporter]):
 /// 1. **Audit log first** (always, when not opted out): the EXACT rollup
 ///    JSON is appended to the hash-chained `telemetry-audit.log` BEFORE any
-///    network attempt, so `flutter_network_mcp audit show` shows precisely
+///    network attempt, so `glint_network audit show` shows precisely
 ///    what left (or would have left) the machine.
 /// 2. **HTTPS POST** only when [kCollectorEndpoint] is non-empty. The
 ///    binary ships with an empty endpoint (Path B), so today this is
@@ -30,10 +31,10 @@ import 'telemetry_env.dart';
 /// Idempotent via a high-watermark: a tiny `usage-ship-state.json` in the
 /// data dir records the last `tool_events.id` shipped, so re-running never
 /// double-counts. Triggered two ways: fire-and-forget on server startup
-/// ([maybeAutoShip], daily-gated) and explicitly via `flutter_network_mcp
+/// ([maybeAutoShip], daily-gated) and explicitly via `glint_network
 /// usage ship`.
 ///
-/// Sends nothing unless the user sets `FLUTTER_NETWORK_MCP_TELEMETRY=on`; `DO_NOT_TRACK`, `FLUTTER_NETWORK_MCP_NO_TELEMETRY` and `FLUTTER_NETWORK_MCP_NO_USAGE` always win.
+/// Sends nothing unless the user sets `GLINT_NETWORK_TELEMETRY=on`; `DO_NOT_TRACK`, `GLINT_NETWORK_NO_TELEMETRY` and `GLINT_NETWORK_NO_USAGE` always win.
 class UsageReporter {
   /// Watermark + bookkeeping file in the data dir.
   static const String stateFileName = 'usage-ship-state.json';
@@ -182,7 +183,7 @@ class UsageReporter {
   static Map<String, String>? _envOverride;
 
   /// Test seam: pins the env the opt-out check reads, so ship tests are not
-  /// at the mercy of the host shell's `FLUTTER_NETWORK_MCP_NO_*` vars. Pass
+  /// at the mercy of the host shell's `GLINT_NETWORK_NO_*` vars. Pass
   /// null to revert to the real process environment.
   static set envForTest(Map<String, String>? env) => _envOverride = env;
 
@@ -196,7 +197,7 @@ class UsageReporter {
   static String get _endpoint => _endpointOverride ?? kCollectorEndpoint;
 
   static String? _sharingOff() =>
-      sharingOffReason(env: _envOverride ?? io.Platform.environment, usage: true);
+      sharingOffReason(env: _envOverride ?? networkEnv, usage: true);
 
   static _ShipState _readState(String dataDir) {
     try {

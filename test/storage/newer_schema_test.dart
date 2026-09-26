@@ -44,7 +44,7 @@ void main() {
     final r = await Process.run(
       Platform.resolvedExecutable,
       ['run', 'bin/flutter_network_mcp.dart', '--data-dir', dir.path, '--no-auto-discover-dtd'],
-      environment: {'FLUTTER_NETWORK_MCP_NO_TELEMETRY': 'true'},
+      environment: {'GLINT_NETWORK_NO_TELEMETRY': 'true'},
     );
     expect(r.exitCode, 78);
     expect(r.stderr, contains('newer than this build supports'));

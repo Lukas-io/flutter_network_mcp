@@ -1,11 +1,11 @@
-import 'dart:io' as io;
+import '../util/network_env.dart';
 
 /// Rolling DB size cap (issue #58). Default ON at ~2 GB; once `captures.db`
 /// exceeds the cap a low-frequency watchdog evicts the OLDEST data first
 /// (bodies, then logs, then whole sessions) so recent captures are always
 /// kept and disk never creeps unbounded.
 ///
-/// Configure with `FLUTTER_NETWORK_MCP_MAX_DB_BYTES`:
+/// Configure with `GLINT_NETWORK_MAX_DB_BYTES`:
 /// - a byte count (e.g. `2147483648`) sets the cap,
 /// - `0` / `off` / `false` / `disabled` turns it off,
 /// - unset / unparseable falls back to the 2 GB default.
@@ -16,7 +16,7 @@ class DbCapConfig {
 
   /// The cap in bytes, or null when eviction is disabled.
   static final int? maxBytes = _read(
-    io.Platform.environment['FLUTTER_NETWORK_MCP_MAX_DB_BYTES'],
+    networkEnv['GLINT_NETWORK_MAX_DB_BYTES'],
   );
 
   static bool get enabled => maxBytes != null;

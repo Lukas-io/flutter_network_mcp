@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import '../util/secret_redactor.dart';
+import '../util/network_env.dart';
 
 /// Strips filesystem identity (username, project name, directory layout) from text that leaves the machine: telemetry, issue bodies.
 /// `<home>/…/lib/x.dart` collapses to `<project>/lib/x.dart`; `package:` URIs are untouched; idempotent.
@@ -37,7 +38,7 @@ List<String> redactStackHead(StackTrace stack, {int maxFrames = 8}) {
 String redactForSharing(String input) => redactSecrets(redactPath(input));
 
 String? _homeDir() {
-  final env = Platform.environment;
+  final env = networkEnv;
   final h = Platform.isWindows ? env['USERPROFILE'] : env['HOME'];
   if (h == null || h.isEmpty) return null;
   return h.endsWith('/') || h.endsWith(r'\') ? h.substring(0, h.length - 1) : h;

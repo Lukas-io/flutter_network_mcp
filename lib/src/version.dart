@@ -3,16 +3,16 @@ import 'dart:io' as io;
 import 'package:path/path.dart' as p;
 
 /// Single source of truth for the running package version. Read by
-/// `lib/src/server.dart` (Implementation), `bin/flutter_network_mcp.dart`
+/// `lib/src/server.dart` (Implementation), `bin/glint_network.dart`
 /// (UpdateCheck), and the docs. Must match the `version:` line in
 /// `pubspec.yaml` — bump in both places at release time.
-const String packageVersion = '0.11.0';
+const String packageVersion = '0.12.0';
 
-/// Commit SHA baked in at AOT-compile time by `flutter_network_mcp install`
-/// via `-Dflutter_network_mcp_sha=<sha>`. Empty when running JIT (the
+/// Commit SHA baked in at AOT-compile time by `glint_network install`
+/// via `-Dglint_network_sha=<sha>`. Empty when running JIT (the
 /// wrapper that ships from `pub global activate`).
 const String _bakedSha = String.fromEnvironment(
-  'flutter_network_mcp_sha',
+  'glint_network_sha',
 );
 
 String? _cachedRuntimeSha;
@@ -32,7 +32,7 @@ String? currentCommitSha() {
 }
 
 /// True when running an AOT-compiled native binary (the result of
-/// `flutter_network_mcp install`). False under the JIT snapshot wrapper.
+/// `glint_network install`). False under the JIT snapshot wrapper.
 const bool isAotBuild = bool.fromEnvironment('dart.vm.product');
 
 String? _readGitHead() {

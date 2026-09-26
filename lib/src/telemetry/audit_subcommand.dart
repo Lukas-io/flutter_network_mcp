@@ -6,7 +6,7 @@ import 'package:args/args.dart';
 import '../util/data_dir.dart';
 import 'audit_log.dart';
 
-/// `flutter_network_mcp audit ...` — the user-facing surface for the
+/// `glint_network audit ...` — the user-facing surface for the
 /// tamper-evident telemetry audit log.
 ///
 /// Three actions:
@@ -31,7 +31,7 @@ Future<void> runAudit(List<String> args) async {
       return _runShow(actionArgs);
     default:
       io.stderr.writeln(
-        'flutter_network_mcp audit: unknown action "$action". Expected '
+        'glint_network audit: unknown action "$action". Expected '
         'verify | show.',
       );
       _printUsage();
@@ -44,8 +44,8 @@ Future<void> _runVerify(List<String> args) async {
   final dataDir = resolveCandidateDataDir();
   if (dataDir == null) {
     io.stderr.writeln(
-      'flutter_network_mcp audit verify: could not resolve data dir. '
-      'Set FLUTTER_NETWORK_MCP_DATA_DIR or your shell HOME.',
+      'glint_network audit verify: could not resolve data dir. '
+      'Set GLINT_NETWORK_DATA_DIR or your shell HOME.',
     );
     io.exitCode = 73;
     return;
@@ -53,23 +53,23 @@ Future<void> _runVerify(List<String> args) async {
   final result = AuditLog.verify(dataDir);
   if (result.totalEntries == 0) {
     io.stdout.writeln(
-      'flutter_network_mcp audit verify: 0 entries. The audit log doesn\'t '
+      'glint_network audit verify: 0 entries. The audit log doesn\'t '
       'exist yet (no telemetry written). Path: $dataDir/${AuditLog.fileName}',
     );
     return;
   }
   if (result.intact) {
     io.stdout.writeln(
-      'flutter_network_mcp audit verify: ${result.totalEntries} entries, '
+      'glint_network audit verify: ${result.totalEntries} entries, '
       'chain intact.\n'
       '  First entry: ${result.firstTs?.toIso8601String()}\n'
       '  Last entry:  ${result.lastTs?.toIso8601String()}\n'
-      'Use `flutter_network_mcp audit show` to view payloads.',
+      'Use `glint_network audit show` to view payloads.',
     );
     return;
   }
   io.stderr.writeln(
-    'flutter_network_mcp audit verify: chain broken at entry '
+    'glint_network audit verify: chain broken at entry '
     '${result.brokenAtIndex} (reason: ${result.brokenReason}).\n'
     '  Total entries: ${result.totalEntries}\n'
     '  Entries before ${result.brokenAtIndex} are intact. '
@@ -99,7 +99,7 @@ Future<void> _runShow(List<String> args) async {
     return;
   }
   if (parsed['help'] == true) {
-    io.stdout.writeln('flutter_network_mcp audit show — usage:');
+    io.stdout.writeln('glint_network audit show — usage:');
     io.stdout.writeln(parser.usage);
     return;
   }
@@ -107,7 +107,7 @@ Future<void> _runShow(List<String> args) async {
   final dataDir = resolveCandidateDataDir();
   if (dataDir == null) {
     io.stderr.writeln(
-      'flutter_network_mcp audit show: could not resolve data dir.',
+      'glint_network audit show: could not resolve data dir.',
     );
     io.exitCode = 73;
     return;
@@ -119,7 +119,7 @@ Future<void> _runShow(List<String> args) async {
     final dur = _parseDuration(sinceRaw);
     if (dur == null) {
       io.stderr.writeln(
-        'flutter_network_mcp audit show: --since must be of the form '
+        'glint_network audit show: --since must be of the form '
         '<n>d | <n>h | <n>m (e.g. 7d, 24h). Got: "$sinceRaw".',
       );
       io.exitCode = 64;
@@ -132,7 +132,7 @@ Future<void> _runShow(List<String> args) async {
   final entries = AuditLog.readAll(dataDir);
   if (entries.isEmpty) {
     io.stdout.writeln(
-      'flutter_network_mcp audit show: no entries. Audit log: '
+      'glint_network audit show: no entries. Audit log: '
       '$dataDir/${AuditLog.fileName}',
     );
     return;
@@ -170,13 +170,13 @@ Future<void> _runShow(List<String> args) async {
   }
   io.stdout.writeln('---');
   io.stdout.writeln(
-    'flutter_network_mcp audit show: $shown of ${entries.length} entries '
+    'glint_network audit show: $shown of ${entries.length} entries '
     'displayed${sinceCutoff != null || signatureFilter != null ? " (filtered)" : ""}.',
   );
 }
 
 void _printUsage() {
-  io.stderr.writeln('flutter_network_mcp audit <verify|show> [args]');
+  io.stderr.writeln('glint_network audit <verify|show> [args]');
   io.stderr.writeln(
     '  verify              walk the hash chain; report intact / broken\n'
     '  show                decode + pretty-print every audit entry\n'

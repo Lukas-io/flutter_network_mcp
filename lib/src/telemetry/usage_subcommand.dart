@@ -7,10 +7,10 @@ import '../storage/captures_db.dart';
 import '../storage/database.dart';
 import 'usage_reporter.dart';
 
-/// `flutter_network_mcp usage [...]` — the transparency surface for the local
+/// `glint_network usage [...]` — the transparency surface for the local
 /// tool-usage record (issue #79, Phase 1). Lets the user SEE exactly what is
 /// being captured (tool names, arg KEYS, outcomes, durations, sizes — never
-/// values). Recording is local; sending needs the user's opt-in (`FLUTTER_NETWORK_MCP_TELEMETRY=on`).
+/// values). Recording is local; sending needs the user's opt-in (`GLINT_NETWORK_TELEMETRY=on`).
 ///
 /// User-initiated. The MCP server never calls this.
 ///
@@ -42,18 +42,18 @@ Future<void> runUsage(List<String> args) async {
     return;
   }
   if (parsed['help'] == true) {
-    io.stdout.writeln('flutter_network_mcp usage [--show] [--since 7d] '
+    io.stdout.writeln('glint_network usage [--show] [--since 7d] '
         '[--limit N] [--json]');
-    io.stdout.writeln('flutter_network_mcp usage ship [--dry-run] [--json]');
+    io.stdout.writeln('glint_network usage ship [--dry-run] [--json]');
     io.stdout.writeln(parser.usage);
     io.stdout.writeln(
       '\nLocal, privacy-safe record of which tools agents call. Stores the '
       'tool name, the arg KEYS passed (never their values), an outcome '
       '(ok/error/empty), a duration, and a result size. The default views '
       'are local-only. Nothing is sent unless you set '
-      'FLUTTER_NETWORK_MCP_TELEMETRY=on; then `usage ship` folds the events '
+      'GLINT_NETWORK_TELEMETRY=on; then `usage ship` folds the events '
       'into an aggregate, records it to the audit log and sends it. Stop '
-      'local recording with FLUTTER_NETWORK_MCP_NO_USAGE=true.',
+      'local recording with GLINT_NETWORK_NO_USAGE=true.',
     );
     return;
   }
@@ -64,7 +64,7 @@ Future<void> runUsage(List<String> args) async {
     final dur = _parseDuration(sinceRaw);
     if (dur == null) {
       io.stderr.writeln(
-        'flutter_network_mcp usage: --since must be <n>d | <n>h | <n>m '
+        'glint_network usage: --since must be <n>d | <n>h | <n>m '
         '(e.g. 7d, 24h). Got: "$sinceRaw".',
       );
       io.exitCode = 64;
@@ -76,7 +76,7 @@ Future<void> runUsage(List<String> args) async {
   try {
     CapturesDatabase.open();
   } catch (e) {
-    io.stderr.writeln('flutter_network_mcp usage: could not open the DB ($e).');
+    io.stderr.writeln('glint_network usage: could not open the DB ($e).');
     io.exitCode = 73;
     return;
   }
@@ -119,7 +119,7 @@ Future<void> runUsage(List<String> args) async {
     io.stdout.writeln(
       'No tool events recorded yet${sinceMs != null ? " in this window" : ""}. '
       '(Local recording is on by default; stop it with '
-      'FLUTTER_NETWORK_MCP_NO_USAGE=true.)',
+      'GLINT_NETWORK_NO_USAGE=true.)',
     );
     return;
   }
@@ -147,7 +147,7 @@ Future<void> runUsage(List<String> args) async {
 
 int _sum(Map<String, int> m) => m.values.fold(0, (a, b) => a + b);
 
-/// `flutter_network_mcp usage ship` (issue #79, Phase 3). Folds every event
+/// `glint_network usage ship` (issue #79, Phase 3). Folds every event
 /// since the stored watermark into one privacy-safe aggregate, appends it
 /// to the tamper-evident telemetry audit log, and POSTs to the collector
 /// when one is configured. Idempotent; run it as often as you like.
@@ -170,16 +170,16 @@ Future<void> _runShip(List<String> args) async {
     return;
   }
   if (parsed['help'] == true) {
-    io.stdout.writeln('flutter_network_mcp usage ship [--dry-run] [--json]');
+    io.stdout.writeln('glint_network usage ship [--dry-run] [--json]');
     io.stdout.writeln(parser.usage);
     io.stdout.writeln(
       '\nShips an AGGREGATE rollup of tool usage (per-tool counts, outcome + '
       'latency stats, tool-to-next-tool transitions), never raw events. The '
       'exact payload is appended to the hash-chained telemetry audit log '
       'first, then POSTed to the collector, only if you set '
-      'FLUTTER_NETWORK_MCP_TELEMETRY=on (--dry-run shows it without sending). '
+      'GLINT_NETWORK_TELEMETRY=on (--dry-run shows it without sending). '
       'A stored high-watermark makes re-runs idempotent. DO_NOT_TRACK and '
-      'FLUTTER_NETWORK_MCP_NO_USAGE=true always turn sending off.',
+      'GLINT_NETWORK_NO_USAGE=true always turn sending off.',
     );
     return;
   }
@@ -203,7 +203,7 @@ Future<void> _runShip(List<String> args) async {
     return;
   }
 
-  io.stdout.writeln('flutter_network_mcp usage ship: ${result.message}');
+  io.stdout.writeln('glint_network usage ship: ${result.message}');
   if (result.payloadJson != null && dryRun) {
     io.stdout.writeln(const JsonEncoder.withIndent('  ')
         .convert(jsonDecode(result.payloadJson!)));
@@ -211,7 +211,7 @@ Future<void> _runShip(List<String> args) async {
     io.stdout.writeln(
       '  events ${result.fromEventId + 1}..${result.toEventId} '
       '(${result.events} total). Inspect the exact rollup with: '
-      'flutter_network_mcp audit show --since 1h',
+      'glint_network audit show --since 1h',
     );
   }
 }

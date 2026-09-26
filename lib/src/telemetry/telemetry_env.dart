@@ -14,6 +14,7 @@ import 'dart:math';
 
 import '../version.dart';
 import 'telemetry_constants.dart';
+import '../util/network_env.dart';
 
 /// A random id created once per install in [dataDir], sent as `machineHash`; unlike a hash of the path, it reveals nothing about the user.
 String installId(String dataDir) {
@@ -38,18 +39,18 @@ String installId(String dataDir) {
   return id;
 }
 
-/// Why nothing is sent, or null when the user opted in with `FLUTTER_NETWORK_MCP_TELEMETRY=on` and nothing overrides it. [usage] also honours `FLUTTER_NETWORK_MCP_NO_USAGE`.
+/// Why nothing is sent, or null when the user opted in with `GLINT_NETWORK_TELEMETRY=on` and nothing overrides it. [usage] also honours `GLINT_NETWORK_NO_USAGE`.
 String? sharingOffReason({Map<String, String>? env, bool usage = false}) {
-  final e = env ?? io.Platform.environment;
-  if (truthyEnv(e['FLUTTER_NETWORK_MCP_NO_TELEMETRY'])) {
-    return 'FLUTTER_NETWORK_MCP_NO_TELEMETRY is set';
+  final e = env ?? networkEnv;
+  if (truthyEnv(e['GLINT_NETWORK_NO_TELEMETRY'])) {
+    return 'GLINT_NETWORK_NO_TELEMETRY is set';
   }
-  if (usage && truthyEnv(e['FLUTTER_NETWORK_MCP_NO_USAGE'])) {
-    return 'FLUTTER_NETWORK_MCP_NO_USAGE is set';
+  if (usage && truthyEnv(e['GLINT_NETWORK_NO_USAGE'])) {
+    return 'GLINT_NETWORK_NO_USAGE is set';
   }
   if (truthyEnv(e['DO_NOT_TRACK'])) return 'DO_NOT_TRACK is set';
-  if (!truthyEnv(e['FLUTTER_NETWORK_MCP_TELEMETRY'])) {
-    return 'off by default; set FLUTTER_NETWORK_MCP_TELEMETRY=on to share';
+  if (!truthyEnv(e['GLINT_NETWORK_TELEMETRY'])) {
+    return 'off by default; set GLINT_NETWORK_TELEMETRY=on to share';
   }
   return null;
 }
@@ -103,11 +104,11 @@ Future<int> postTelemetry(String jsonStr) async {
 }
 
 /// True when telemetry is globally disabled via env
-/// (`FLUTTER_NETWORK_MCP_NO_TELEMETRY`). The usage reporter layers the
-/// granular `FLUTTER_NETWORK_MCP_NO_USAGE` opt-out on top of this.
+/// (`GLINT_NETWORK_NO_TELEMETRY`). The usage reporter layers the
+/// granular `GLINT_NETWORK_NO_USAGE` opt-out on top of this.
 bool telemetryDisabled([Map<String, String>? env]) {
-  final e = env ?? io.Platform.environment;
-  return truthyEnv(e['FLUTTER_NETWORK_MCP_NO_TELEMETRY']);
+  final e = env ?? networkEnv;
+  return truthyEnv(e['GLINT_NETWORK_NO_TELEMETRY']);
 }
 
 /// Treats `true` / `1` / `yes` / `on` (case-insensitive, trimmed) as true.
