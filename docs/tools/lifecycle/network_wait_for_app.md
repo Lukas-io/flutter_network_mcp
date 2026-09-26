@@ -8,7 +8,7 @@ when_to_use: When the app is still launching (or relaunching) and network_status
 
 - The app is already listed in `network_status.knownApps`. Call `network_attach` directly; it answers without waiting.
 - Several apps are running and you have not picked one. Without `appNameContains` this returns straight away with the list instead of waiting.
-- The session cap (`FLUTTER_NETWORK_MCP_MAX_ATTACH`) is reached. Waiting cannot free a slot; this returns straight away. Detach a session first.
+- The session cap (`GLINT_NETWORK_MAX_ATTACH`) is reached. Waiting cannot free a slot; this returns straight away. Detach a session first.
 - The app is a release / profile build. It never registers a VM service, so this only ends at the timeout.
 - You only want history. Use `session_list` + `session_open`.
 
@@ -20,7 +20,7 @@ when_to_use: When the app is still launching (or relaunching) and network_status
 
 ## How it works
 
-1. Clamps `timeoutMs` to 1000 to 300000 (default 30000). The tool is exempt from the per-tool deadline (`FLUTTER_NETWORK_MCP_TOOL_TIMEOUT_MS`), so the wait is not cut short.
+1. Clamps `timeoutMs` to 1000 to 300000 (default 30000). The tool is exempt from the per-tool deadline (`GLINT_NETWORK_TOOL_TIMEOUT_MS`), so the wait is not cut short.
 2. On each poll (about once a second) it drops the DTD probe cache, so a newly registered app is seen straight away.
 3. Without `appNameContains`: lists the apps of EVERY running DTD, not only the startup default one.
    - No app yet: waits and polls again.

@@ -7,8 +7,8 @@ when_to_use: When the maintainer (or you, reflecting) wants to see how the MCP's
 ## DO NOT USE THIS TOOL WHEN
 
 - You want data about the TARGET app's network traffic — that's `network_summarize` / `network_list`. This tool is about how the MCP's OWN tools are being called.
-- Usage capture is opted out (`FLUTTER_NETWORK_MCP_NO_USAGE` or `FLUTTER_NETWORK_MCP_NO_TELEMETRY` set to `true`, `1`, `yes` or `on`). New calls are not recorded, so the tool only reports events stored before the opt-out (or nothing).
-- You need raw per-call rows — use the `flutter_network_mcp usage --show` CLI instead.
+- Usage capture is opted out (`GLINT_NETWORK_NO_USAGE` or `GLINT_NETWORK_NO_TELEMETRY` set to `true`, `1`, `yes` or `on`). New calls are not recorded, so the tool only reports events stored before the opt-out (or nothing).
+- You need raw per-call rows — use the `glint_network usage --show` CLI instead.
 
 ## Use this when
 
@@ -17,7 +17,7 @@ when_to_use: When the maintainer (or you, reflecting) wants to see how the MCP's
 
 ## How it works
 
-Every registered tool call (this one included) is recorded in the local `tool_events` table of the capture DB: tool name, sorted arg keys, outcome, duration, result size, an estimated token count (result characters / 4), the `errorKind` of an error reply, and whether the reply was `degraded`. Outcome is `error` when the handler threw or returned an error, `empty` when the reply has a top-level `count: 0`, else `ok`. Calls are grouped into turns by a correlation id that rolls over after 60 s without a call (`FLUTTER_NETWORK_MCP_USAGE_GAP_MS`, minimum 1000) and differs per server process.
+Every registered tool call (this one included) is recorded in the local `tool_events` table of the capture DB: tool name, sorted arg keys, outcome, duration, result size, an estimated token count (result characters / 4), the `errorKind` of an error reply, and whether the reply was `degraded`. Outcome is `error` when the handler threw or returned an error, `empty` when the reply has a top-level `count: 0`, else `ok`. Calls are grouped into turns by a correlation id that rolls over after 60 s without a call (`GLINT_NETWORK_USAGE_GAP_MS`, minimum 1000) and differs per server process.
 
 `usage_stats` reads up to 50 000 of those events (all history, or those newer than `sinceMs`), ordered by correlation id then insertion order, and aggregates them per tool and per consecutive pair of calls within a turn. It is registered regardless of `--capabilities` and reads across all sessions and processes that share the DB.
 
@@ -52,7 +52,7 @@ Every registered tool call (this one included) is recorded in the local `tool_ev
   "nextSteps": [
     "network_list has the highest error rate (7% of 14 call(s)) ...",
     "usage_stats sinceMs:3600000 ...",
-    "flutter_network_mcp usage --show ..."
+    "glint_network usage --show ..."
   ]
 }
 ```
@@ -63,7 +63,7 @@ Every registered tool call (this one included) is recorded in the local `tool_ev
 - `selfCorrection` (only when present): for each tool and signal (the `errorKind` of an error, `error` when it had none, or `empty`), how often another call followed in the same turn and how often that next call came back `ok`.
 - `nextSteps` is empty when no events were found. Otherwise it names the tool with the highest error rate (when above zero), then suggests narrowing to the last hour and the raw CLI view.
 
-A DB read failure returns `usage_stats query failed: ...` (no `errorKind`) with a `nextSteps` pointing at the `flutter_network_mcp usage` CLI.
+A DB read failure returns `usage_stats query failed: ...` (no `errorKind`) with a `nextSteps` pointing at the `glint_network usage` CLI.
 
 ## Privacy
 
@@ -71,7 +71,7 @@ This reads only the local, privacy-safe `tool_events` capture: tool names, arg K
 
 ## Pairs well with
 
-- `flutter_network_mcp usage --show` (CLI) — the raw events behind these aggregates.
+- `glint_network usage --show` (CLI) — the raw events behind these aggregates.
 
 ## Example
 

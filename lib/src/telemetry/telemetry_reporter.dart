@@ -12,7 +12,7 @@ import 'telemetry_env.dart';
 
 /// Crash telemetry reporter.
 ///
-/// Wired from `bin/flutter_network_mcp.dart`'s top-level
+/// Wired from `bin/glint_network.dart`'s top-level
 /// `runZonedGuarded` handler — every uncaught error becomes a
 /// fire-and-forget call to [maybeReport].
 ///
@@ -24,7 +24,7 @@ import 'telemetry_env.dart';
 /// 2. **HTTPS POST** (only when [kCollectorEndpoint] is non-empty):
 ///    fire-and-forget with a 3s deadline. All errors swallowed.
 ///
-/// Opt-in: nothing happens (no audit write, no network attempt) unless the user sets `FLUTTER_NETWORK_MCP_TELEMETRY=on`.
+/// Opt-in: nothing happens (no audit write, no network attempt) unless the user sets `GLINT_NETWORK_TELEMETRY=on`.
 ///
 /// **Privacy-first by design**: see [buildTelemetryPayload] for the full
 /// schema. No PII, no source paths, no captured app data.

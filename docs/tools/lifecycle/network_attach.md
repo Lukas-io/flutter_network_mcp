@@ -23,7 +23,7 @@ when_to_use: When the user wants live data from a running app that is not attach
 
 ## How it works
 
-1. Session cap: at most `FLUTTER_NETWORK_MCP_MAX_ATTACH` live sessions (1 to 32, default 8). When the cap is reached, a heartbeat first evicts dead sessions; if it is still full, the call errors with `retryable:false`, the `attached` list and `maxAttach`.
+1. Session cap: at most `GLINT_NETWORK_MAX_ATTACH` live sessions (1 to 32, default 8). When the cap is reached, a heartbeat first evicts dead sessions; if it is still full, the call errors with `retryable:false`, the `attached` list and `maxAttach`.
 2. Resolves the target VM service URI:
    - `vmServiceUri` set: used directly. The app name is looked up across every running DTD (best effort; it stays null when no DTD lists that URI).
    - `appNameContains` set and no `dtdUri`: matched (case-insensitive substring) against the apps of EVERY running DTD, the same list `network_status.knownApps` shows. Zero matches or several matches error with the candidate `apps`.
@@ -42,11 +42,11 @@ Stack traces from errors are written to stderr only. They never appear in the re
 - `dtdUri` (string, optional): overrides the default DTD URI.
 - `vmServiceUri` (string, optional): bypasses DTD. Takes priority over `dtdUri` and `appNameContains`. Either spelling of the VM URI works (`ws://.../ws` or `http://.../`).
 - `appNameContains` (string, optional): case-insensitive substring of the app name (from `network_status.knownApps[].name`). Resolved across ALL running DTDs unless `dtdUri` is also passed.
-- `logBufferSize` (int, optional): per-session log ring-buffer capacity, clamped to 50 to 20000. Default: `auto_attach_config logBufferSize` when set, else `FLUTTER_NETWORK_MCP_LOG_BUFFER`, else 2000. Raise it for chatty apps.
+- `logBufferSize` (int, optional): per-session log ring-buffer capacity, clamped to 50 to 20000. Default: `auto_attach_config logBufferSize` when set, else `GLINT_NETWORK_LOG_BUFFER`, else 2000. Raise it for chatty apps.
 - `reattach` (bool, optional, default false): hot-restart continuity. When true and an attached session for the SAME app (same package + device) is bound to a different, now-stale VM URI, reuse its `sessionId`: captures continue under one session across the restart, and the stale session is torn down. It matches on the app name, so pair it with `appNameContains` (a raw `vmServiceUri` attach only has a name when a DTD lists that URI).
 - `nativeLogs` (bool, optional): also stream the device's native log for this app (`simctl log stream` on an iOS simulator, `adb logcat` on Android) into `logs_tail` as `source:"native"`. Needs the `logs` capability. Default: `auto_attach_config nativeLogs` (false).
 
-If none of `dtdUri`, `vmServiceUri` or `appNameContains` is provided, falls back to `--dtd-uri` / `FLUTTER_NETWORK_MCP_DTD_URI`.
+If none of `dtdUri`, `vmServiceUri` or `appNameContains` is provided, falls back to `--dtd-uri` / `GLINT_NETWORK_DTD_URI`.
 
 ## Returns
 
@@ -115,7 +115,7 @@ Error (several matching apps):
 Error (session cap reached):
 ```json
 {
-  "error": "Reached max attached sessions (8 live). Detach one first (network_detach keep:true frees the slot without ending the session) or raise FLUTTER_NETWORK_MCP_MAX_ATTACH.",
+  "error": "Reached max attached sessions (8 live). Detach one first (network_detach keep:true frees the slot without ending the session) or raise GLINT_NETWORK_MAX_ATTACH.",
   "errorKind": "bad_argument",
   "attached": [{"sessionId": 14, "appName": "..."}],
   "maxAttach": 8,

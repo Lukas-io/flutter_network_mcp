@@ -61,6 +61,14 @@ import 'tools/socket_list.dart';
 import 'tools/usage_stats.dart';
 import 'tools/ws_get.dart';
 import 'tools/ws_list.dart';
+import 'util/network_env.dart';
+import 'util/legacy_install.dart';
+
+/// A notice the agent passes to the user while this install still uses the flutter_network_mcp names.
+String _legacyInstructions() {
+  final notice = legacyUse.notice;
+  return notice == null ? '' : 'TELL THE USER, once and early: $notice\n\n';
+}
 
 /// MCP server exposing Flutter DevTools data via DTD + VM service, with
 /// persistent capture sessions in SQLite, full-text search, proactive alerts,
@@ -72,15 +80,15 @@ base class FlutterNetworkMcpServer extends MCPServer
     this.defaultDtdUri,
   }) : super.fromStreamChannel(
           implementation: Implementation(
-            name: 'flutter_network_mcp',
+            name: 'glint_network',
             version: packageVersion,
           ),
-          instructions:
+          instructions: '${_legacyInstructions()}'
               'Read HTTP, sockets, and logs from a running Flutter/Dart app, '
               'live or from history. Start with network_status; it reports '
               'what is reachable and its nextSteps tell you what to call next. '
               'Per-tool guides and the response contract are available as MCP '
-              'resources (flutter-network://docs/...) — read them for deep '
+              'resources (glint-network://docs/...) — read them for deep '
               'usage. Only dart:io HTTP is captured: native SDK traffic '
               '(analytics, crash reporting, ads, maps) is invisible here, so '
               'never conclude an SDK is idle from an empty capture.\n\n'
@@ -194,7 +202,7 @@ base class FlutterNetworkMcpServer extends MCPServer
             uri: doc.uri,
             name: doc.name,
             mimeType: 'text/markdown',
-            description: 'flutter_network_mcp guide: ${doc.name}',
+            description: 'glint_network guide: ${doc.name}',
           ),
           (req) async {
             final text = await io.File(doc.path).readAsString();
@@ -224,7 +232,7 @@ base class FlutterNetworkMcpServer extends MCPServer
         final result = await boundedToolCall(tool.name, () => handler(req));
         final ms = sw.elapsedMilliseconds;
         if (ms >= kSlowToolMs) {
-          io.stderr.writeln('flutter_network_mcp: ${tool.name} took ${ms}ms');
+          io.stderr.writeln('glint_network: ${tool.name} took ${ms}ms');
         }
         UsageRecorder.instance.record(
           tool: tool.name,
@@ -269,9 +277,9 @@ const Set<String> kUnboundedTools = {
   'network_wait_for_app',
 };
 
-/// `FLUTTER_NETWORK_MCP_TOOL_TIMEOUT_MS` (2000–120000). Default 20000.
+/// `GLINT_NETWORK_TOOL_TIMEOUT_MS` (2000–120000). Default 20000.
 Duration toolDeadline() {
-  final raw = io.Platform.environment['FLUTTER_NETWORK_MCP_TOOL_TIMEOUT_MS'];
+  final raw = networkEnv['GLINT_NETWORK_TOOL_TIMEOUT_MS'];
   final parsed = raw == null ? null : int.tryParse(raw);
   if (parsed == null) return const Duration(seconds: 20);
   return Duration(milliseconds: parsed.clamp(2000, 120000));
@@ -292,7 +300,7 @@ Future<CallToolResult> boundedToolCall(
     return await Future<CallToolResult>.sync(body).timeout(limit);
   } on TimeoutException {
     io.stderr.writeln(
-      'flutter_network_mcp: $tool exceeded ${limit.inMilliseconds}ms and was '
+      'glint_network: $tool exceeded ${limit.inMilliseconds}ms and was '
       'cut off; the work continues in the background.',
     );
     return errorResult(
@@ -303,7 +311,7 @@ Future<CallToolResult> boundedToolCall(
         'nextSteps': const [
           'Retry with a narrower filter or a smaller limit',
           'network_status — check whether the session is still reachable',
-          'Raise FLUTTER_NETWORK_MCP_TOOL_TIMEOUT_MS if this tool legitimately needs longer',
+          'Raise GLINT_NETWORK_TOOL_TIMEOUT_MS if this tool legitimately needs longer',
         ],
       },
     );
@@ -314,7 +322,7 @@ Future<CallToolResult> boundedToolCall(
         kind: ErrorKind.unresponsiveDb,
         extra: const {
           'nextSteps': [
-            'Another flutter_network_mcp server (another IDE window?) holds the database; close it or start this one with --data-dir <other>',
+            'Another glint_network server (another IDE window?) holds the database; close it or start this one with --data-dir <other>',
             'Retry in a few seconds',
           ],
         },

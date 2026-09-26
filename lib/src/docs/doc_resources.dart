@@ -2,6 +2,8 @@ import 'dart:io' as io;
 import 'dart:isolate';
 
 import 'package:path/path.dart' as p;
+import '../util/network_env.dart';
+import '../install/repo_layout.dart';
 
 /// D6 (audit RC10/F8): the deep per-tool guides and the response contract
 /// live under `docs/` in the repo, and every tool description points at
@@ -9,20 +11,20 @@ import 'package:path/path.dart' as p;
 /// those pointers were dead ends, and `network_query`'s 53% error rate
 /// traced straight to an unreachable schema doc. This module locates the
 /// shipped `docs/` tree and exposes each file as an MCP resource under
-/// `flutter-network://docs/...`, making the guidance in-band.
+/// `glint-network://docs/...`, making the guidance in-band.
 class DocResources {
   /// Resolves the repo `docs/` directory. The package is installed via
   /// `dart pub global activate -sgit`, so the FULL git checkout (docs
   /// included) is always present in pub-cache — for both the JIT snapshot
   /// and the AOT install. Mirrors install.dart's `_resolveSourcePath`
   /// ladder: Platform.script when it's a `.dart` file (running from
-  /// source), else the newest `<pub_cache>/git/flutter_network_mcp-*`.
+  /// source), else the newest `<pub_cache>/git/glint_network-*`.
   static io.Directory? resolveDocsDir() {
     final own = _docsNextToPackage();
     if (own != null) return own;
     final script = io.Platform.script.toFilePath();
     if (script.endsWith('.dart')) {
-      // .../<root>/bin/flutter_network_mcp.dart -> <root>/docs
+      // .../<root>/bin/glint_network.dart -> <root>/docs
       final root = p.dirname(p.dirname(script));
       final docs = io.Directory(p.join(root, 'docs'));
       if (docs.existsSync()) return docs;
@@ -35,8 +37,8 @@ class DocResources {
     var newestStamp = DateTime.fromMillisecondsSinceEpoch(0);
     for (final entity in gitDir.listSync()) {
       if (entity is! io.Directory) continue;
-      if (!p.basename(entity.path).startsWith('flutter_network_mcp')) continue;
-      final docs = io.Directory(p.join(entity.path, 'docs'));
+      if (!p.basename(entity.path).startsWith(repoCheckoutPrefix)) continue;
+      final docs = io.Directory(p.join(entity.path, packageGitPath, 'docs'));
       if (!docs.existsSync()) continue;
       final stamp = docs.statSync().modified;
       if (stamp.isAfter(newestStamp)) {
@@ -47,7 +49,7 @@ class DocResources {
     return newest;
   }
 
-  /// One registerable resource: its `flutter-network://` URI, a display
+  /// One registerable resource: its `glint-network://` URI, a display
   /// name, and the absolute file path to read on demand.
   static List<DocResource> discover() {
     final docsDir = resolveDocsDir();
@@ -64,7 +66,7 @@ class DocResources {
       if (!isToolGuide && !isContract) continue;
       final uriPath = rel.split(p.separator).join('/');
       out.add(DocResource(
-        uri: 'flutter-network://docs/$uriPath',
+        uri: 'glint-network://docs/$uriPath',
         name: uriPath,
         path: entity.path,
       ));
@@ -90,7 +92,7 @@ class DocResources {
   }
 
   static String? _pubCacheDir() {
-    final env = io.Platform.environment;
+    final env = networkEnv;
     final explicit = env['PUB_CACHE'];
     if (explicit != null && explicit.isNotEmpty) return explicit;
     final home = env['HOME'] ?? env['USERPROFILE'];

@@ -117,7 +117,7 @@ void main() {
 /// tests can locate the file SessionContinuation would write to.
 String? _readCandidateFromTestEnv() {
   final env = Platform.environment;
-  final override = env['FLUTTER_NETWORK_MCP_DATA_DIR'];
+  final override = env['GLINT_NETWORK_DATA_DIR'];
   if (override != null && override.isNotEmpty) return override;
   final home = env['HOME'];
   if (home == null || home.isEmpty) return null;

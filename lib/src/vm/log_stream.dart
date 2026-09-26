@@ -111,7 +111,7 @@ class LogStreamSubscriber {
   /// log record; the subscription stays active.
   void _onStreamError(Object error, StackTrace stack) {
     io.stderr.writeln(
-      'flutter_network_mcp: log stream error ($error). '
+      'glint_network: log stream error ($error). '
       'Subscription continues.',
     );
   }

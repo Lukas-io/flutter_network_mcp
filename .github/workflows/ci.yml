@@ -28,5 +28,5 @@ jobs:
       - name: Test
         run: dart test
         env:
-          FLUTTER_NETWORK_MCP_NO_TELEMETRY: 'true'
-          FLUTTER_NETWORK_MCP_NO_UPDATE_CHECK: 'true'
+          GLINT_NETWORK_NO_TELEMETRY: 'true'
+          GLINT_NETWORK_NO_UPDATE_CHECK: 'true'

@@ -4,6 +4,8 @@ import 'package:path/path.dart' as p;
 import 'package:sqlite3/sqlite3.dart' as sql;
 
 import 'schema.dart';
+import '../util/data_dir.dart';
+import '../util/network_env.dart';
 
 /// Owns the on-disk captures database. Singleton per process.
 class CapturesDatabase {
@@ -28,7 +30,7 @@ class CapturesDatabase {
   /// the first writable one. Throws [StateError] (caller catches in `bin/`)
   /// if every candidate fails.
   ///
-  /// When [inMemory] (or `FLUTTER_NETWORK_MCP_NO_PERSIST`) is set, opens a
+  /// When [inMemory] (or `GLINT_NETWORK_NO_PERSIST`) is set, opens a
   /// purely in-memory database instead: captures are readable live but never
   /// touch disk and vanish on exit. For noisy or sensitive flows where on-disk
   /// retention is unwanted.
@@ -40,7 +42,7 @@ class CapturesDatabase {
       db.execute('PRAGMA foreign_keys = ON');
       _migrate(db);
       stderr.writeln(
-        'flutter_network_mcp: NO-PERSIST mode — captures live in memory only '
+        'glint_network: NO-PERSIST mode — captures live in memory only '
         'and are lost when the server exits. Nothing is written to disk.',
       );
       return _instance = CapturesDatabase._(db, _memoryPath);
@@ -69,7 +71,7 @@ class CapturesDatabase {
 
         if (dataDir == null && dir != candidates.first) {
           stderr.writeln(
-            'flutter_network_mcp: primary data dir ${candidates.first} '
+            'glint_network: primary data dir ${candidates.first} '
             'not writable; using $dir instead.',
           );
         }
@@ -84,7 +86,7 @@ class CapturesDatabase {
     throw StateError(
       'could not create data dir. Tried:\n'
       '${errors.join('\n')}\n'
-      'Pass --data-dir <writable path> or set FLUTTER_NETWORK_MCP_DATA_DIR.',
+      'Pass --data-dir <writable path> or set GLINT_NETWORK_DATA_DIR.',
     );
   }
 
@@ -104,7 +106,7 @@ class CapturesDatabase {
 
   /// Before upgrading an existing database, copies it to `captures.db.pre-v<N>.bak` so a migration that completes but damages data can be undone; the newest backup replaces older ones.
   static void _backupBeforeMigration(sql.Database db, String dir) {
-    final off = Platform.environment['FLUTTER_NETWORK_MCP_NO_MIGRATION_BACKUP']
+    final off = networkEnv['GLINT_NETWORK_NO_MIGRATION_BACKUP']
         ?.trim()
         .toLowerCase();
     if (off == 'true' || off == '1' || off == 'yes' || off == 'on') return;
@@ -114,7 +116,7 @@ class CapturesDatabase {
     if (File(target).existsSync()) return;
     final partial = '$target.partial-$pid';
     stderr.writeln(
-      'flutter_network_mcp: backing up captures.db before upgrading it from '
+      'glint_network: backing up captures.db before upgrading it from '
       'schema v$version to v$currentVersion...',
     );
     final watch = Stopwatch()..start();
@@ -132,13 +134,13 @@ class CapturesDatabase {
         // Nothing was written.
       }
       stderr.writeln(
-        'flutter_network_mcp: backup before the upgrade failed ($e); '
+        'glint_network: backup before the upgrade failed ($e); '
         'upgrading without one.',
       );
       return;
     }
     stderr.writeln(
-      'flutter_network_mcp: backup written to $target in '
+      'glint_network: backup written to $target in '
       '${watch.elapsedMilliseconds} ms.',
     );
     for (final f in Directory(dir).listSync()) {
@@ -165,7 +167,7 @@ class CapturesDatabase {
   }
 
   static bool _noPersistFromEnv() {
-    final raw = Platform.environment['FLUTTER_NETWORK_MCP_NO_PERSIST']?.toLowerCase();
+    final raw = networkEnv['GLINT_NETWORK_NO_PERSIST']?.toLowerCase();
     return raw == 'true' || raw == '1' || raw == 'yes' || raw == 'on';
   }
 
@@ -253,7 +255,7 @@ class CapturesDatabase {
   ///
   /// macOS order:
   ///   1. [override] (single-element list — no fallback when user is explicit)
-  ///   2. $FLUTTER_NETWORK_MCP_DATA_DIR (single-element list)
+  ///   2. $GLINT_NETWORK_DATA_DIR (single-element list)
   ///   3. $XDG_DATA_HOME/flutter_network_mcp (when XDG_DATA_HOME is set)
   ///   4. ~/Library/Application Support/flutter_network_mcp  (canonical macOS)
   ///   5. ~/.local/share/flutter_network_mcp  (back-compat; only used if
@@ -262,7 +264,7 @@ class CapturesDatabase {
   ///
   /// Linux/other order:
   ///   1. [override]
-  ///   2. $FLUTTER_NETWORK_MCP_DATA_DIR
+  ///   2. $GLINT_NETWORK_DATA_DIR
   ///   3. $XDG_DATA_HOME/flutter_network_mcp
   ///   4. ~/.local/share/flutter_network_mcp
   ///   5. ~/.cache/flutter_network_mcp
@@ -272,8 +274,8 @@ class CapturesDatabase {
   static List<String> _candidateDataDirs(String? override) {
     if (override != null && override.isNotEmpty) return [override];
 
-    final env = Platform.environment;
-    final envOverride = env['FLUTTER_NETWORK_MCP_DATA_DIR'];
+    final env = networkEnv;
+    final envOverride = env['GLINT_NETWORK_DATA_DIR'];
     if (envOverride != null && envOverride.isNotEmpty) return [envOverride];
 
     final home = env['HOME'] ?? '.';
@@ -281,18 +283,18 @@ class CapturesDatabase {
 
     final xdg = env['XDG_DATA_HOME'];
     if (xdg != null && xdg.isNotEmpty) {
-      out.add(p.join(xdg, 'flutter_network_mcp'));
+      out.add(p.join(xdg, dataDirName));
     }
 
     if (Platform.isMacOS) {
       _maybeMigrateMacOsDataDir(home);
-      out.add(p.join(home, 'Library', 'Application Support', 'flutter_network_mcp'));
-      out.add(p.join(home, '.local', 'share', 'flutter_network_mcp'));
+      out.add(p.join(home, 'Library', 'Application Support', dataDirName));
+      out.add(p.join(home, '.local', 'share', dataDirName));
     } else {
-      out.add(p.join(home, '.local', 'share', 'flutter_network_mcp'));
+      out.add(p.join(home, '.local', 'share', dataDirName));
     }
 
-    out.add(p.join(home, '.cache', 'flutter_network_mcp'));
+    out.add(p.join(home, '.cache', dataDirName));
     return out;
   }
 
@@ -310,13 +312,13 @@ class CapturesDatabase {
   /// staying on the old path.
   static void _maybeMigrateMacOsDataDir(String home) {
     final oldDir = Directory(
-      p.join(home, '.local', 'share', 'flutter_network_mcp'),
+      p.join(home, '.local', 'share', dataDirName),
     );
     final newDirPath = p.join(
       home,
       'Library',
       'Application Support',
-      'flutter_network_mcp',
+      dataDirName,
     );
 
     final oldDbExists = File(p.join(oldDir.path, 'captures.db')).existsSync();
@@ -328,13 +330,13 @@ class CapturesDatabase {
       Directory(p.dirname(newDirPath)).createSync(recursive: true);
       oldDir.renameSync(newDirPath);
       stderr.writeln(
-        'flutter_network_mcp: migrated data dir from ${oldDir.path} to '
+        'glint_network: migrated data dir from ${oldDir.path} to '
         '$newDirPath (macOS canonical path; 0.5.16). '
-        'Set FLUTTER_NETWORK_MCP_DATA_DIR or --data-dir to override.',
+        'Set GLINT_NETWORK_DATA_DIR or --data-dir to override.',
       );
     } catch (e) {
       stderr.writeln(
-        'flutter_network_mcp: tried to migrate ${oldDir.path} to macOS '
+        'glint_network: tried to migrate ${oldDir.path} to macOS '
         'canonical path but failed ($e); continuing to use old location.',
       );
     }
@@ -351,7 +353,7 @@ class NewerDatabaseError implements Exception {
   @override
   String toString() =>
       'the capture database is at schema v$found, newer than this build '
-      'supports (v$supported). A newer flutter_network_mcp wrote it. Update '
+      'supports (v$supported). A newer glint_network wrote it. Update '
       'this install the way you installed it, or pass --data-dir <other dir> '
       'to use a separate database.';
 }

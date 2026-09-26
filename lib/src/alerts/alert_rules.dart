@@ -1,4 +1,4 @@
-import 'dart:io' as io;
+import '../util/network_env.dart';
 
 /// A single custom alert pattern loaded from the `alert_patterns` table.
 class CustomPattern {
@@ -32,12 +32,12 @@ class AlertRules {
   /// interrupted) sessions older than this are auto-expired by
   /// [AlertRetention], so the pending banner reflects recent state instead
   /// of months of accumulated noise. 0 disables retention (keep forever).
-  /// Initial value from FLUTTER_NETWORK_MCP_ALERT_RETENTION_DAYS (default
+  /// Initial value from GLINT_NETWORK_ALERT_RETENTION_DAYS (default
   /// 14); runtime-tunable via `alerts_config set:{retentionDays:N}`.
   int alertRetentionDays = _envRetentionDays();
 
   static int _envRetentionDays() {
-    final raw = _env('FLUTTER_NETWORK_MCP_ALERT_RETENTION_DAYS');
+    final raw = _env('GLINT_NETWORK_ALERT_RETENTION_DAYS');
     final parsed = raw == null ? null : int.tryParse(raw.trim());
     if (parsed == null || parsed < 0) return 14;
     return parsed;
@@ -45,7 +45,7 @@ class AlertRules {
 
   static String? _env(String key) {
     try {
-      return io.Platform.environment[key];
+      return networkEnv[key];
     } catch (_) {
       return null;
     }

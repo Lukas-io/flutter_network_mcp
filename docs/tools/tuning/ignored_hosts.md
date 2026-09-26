@@ -15,7 +15,7 @@ when_to_use: To filter out analytics, crash reporters, noisy telemetry, or one c
 
 This tool manages the **denylist** (skiplist): matching requests are dropped. An entry with **no `/`** matches a whole host (the original behavior); an entry **with `/`** is a `host/path` glob (`*` = any chars, `?` = one char), so `dev.example.com/socket.io/*` silences just the socket.io polling while the REST API on the same host keeps flowing.
 
-The **allowlist** is separate: the `capture_allow` tool (persistent) and the `FLUTTER_NETWORK_MCP_CAPTURE_ALLOW` startup env var (comma-separated) together capture ONLY matching requests and drop everything else, for focused debugging ("just `/stock/*`"). The union of both is surfaced in this tool's `list` output as `captureAllowlist`. Deny still wins inside the allowed set.
+The **allowlist** is separate: the `capture_allow` tool (persistent) and the `GLINT_NETWORK_CAPTURE_ALLOW` startup env var (comma-separated) together capture ONLY matching requests and drop everything else, for focused debugging ("just `/stock/*`"). The union of both is surfaced in this tool's `list` output as `captureAllowlist`. Deny still wins inside the allowed set.
 
 ## Use this when
 
@@ -43,7 +43,7 @@ Writer builds a `CaptureFilter` from the entries on every refresh and checks eac
  "count":2,
  "hosts":[{"host":"app.crashlytics.com", "addedMs":..., "reason":"telemetry"}],
  "captureAllowlist":{"active":false, "patterns":[],
-   "managedBy":"capture_allow tool (persistent) + FLUTTER_NETWORK_MCP_CAPTURE_ALLOW env"},
+   "managedBy":"capture_allow tool (persistent) + GLINT_NETWORK_CAPTURE_ALLOW env"},
  "nextSteps":["network_list ... confirm noisy paths are no longer being captured", "network_query sql:\"SELECT host, COUNT(*) ...\" ... find noisy hosts to add"]}
 
 // add (with already-captured rows)

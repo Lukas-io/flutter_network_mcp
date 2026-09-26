@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io' as io;
 
 import 'package:path/path.dart' as p;
+import '../util/network_env.dart';
 
 /// Background "is there a newer version?" probe that runs at most once per
 /// UTC day. Hits the raw `pubspec.yaml` on `master` (no GitHub API, no
@@ -10,9 +11,9 @@ import 'package:path/path.dart' as p;
 /// version is newer, prints one stderr nudge:
 ///
 /// ```
-/// flutter_network_mcp: v0.6.3 available (you're on 0.6.2). Run
-/// `flutter_network_mcp update` to upgrade. (Silence with
-/// FLUTTER_NETWORK_MCP_NO_UPDATE_CHECK=true.)
+/// glint_network: v0.6.3 available (you're on 0.6.2). Run
+/// `glint_network update` to upgrade. (Silence with
+/// GLINT_NETWORK_NO_UPDATE_CHECK=true.)
 /// ```
 ///
 /// All network errors are swallowed silently. Version check is best-effort;
@@ -20,7 +21,7 @@ import 'package:path/path.dart' as p;
 /// RPC handshake. Fire-and-forget from `main()` after the server starts.
 class UpdateCheck {
   static const String _pubspecUrl =
-      'https://raw.githubusercontent.com/Lukas-io/flutter_network_mcp/master/pubspec.yaml';
+      'https://raw.githubusercontent.com/Lukas-io/glint/main/packages/glint_network/pubspec.yaml';
 
   static const Duration _connectTimeout = Duration(seconds: 3);
   static const Duration _totalTimeout = Duration(seconds: 5);
@@ -32,8 +33,8 @@ class UpdateCheck {
     required String dataDir,
   }) async {
     try {
-      final env = io.Platform.environment;
-      if (env['FLUTTER_NETWORK_MCP_NO_UPDATE_CHECK']?.toLowerCase() == 'true') {
+      final env = networkEnv;
+      if (env['GLINT_NETWORK_NO_UPDATE_CHECK']?.toLowerCase() == 'true') {
         return;
       }
 
@@ -56,9 +57,9 @@ class UpdateCheck {
 
       if (isNewer) {
         io.stderr.writeln(
-          'flutter_network_mcp: v$upstream available (you\'re on '
-          'v$currentVersion). Run `flutter_network_mcp update` to upgrade. '
-          '(Silence with FLUTTER_NETWORK_MCP_NO_UPDATE_CHECK=true.)',
+          'glint_network: v$upstream available (you\'re on '
+          'v$currentVersion). Run `glint_network update` to upgrade. '
+          '(Silence with GLINT_NETWORK_NO_UPDATE_CHECK=true.)',
         );
       }
     } catch (_) {
@@ -106,7 +107,7 @@ class UpdateCheck {
         'current': currentVersion,
         'latest': latestVersion,
         'isNewer': isNewer,
-        'upgradeCommand': 'flutter_network_mcp update',
+        'upgradeCommand': 'glint_network update',
       };
       file.writeAsStringSync(jsonEncode(payload));
     } catch (_) {/* silent */}
@@ -129,7 +130,7 @@ class UpdateCheck {
   static Future<String?> _fetchUpstreamVersion() async {
     final client = io.HttpClient()
       ..connectionTimeout = _connectTimeout
-      ..userAgent = 'flutter_network_mcp-update-check';
+      ..userAgent = 'glint_network-update-check';
     try {
       final request = await client
           .getUrl(Uri.parse(_pubspecUrl))

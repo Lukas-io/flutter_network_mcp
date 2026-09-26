@@ -4,6 +4,7 @@ import 'dart:io' as io;
 import 'state/session.dart';
 import 'tools/network_attach.dart' show appSessionIdentity, performAttach;
 import 'vm/dtd_probe.dart';
+import 'util/network_env.dart';
 
 /// Background watcher that polls DTD periodically for new VM service URIs
 /// and auto-attaches to apps that appear AFTER the watcher started.
@@ -37,7 +38,7 @@ import 'vm/dtd_probe.dart';
 /// Only a NEW vmServiceUri — typically from a fresh `flutter run` or a
 /// hot-restart that spawns a new DDS — triggers auto-attach.
 ///
-/// Respects [FLUTTER_NETWORK_MCP_MAX_ATTACH] via `performAttach`'s own
+/// Respects [GLINT_NETWORK_MAX_ATTACH] via `performAttach`'s own
 /// cap check; over-cap discoveries log a one-line stderr note and stay
 /// in the known set (won't keep retrying every tick).
 class AutoAttacher {
@@ -53,11 +54,11 @@ class AutoAttacher {
         ),
         pollInterval = pollInterval ?? _envPollInterval();
 
-  /// Reads `FLUTTER_NETWORK_MCP_AUTO_ATTACH_POLL_MS` (1000–60000).
+  /// Reads `GLINT_NETWORK_AUTO_ATTACH_POLL_MS` (1000–60000).
   /// Default 5000ms.
   static Duration _envPollInterval() {
     final raw =
-        io.Platform.environment['FLUTTER_NETWORK_MCP_AUTO_ATTACH_POLL_MS'];
+        networkEnv['GLINT_NETWORK_AUTO_ATTACH_POLL_MS'];
     final parsed = raw == null ? null : int.tryParse(raw);
     if (parsed == null) return const Duration(seconds: 5);
     final clamped =
@@ -99,8 +100,8 @@ class AutoAttacher {
   void start() {
     if (defaultDtdUri == null) {
       io.stderr.writeln(
-        'flutter_network_mcp: --auto-attach skipped — no --dtd-uri / '
-        'FLUTTER_NETWORK_MCP_DTD_URI configured.',
+        'glint_network: --auto-attach skipped — no --dtd-uri / '
+        'GLINT_NETWORK_DTD_URI configured.',
       );
       return;
     }
@@ -111,7 +112,7 @@ class AutoAttacher {
         ? ''
         : '; denylist: ${deniedAppPatterns.join(", ")}';
     io.stderr.writeln(
-      'flutter_network_mcp: auto-attach watcher started '
+      'glint_network: auto-attach watcher started '
       '(poll ${pollInterval.inMilliseconds}ms; allowlist: '
       '${allowedAppPatterns.join(", ")}$denyLine; allowlisted apps already '
       'running attach on the first tick).',
@@ -182,7 +183,7 @@ class AutoAttacher {
       await _runTick();
     } catch (e, st) {
       io.stderr.writeln(
-        'flutter_network_mcp: auto-attach tick crashed unexpectedly '
+        'glint_network: auto-attach tick crashed unexpectedly '
         '($e). Watcher continues polling.\n$st',
       );
     } finally {
@@ -212,7 +213,7 @@ class AutoAttacher {
     _seedComplete = true;
     if (isFirstTick && currentUris.isNotEmpty) {
       io.stderr.writeln(
-        'flutter_network_mcp: auto-attach first tick — evaluating '
+        'glint_network: auto-attach first tick — evaluating '
         '${currentUris.length} currently-running app(s) against allowlist '
         '${allowedAppPatterns.join(", ")}. Matching apps attach immediately.',
       );
@@ -228,7 +229,7 @@ class AutoAttacher {
 
       if (!_matchesAllowlist(appName)) {
         io.stderr.writeln(
-          'flutter_network_mcp: auto-attach skipped $uri '
+          'glint_network: auto-attach skipped $uri '
           '(app "$displayName") — no allowlist pattern matched. '
           'Allowlist: ${allowedAppPatterns.join(", ")}.',
         );
@@ -237,7 +238,7 @@ class AutoAttacher {
 
       if (_matchesDenylist(appName)) {
         io.stderr.writeln(
-          'flutter_network_mcp: auto-attach skipped $uri '
+          'glint_network: auto-attach skipped $uri '
           '(app "$displayName") — denylist matched. Denylist: '
           '${deniedAppPatterns.join(", ")}.',
         );
@@ -252,7 +253,7 @@ class AutoAttacher {
               s.vmServiceUri != uri &&
               appSessionIdentity(s.appName) == newIdentity)) {
         io.stderr.writeln(
-          'flutter_network_mcp: auto-attach skipped $uri (app "$displayName"): '
+          'glint_network: auto-attach skipped $uri (app "$displayName"): '
           'looks like a hot restart of an already-tracked app; the '
           'migration watcher will reattach it under the existing session id.',
         );
@@ -266,19 +267,19 @@ class AutoAttacher {
         );
         if (result['error'] != null) {
           io.stderr.writeln(
-            'flutter_network_mcp: auto-attach skipped $uri — '
+            'glint_network: auto-attach skipped $uri — '
             '${result['error']}',
           );
         } else {
           io.stderr.writeln(
-            'flutter_network_mcp: auto-attached to '
+            'glint_network: auto-attached to '
             '${result['appName'] ?? "app"} '
             '(session ${result['liveSessionId']}).',
           );
         }
       } catch (e) {
         io.stderr.writeln(
-          'flutter_network_mcp: auto-attach error for $uri: $e',
+          'glint_network: auto-attach error for $uri: $e',
         );
       }
     }
@@ -295,7 +296,7 @@ class AutoAttacher {
       ..clear()
       ..addAll(asList.sublist(asList.length ~/ 2));
     io.stderr.writeln(
-      'flutter_network_mcp: auto-attach known-URI set hit cap '
+      'glint_network: auto-attach known-URI set hit cap '
       '($_seenUrisCap); pruned to ${_seenUris.length}. Pathological '
       'vmServiceUri churn? File an issue.',
     );

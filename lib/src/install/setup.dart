@@ -6,8 +6,9 @@ import 'package:path/path.dart' as p;
 import '../config/auto_attach_config.dart';
 import '../vm/dtd_discovery.dart';
 import 'install.dart' as install_cmd;
+import '../util/network_env.dart';
 
-/// `flutter_network_mcp setup` — interactive first-run wizard.
+/// `glint_network setup` — interactive first-run wizard.
 ///
 /// Six numbered steps, each opt-in via y/N prompt:
 ///
@@ -24,7 +25,7 @@ import 'install.dart' as install_cmd;
 /// never silently changes anything.
 Future<void> runSetup(List<String> args) async {
   io.stdout.writeln('');
-  io.stdout.writeln('flutter_network_mcp setup');
+  io.stdout.writeln('glint_network setup');
   io.stdout.writeln('=========================');
   io.stdout.writeln(
     'Interactive first-run wizard. Each step is opt-in (default: skip).',
@@ -59,7 +60,7 @@ Future<void> _stepScaffoldHostConfig() async {
     'manually for now.',
   );
 
-  final home = io.Platform.environment['HOME'];
+  final home = networkEnv['HOME'];
   if (home == null || home.isEmpty) {
     io.stdout.writeln(
       'Skipping: HOME env var not set, can\'t locate ~/.claude.json.',
@@ -77,18 +78,28 @@ Future<void> _stepScaffoldHostConfig() async {
     '${localExists ? "$localPath (exists)" : "$localPath (missing)"}.',
   );
 
+  for (final path in [if (globalExists) globalPath, if (localExists) localPath]) {
+    if (_hasMcpEntry(_readJson(path), 'flutter-network')) {
+      io.stdout.writeln(
+        'Found the old "flutter-network" entry in $path. Rename it to '
+        '"glint-network" and set its command to glint_network; the old '
+        'flutter_network_mcp command still works until then.',
+      );
+      return;
+    }
+  }
   if (globalExists &&
-      _hasMcpEntry(_readJson(globalPath), 'flutter-network')) {
+      _hasMcpEntry(_readJson(globalPath), 'glint-network')) {
     io.stdout.writeln(
-      'Already registered in ~/.claude.json under "flutter-network". '
+      'Already registered in ~/.claude.json under "glint-network". '
       'Skipping scaffold.',
     );
     return;
   }
   if (localExists &&
-      _hasMcpEntry(_readJson(localPath), 'flutter-network')) {
+      _hasMcpEntry(_readJson(localPath), 'glint-network')) {
     io.stdout.writeln(
-      'Already registered in $localPath under "flutter-network". '
+      'Already registered in $localPath under "glint-network". '
       'Skipping scaffold.',
     );
     return;
@@ -108,9 +119,9 @@ Future<void> _stepScaffoldHostConfig() async {
   final existing = _readJson(targetPath);
   final mcpServers = (existing['mcpServers'] as Map?)?.cast<String, Object?>() ??
       <String, Object?>{};
-  mcpServers['flutter-network'] = <String, Object?>{
+  mcpServers['glint-network'] = <String, Object?>{
     'type': 'stdio',
-    'command': 'flutter_network_mcp',
+    'command': 'glint_network',
   };
   existing['mcpServers'] = mcpServers;
   _writeJson(targetPath, existing);
@@ -176,7 +187,7 @@ Future<void> _stepInstall() async {
     'every spawn (~1–2s cold). AOT cuts startup to <100ms and avoids '
     'MCP-host handshake races.',
   );
-  if (!_ask('Run `flutter_network_mcp install` now?', defaultNo: false)) {
+  if (!_ask('Run `glint_network install` now?', defaultNo: false)) {
     io.stdout.writeln('Skipping. You can run it later with that command.');
     return;
   }

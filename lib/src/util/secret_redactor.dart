@@ -1,4 +1,4 @@
-import 'dart:io' as io;
+import 'network_env.dart';
 
 /// Masks bearer tokens, JWTs, long hex keys and `password=`-style values in free text.
 String redactSecrets(String input) {
@@ -25,10 +25,10 @@ Map<String, dynamic> redactHeaderValues(
             : e.value,
     };
 
-/// True when the user asked to keep secret header values in the capture database (`FLUTTER_NETWORK_MCP_STORE_SECRETS`).
+/// True when the user asked to keep secret header values in the capture database (`GLINT_NETWORK_STORE_SECRETS`).
 bool storeSecrets([Map<String, String>? env]) {
   final v =
-      (env ?? io.Platform.environment)['FLUTTER_NETWORK_MCP_STORE_SECRETS']
+      (env ?? networkEnv)['GLINT_NETWORK_STORE_SECRETS']
           ?.trim()
           .toLowerCase();
   return v == 'true' || v == '1' || v == 'yes' || v == 'on';

@@ -1,5 +1,5 @@
 import 'dart:collection';
-import 'dart:io' as io;
+import '../util/network_env.dart';
 
 /// One captured log record from the VM service Logging/Stdout/Stderr streams.
 class LogEntry {
@@ -43,12 +43,12 @@ class LogEntry {
 class LogBuffer {
   LogBuffer({int? capacity}) : capacity = capacity ?? _envCapacity();
 
-  /// Reads `FLUTTER_NETWORK_MCP_LOG_BUFFER` (alias:
-  /// `FLUTTER_NETWORK_MCP_LOG_BUFFER_SIZE`), clamped 50 to [maxCapacity]. Default [defaultCapacity].
+  /// Reads `GLINT_NETWORK_LOG_BUFFER` (alias:
+  /// `GLINT_NETWORK_LOG_BUFFER_SIZE`), clamped 50 to [maxCapacity]. Default [defaultCapacity].
   static int _envCapacity() {
-    final env = io.Platform.environment;
-    final raw = env['FLUTTER_NETWORK_MCP_LOG_BUFFER'] ??
-        env['FLUTTER_NETWORK_MCP_LOG_BUFFER_SIZE'];
+    final env = networkEnv;
+    final raw = env['GLINT_NETWORK_LOG_BUFFER'] ??
+        env['GLINT_NETWORK_LOG_BUFFER_SIZE'];
     final parsed = raw == null ? null : int.tryParse(raw);
     if (parsed == null) return defaultCapacity;
     if (parsed < 50) return 50;

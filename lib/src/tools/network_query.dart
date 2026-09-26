@@ -31,7 +31,7 @@ final networkQueryTool = Tool(
       'websocket_messages(session_id, conn_key, ts_us, direction, kind, bytes); '
       'alerts(session_id, ts_ms, severity, kind, title, drained). A failed query '
       'returns the live `schema` map; full guide at resource '
-      'flutter-network://docs/tools/power/network_query.md.',
+      'glint-network://docs/tools/power/network_query.md.',
   inputSchema: Schema.object(
     properties: {
       'sql': Schema.string(

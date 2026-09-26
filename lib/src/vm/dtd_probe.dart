@@ -150,7 +150,7 @@ class DtdProbe {
         await client.disconnect();
       } catch (e) {
         io.stderr.writeln(
-          'flutter_network_mcp: DtdProbe disconnect failed for ${c.wsUri} '
+          'glint_network: DtdProbe disconnect failed for ${c.wsUri} '
           '($e). Probe result unaffected.',
         );
       }

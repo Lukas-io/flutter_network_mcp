@@ -17,7 +17,7 @@ final ignoredHostsTool = Tool(
       '(e.g. dev.example.com/socket.io/*) so you can silence one noisy path '
       'while keeping the rest of the host. Case-insensitive; only new captures '
       'are filtered. The opposite (capture ONLY matching requests) is the '
-      'capture_allow tool / FLUTTER_NETWORK_MCP_CAPTURE_ALLOW env var, surfaced '
+      'capture_allow tool / GLINT_NETWORK_CAPTURE_ALLOW env var, surfaced '
       'in the list output as captureAllowlist.',
   inputSchema: Schema.object(
     properties: {
@@ -63,7 +63,7 @@ FutureOr<CallToolResult> ignoredHosts(CallToolRequest request) async {
           'captureAllowlist': {
             'active': allowlist.isNotEmpty,
             'patterns': allowlist,
-            'managedBy': 'capture_allow tool (persistent) + FLUTTER_NETWORK_MCP_CAPTURE_ALLOW env',
+            'managedBy': 'capture_allow tool (persistent) + GLINT_NETWORK_CAPTURE_ALLOW env',
             if (allowlist.isNotEmpty)
               'note': 'Only requests matching these patterns are captured; everything else is dropped.',
           },

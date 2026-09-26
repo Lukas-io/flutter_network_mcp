@@ -5,6 +5,7 @@ import 'package:dart_mcp/server.dart';
 
 import '../storage/captures_db.dart';
 import '../storage/database.dart';
+import '../util/network_env.dart';
 
 /// Records tool-usage events (issue #79, Phase 1). Privacy-safe by
 /// construction: only the tool NAME, the arg KEYS the agent passed (never
@@ -15,12 +16,12 @@ import '../storage/database.dart';
 /// shipped anywhere in Phase 1 (aggregate shipping is Phase 3, gated on the
 /// collector).
 ///
-/// Default-on. Opt out with `FLUTTER_NETWORK_MCP_NO_TELEMETRY=true` (the same
+/// Default-on. Opt out with `GLINT_NETWORK_NO_TELEMETRY=true` (the same
 /// flag that disables crash telemetry) or the granular
-/// `FLUTTER_NETWORK_MCP_NO_USAGE=true`.
+/// `GLINT_NETWORK_NO_USAGE=true`.
 ///
 /// Correlation: a per-call id groups a burst of tool calls into one "turn".
-/// It rolls over after `FLUTTER_NETWORK_MCP_USAGE_GAP_MS` (default 60s) of
+/// It rolls over after `GLINT_NETWORK_USAGE_GAP_MS` (default 60s) of
 /// inactivity — MCP carries no conversation id, so this gap heuristic is the
 /// proxy. The id is `<process-token>-<turnSeq>`, so it carries no PII.
 class UsageRecorder {
@@ -36,10 +37,10 @@ class UsageRecorder {
   static void resetForTest() => _instance = null;
 
   static UsageRecorder _fromEnv() {
-    final env = io.Platform.environment;
-    final off = _truthy(env['FLUTTER_NETWORK_MCP_NO_TELEMETRY']) ||
-        _truthy(env['FLUTTER_NETWORK_MCP_NO_USAGE']);
-    final gapRaw = int.tryParse(env['FLUTTER_NETWORK_MCP_USAGE_GAP_MS'] ?? '');
+    final env = networkEnv;
+    final off = _truthy(env['GLINT_NETWORK_NO_TELEMETRY']) ||
+        _truthy(env['GLINT_NETWORK_NO_USAGE']);
+    final gapRaw = int.tryParse(env['GLINT_NETWORK_USAGE_GAP_MS'] ?? '');
     final gap = (gapRaw == null || gapRaw < 1000) ? 60000 : gapRaw;
     return UsageRecorder.config(enabled: !off, gapMs: gap);
   }

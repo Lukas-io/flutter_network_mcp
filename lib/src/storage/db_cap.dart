@@ -147,7 +147,7 @@ class DbCapManager {
       if (!_warnedNothingEvictable) {
         _warnedNothingEvictable = true;
         io.stderr.writeln(
-          'flutter_network_mcp: DB is ${_mb(size)}MB (> ${_mb(cap)}MB cap) but '
+          'glint_network: DB is ${_mb(size)}MB (> ${_mb(cap)}MB cap) but '
           'all remaining data belongs to live session(s); cannot evict '
           'live data. Detach to let it be reclaimed, or raise the cap.',
         );
@@ -158,7 +158,7 @@ class DbCapManager {
     _warnedNothingEvictable = false;
     lastEviction = result.toJson();
     io.stderr.writeln(
-      'flutter_network_mcp: DB over cap (${_mb(originalSize)}MB > ${_mb(cap)}MB) '
+      'glint_network: DB over cap (${_mb(originalSize)}MB > ${_mb(cap)}MB) '
       '— evicted ${result.bodiesDropped} bodies, ${result.logsDropped} logs, '
       '${result.sessionsDropped} session(s), freed ${_mb(result.bytesFreed)}MB.',
     );

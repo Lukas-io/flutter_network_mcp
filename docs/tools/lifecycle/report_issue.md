@@ -9,7 +9,7 @@ when_to_use: When something breaks or feels off and the agent has enough context
 - You don't have a clear summary or body to file — vague reports waste maintainer cycles.
 - The issue is about the user's app (their HTTP error, their RenderFlex overflow) — that's their bug, not the MCP's.
 - You've already filed an issue for the same problem this session — the maintainer dedupes upstream but local duplicates are noise.
-- You're not sure whether something is a bug or just unfamiliar — peek at the existing issues first via `gh issue list --repo Lukas-io/flutter_network_mcp` (if you have shell access).
+- You're not sure whether something is a bug or just unfamiliar — peek at the existing issues first via `gh issue list --repo Lukas-io/glint` (if you have shell access).
 
 ## Use this when
 
@@ -23,7 +23,7 @@ when_to_use: When something breaks or feels off and the agent has enough context
 
 1. Redaction runs over `title` and `body`: home directories on macOS, Linux and Windows become `<home>`, anything between home and `lib/`, `test/` or `bin/` becomes `<project>`, and bearer tokens, JWTs, long hex keys and `password=`-style values are masked. It is a safety net; agents should still keep paths and secrets out of issue text. Call with `auto:false` first to draft without filing and show the user.
 2. Labels picked by `type`: `bug` → `[bug, agent-filed]`; `ux` → `[ux-friction, agent-filed]`. The `agent-filed` label lets the maintainer triage agent-vs-human reports.
-3. If `gh` CLI is installed AND `auto:true` (default): the tool shells `gh issue create --repo Lukas-io/flutter_network_mcp --title ... --body ... --label ...` and returns the URL of the filed issue. Labels the repo does not have (checked with `gh label list`) are left off and listed in `droppedLabels`, and if `gh` still reports a missing label it retries once with no labels, so a label never blocks the filing. If `gh issue create` fails, the reply falls back to the paste-ready link below, with the exit code and stderr under `warnings`.
+3. If `gh` CLI is installed AND `auto:true` (default): the tool shells `gh issue create --repo Lukas-io/glint --title ... --body ... --label ...` and returns the URL of the filed issue. Labels the repo does not have (checked with `gh label list`) are left off and listed in `droppedLabels`, and if `gh` still reports a missing label it retries once with no labels, so a label never blocks the filing. If `gh issue create` fails, the reply falls back to the paste-ready link below, with the exit code and stderr under `warnings`.
 4. Else: returns a paste-ready GitHub deep link with `title=`, `body=`, `labels=` query parameters. The user opens the URL in a browser and the new-issue form arrives pre-filled.
 
 ## Args
@@ -43,7 +43,7 @@ when_to_use: When something breaks or feels off and the agent has enough context
   "type": "bug",
   "labels": ["bug", "agent-filed"],
   "title": "network_get returns null mimeType for application/json bodies",
-  "url": "https://github.com/Lukas-io/flutter_network_mcp/issues/42",
+  "url": "https://github.com/Lukas-io/glint/issues/42",
   "nextSteps": [
     "Mention the URL to the user: https://github.com/...",
     "Optionally save a session_note linking to the issue for future continuity"
@@ -62,7 +62,7 @@ when_to_use: When something breaks or feels off and the agent has enough context
   "labels": ["bug", "agent-filed"],
   "title": "...",
   "body": "...",
-  "url": "https://github.com/Lukas-io/flutter_network_mcp/issues/new?title=...&body=...&labels=...",
+  "url": "https://github.com/Lukas-io/glint/issues/new?title=...&body=...&labels=...",
   "nextSteps": [
     "Tell the user to open the deep-link URL — title + body + labels are pre-filled",
     "Install `gh` (https://cli.github.com/) + `gh auth login` to enable one-call filing next time"

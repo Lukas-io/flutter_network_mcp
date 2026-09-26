@@ -15,7 +15,7 @@ final usageStatsTool = Tool(
       'tool->next-tool transition graph tagged with the prior call outcome '
       '(fromOutcome), and selfCorrection (after an error/empty, did the next '
       'call recover). Read-only, process-wide. Opt out with '
-      'FLUTTER_NETWORK_MCP_NO_USAGE.',
+      'GLINT_NETWORK_NO_USAGE.',
   inputSchema: Schema.object(
     properties: {
       'sinceMs': Schema.int(
@@ -45,7 +45,7 @@ FutureOr<CallToolResult> usageStats(CallToolRequest request) async {
   } catch (e) {
     return errorResult('usage_stats query failed: $e', extra: const {
       'nextSteps': [
-        'flutter_network_mcp usage — inspect the raw capture from the CLI',
+        'glint_network usage — inspect the raw capture from the CLI',
       ],
     });
   }
@@ -56,7 +56,7 @@ FutureOr<CallToolResult> usageStats(CallToolRequest request) async {
 
   final summary = rows.isEmpty
       ? 'No tool usage captured over $windowDesc. (Capture is on by default; '
-          'opt out with FLUTTER_NETWORK_MCP_NO_USAGE=true.)'
+          'opt out with GLINT_NETWORK_NO_USAGE=true.)'
       : '${stats['totalEvents']} call(s) across ${stats['totalTurns']} turn(s) '
           'over $windowDesc, ${tools.length} distinct tool(s).';
 
@@ -71,7 +71,7 @@ FutureOr<CallToolResult> usageStats(CallToolRequest request) async {
       );
     }
     nextSteps.add('usage_stats sinceMs:3600000 — narrow to the last hour');
-    nextSteps.add('flutter_network_mcp usage --show — raw events from the CLI');
+    nextSteps.add('glint_network usage --show — raw events from the CLI');
   }
 
   return jsonResult({

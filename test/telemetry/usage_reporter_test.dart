@@ -91,13 +91,13 @@ void main() {
     test('telemetryDisabled honors true / 1 / yes / on (case-insensitive)', () {
       for (final v in ['true', '1', 'yes', 'on', 'TRUE', ' On ']) {
         expect(
-          telemetryDisabled({'FLUTTER_NETWORK_MCP_NO_TELEMETRY': v}),
+          telemetryDisabled({'GLINT_NETWORK_NO_TELEMETRY': v}),
           isTrue,
           reason: v,
         );
       }
       expect(
-        telemetryDisabled({'FLUTTER_NETWORK_MCP_NO_TELEMETRY': 'false'}),
+        telemetryDisabled({'GLINT_NETWORK_NO_TELEMETRY': 'false'}),
         isFalse,
       );
       expect(telemetryDisabled({}), isFalse);
@@ -119,25 +119,25 @@ void main() {
 
     test('sharing is off unless opted in, and DO_NOT_TRACK always wins', () {
       expect(sharingOffReason(env: {}),
-          contains('FLUTTER_NETWORK_MCP_TELEMETRY=on'));
-      expect(sharingOffReason(env: {'FLUTTER_NETWORK_MCP_TELEMETRY': 'on'}),
+          contains('GLINT_NETWORK_TELEMETRY=on'));
+      expect(sharingOffReason(env: {'GLINT_NETWORK_TELEMETRY': 'on'}),
           isNull);
       expect(
           sharingOffReason(env: {
-            'FLUTTER_NETWORK_MCP_TELEMETRY': 'on',
+            'GLINT_NETWORK_TELEMETRY': 'on',
             'DO_NOT_TRACK': '1'
           }),
           contains('DO_NOT_TRACK'));
       expect(
           sharingOffReason(env: {
-            'FLUTTER_NETWORK_MCP_TELEMETRY': 'on',
-            'FLUTTER_NETWORK_MCP_NO_USAGE': 'true'
+            'GLINT_NETWORK_TELEMETRY': 'on',
+            'GLINT_NETWORK_NO_USAGE': 'true'
           }, usage: true),
           contains('NO_USAGE'));
       expect(
           sharingOffReason(env: {
-            'FLUTTER_NETWORK_MCP_TELEMETRY': 'on',
-            'FLUTTER_NETWORK_MCP_NO_USAGE': 'true'
+            'GLINT_NETWORK_TELEMETRY': 'on',
+            'GLINT_NETWORK_NO_USAGE': 'true'
           }),
           isNull);
     });
@@ -151,7 +151,7 @@ void main() {
       dir = Directory.systemTemp.createTempSync('usage_ship_test_');
       CapturesDatabase.open(dataDir: dir.path);
       dao = CapturesDao();
-      UsageReporter.envForTest = {'FLUTTER_NETWORK_MCP_TELEMETRY': 'on'};
+      UsageReporter.envForTest = {'GLINT_NETWORK_TELEMETRY': 'on'};
       // Force audit-log-only so tests never POST to the real (baked)
       // collector, regardless of kCollectorEndpoint.
       UsageReporter.endpointForTest = '';
@@ -245,15 +245,15 @@ void main() {
       UsageReporter.envForTest = {};
       final r = await UsageReporter.ship(dataDir: dir.path);
       expect(r.shipped, isFalse);
-      expect(r.message, contains('FLUTTER_NETWORK_MCP_TELEMETRY=on'));
+      expect(r.message, contains('GLINT_NETWORK_TELEMETRY=on'));
       expect(auditFile().existsSync(), isFalse);
     });
 
     test('the opt-out wins over the opt-in', () async {
       seed(3);
       UsageReporter.envForTest = {
-        'FLUTTER_NETWORK_MCP_TELEMETRY': 'on',
-        'FLUTTER_NETWORK_MCP_NO_USAGE': 'true',
+        'GLINT_NETWORK_TELEMETRY': 'on',
+        'GLINT_NETWORK_NO_USAGE': 'true',
       };
       final r = await UsageReporter.ship(dataDir: dir.path);
       expect(r.shipped, isFalse);

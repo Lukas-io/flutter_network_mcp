@@ -14,7 +14,7 @@ final captureAllowTool = Tool(
       'has any entry, ONLY requests matching a host or host/path glob are '
       'captured and everything else is dropped at capture time — for focused '
       'debugging ("just /stock/*"). Mid-session equivalent of the '
-      'FLUTTER_NETWORK_MCP_CAPTURE_ALLOW env var; both unions apply, and the '
+      'GLINT_NETWORK_CAPTURE_ALLOW env var; both unions apply, and the '
       'ignored_hosts denylist still wins inside the allowed set. Only new '
       'captures are affected.',
   inputSchema: Schema.object(
@@ -55,7 +55,7 @@ FutureOr<CallToolResult> captureAllow(CallToolRequest request) async {
                 if (r['reason'] != null) 'reason': r['reason'],
               },
           ],
-          'envNote': 'FLUTTER_NETWORK_MCP_CAPTURE_ALLOW adds startup patterns too; both unions apply.',
+          'envNote': 'GLINT_NETWORK_CAPTURE_ALLOW adds startup patterns too; both unions apply.',
           'nextSteps': [
             if (rows.isEmpty)
               'capture_allow action:"add" pattern:"api.example.com/stock/*" — capture only this'

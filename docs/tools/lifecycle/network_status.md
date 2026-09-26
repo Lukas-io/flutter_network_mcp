@@ -42,7 +42,7 @@ When `attachIfOne:true` AND `attachedCount == 0` AND `knownApps.length == 1` AND
     "version": "0.6.2",
     "commit": "d804c4d…",
     "isAot": true,
-    "upgradeCommand": "flutter_network_mcp update"
+    "upgradeCommand": "glint_network update"
   },
   "attachedCount": 0,
   "attached": [],
@@ -72,7 +72,7 @@ Other optional fields: `viewedSessionId` (a `session_open` view is active), `sta
 
 `capabilities` is the string `"all"` when every category is enabled, or an array of category keys when the user passed `--capabilities` / `--disable`. `dtd.connectError` appears (string) when the auto-connect attempt fails. `autoAttached` appears only when `attachIfOne:true` actually triggered an attach.
 
-**The `mcp` block (0.6.2+)** carries `version`, `commit` (when the SHA is known — baked at install time or read via git rev-parse under JIT), `isAot` (true = native binary from `flutter_network_mcp install`, false = JIT wrapper), and `upgradeCommand`. When the daily background check has flagged a newer release, an additional `updateAvailable: { latest, checkedAtMs }` field appears — the agent should mention the upgrade to the user and offer to run `flutter_network_mcp update`.
+**The `mcp` block (0.6.2+)** carries `version`, `commit` (when the SHA is known — baked at install time or read via git rev-parse under JIT), `isAot` (true = native binary from `glint_network install`, false = JIT wrapper), and `upgradeCommand`. When the daily background check has flagged a newer release, an additional `updateAvailable: { latest, checkedAtMs }` field appears — the agent should mention the upgrade to the user and offer to run `glint_network update`.
 
 **The `alerts` block (0.6.3+).** `pendingTotal` is the count of DISTINCT signatures: what you branch on for "should I drain?". `pendingEvents` is the SUM of `occurrence_count` across pending rows: what you'd quote when telling the user "there's a burst of 200 events queued, 1 distinct issue." They diverge whenever any single alert collapsed multiple source events into one row (the typical RenderFlex-overflow-in-a-list case). `critical` counts distinct signatures whose escalated severity has reached `critical`. With 2+ sessions attached, `alerts.perAttached` gives the same split per session: `{sessionId, appName, pending, pendingEvents}`.
 

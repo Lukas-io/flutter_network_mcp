@@ -23,6 +23,8 @@ import 'package:flutter_network_mcp/src/update/update_check.dart';
 import 'package:flutter_network_mcp/src/version.dart';
 import 'package:flutter_network_mcp/src/vm/dtd_discovery.dart';
 import 'package:path/path.dart' as p;
+import 'package:flutter_network_mcp/src/util/network_env.dart';
+import 'package:flutter_network_mcp/src/util/legacy_install.dart';
 
 Future<void> main(List<String> args) async {
   // Top-level zone guard. Anything that escapes the per-call try/catches
@@ -33,13 +35,13 @@ Future<void> main(List<String> args) async {
   // 0.7.1: the handler also fires TelemetryReporter.maybeReport, which
   // writes a tamper-evident audit log + (when configured) POSTs an
   // anonymized payload to the maintainer's collector, only for users who
-  // set FLUTTER_NETWORK_MCP_TELEMETRY=on. See
+  // set GLINT_NETWORK_TELEMETRY=on. See
   // docs/telemetry.md.
   await runZonedGuarded(() => _runMain(args), (error, stack) {
     io.stderr.writeln(
-      'flutter_network_mcp: UNCAUGHT ERROR ($error). The MCP host will see '
+      'glint_network: UNCAUGHT ERROR ($error). The MCP host will see '
       'the stdio channel close — restart your MCP host to recover. Please '
-      'report this at https://github.com/Lukas-io/flutter_network_mcp/issues '
+      'report this at https://github.com/Lukas-io/glint/issues '
       'with the trace below.\n$stack',
     );
     unawaited(
@@ -50,6 +52,8 @@ Future<void> main(List<String> args) async {
 }
 
 Future<void> _runMain(List<String> args) async {
+  final legacyNotice = legacyUse.notice;
+  if (legacyNotice != null) io.stderr.writeln('glint_network: $legacyNotice');
   // Subcommands short-circuit ArgParser. Keep this dispatch FIRST so a
   // typo on the main flags doesn't pre-empt `install` / `update`.
   if (args.isNotEmpty) {
@@ -72,15 +76,15 @@ Future<void> _runMain(List<String> args) async {
   // cold), which the MCP host can race and mark the server "Failed to
   // connect". `bool.fromEnvironment('dart.vm.product')` is the canonical
   // AOT-vs-JIT check — true only when compiled with `dart compile exe`.
-  final envForNudge = io.Platform.environment;
+  final envForNudge = networkEnv;
   if (!isAotBuild &&
-      envForNudge['FLUTTER_NETWORK_MCP_NO_JIT_NUDGE']?.toLowerCase() != 'true') {
+      envForNudge['GLINT_NETWORK_NO_JIT_NUDGE']?.toLowerCase() != 'true') {
     io.stderr.writeln(
-      'flutter_network_mcp: running in JIT mode — slow cold-start may '
+      'glint_network: running in JIT mode — slow cold-start may '
       'cause MCP host handshake timeouts ("Failed to connect" on first '
       'attach, then success on the next probe). Run '
-      '`flutter_network_mcp install` once for sub-100ms native startup. '
-      '(Set FLUTTER_NETWORK_MCP_NO_JIT_NUDGE=true to silence.)',
+      '`glint_network install` once for sub-100ms native startup. '
+      '(Set GLINT_NETWORK_NO_JIT_NUDGE=true to silence.)',
     );
   }
 
@@ -89,7 +93,7 @@ Future<void> _runMain(List<String> args) async {
       'dtd-uri',
       help:
           'Default DTD WebSocket URI for network_attach. Falls back to the '
-          'FLUTTER_NETWORK_MCP_DTD_URI environment variable. When neither '
+          'GLINT_NETWORK_DTD_URI environment variable. When neither '
           'is set the server auto-discovers from the standard package:dtd '
           'discovery dir (~/Library/Application Support/dart/dtd on macOS) '
           'unless --no-auto-discover-dtd is passed.',
@@ -102,7 +106,7 @@ Future<void> _runMain(List<String> args) async {
           'discovery directory at startup. Use when you want a fully '
           'explicit .mcp.json (paranoid configs, CI, multi-DTD machines '
           'where guessing would be dangerous). Env-var fallback: '
-          'FLUTTER_NETWORK_MCP_AUTO_DISCOVER_DTD=false.',
+          'GLINT_NETWORK_AUTO_DISCOVER_DTD=false.',
     )
     ..addOption(
       'data-dir',
@@ -111,7 +115,7 @@ Future<void> _runMain(List<String> args) async {
           '~/Library/Application Support/flutter_network_mcp. '
           r'Linux default: $XDG_DATA_HOME/flutter_network_mcp or '
           '~/.local/share/flutter_network_mcp. Env-var fallback: '
-          'FLUTTER_NETWORK_MCP_DATA_DIR.',
+          'GLINT_NETWORK_DATA_DIR.',
     )
     ..addFlag(
       'no-persist',
@@ -120,7 +124,7 @@ Future<void> _runMain(List<String> args) async {
           'Ephemeral mode: keep captures in memory only, never write to disk. '
           'Captures are readable live but vanish when the server exits. For '
           'noisy or sensitive flows. Env-var fallback: '
-          'FLUTTER_NETWORK_MCP_NO_PERSIST=true.',
+          'GLINT_NETWORK_NO_PERSIST=true.',
     )
     ..addOption(
       'capabilities',
@@ -129,13 +133,13 @@ Future<void> _runMain(List<String> args) async {
           'http, sockets, websockets, logs, alerts, search, sessions, sql, '
           'admin. '
           'Lifecycle (status/attach/detach) is always on. Falls back to '
-          'FLUTTER_NETWORK_MCP_CAPABILITIES. Mutually exclusive with --disable.',
+          'GLINT_NETWORK_CAPABILITIES. Mutually exclusive with --disable.',
     )
     ..addOption(
       'disable',
       help:
           'Comma-separated denylist of categories to disable. Same option '
-          'set as --capabilities. Falls back to FLUTTER_NETWORK_MCP_DISABLE.',
+          'set as --capabilities. Falls back to GLINT_NETWORK_DISABLE.',
     )
     ..addOption(
       'auto-attach',
@@ -151,10 +155,10 @@ Future<void> _runMain(List<String> args) async {
           'first tick (0.6.2 change — the allowlist is the explicit '
           'opt-in). Manual network_detach survives — detached apps '
           'stay in the known set so they won\'t re-attach. '
-          'Poll interval: FLUTTER_NETWORK_MCP_AUTO_ATTACH_POLL_MS '
+          'Poll interval: GLINT_NETWORK_AUTO_ATTACH_POLL_MS '
           '(default 5000, clamped 1000–60000). Requires --dtd-uri or '
-          'FLUTTER_NETWORK_MCP_DTD_URI. Env-var fallback: '
-          'FLUTTER_NETWORK_MCP_AUTO_ATTACH=app1,app2.',
+          'GLINT_NETWORK_DTD_URI. Env-var fallback: '
+          'GLINT_NETWORK_AUTO_ATTACH=app1,app2.',
     )
     ..addOption(
       'auto-attach-deny',
@@ -166,7 +170,7 @@ Future<void> _runMain(List<String> args) async {
           'physical hardware or emulators when the allowlist would '
           'otherwise grab them. Example: '
           '--auto-attach=eats_mobile --auto-attach-deny="Pixel 7,Android emulator". '
-          'Env-var fallback: FLUTTER_NETWORK_MCP_AUTO_ATTACH_DENY=pat1,pat2.',
+          'Env-var fallback: GLINT_NETWORK_AUTO_ATTACH_DENY=pat1,pat2.',
     )
     ..addFlag('help', abbr: 'h', negatable: false);
 
@@ -181,29 +185,29 @@ Future<void> _runMain(List<String> args) async {
   }
 
   if (results['help'] == true) {
-    io.stderr.writeln('flutter_network_mcp');
+    io.stderr.writeln('glint_network');
     io.stderr.writeln(parser.usage);
     return;
   }
 
-  final env = io.Platform.environment;
+  final env = networkEnv;
   var dtdUri = (results['dtd-uri'] as String?) ??
-      env['FLUTTER_NETWORK_MCP_DTD_URI'];
+      env['GLINT_NETWORK_DTD_URI'];
 
   // Auto-discover the DTD URI from the standard package:dtd discovery dir
   // when nothing was configured explicitly. Opt-out: --no-auto-discover-dtd
-  // or FLUTTER_NETWORK_MCP_AUTO_DISCOVER_DTD=false. When discovery finds
+  // or GLINT_NETWORK_AUTO_DISCOVER_DTD=false. When discovery finds
   // nothing, dtdUri stays null and downstream behaviour is unchanged
   // (network_attach reports its existing "no DTD URI configured" error).
   final autoDiscover = !((results['no-auto-discover-dtd'] as bool?) ?? false) &&
-      (env['FLUTTER_NETWORK_MCP_AUTO_DISCOVER_DTD']?.toLowerCase() != 'false');
+      (env['GLINT_NETWORK_AUTO_DISCOVER_DTD']?.toLowerCase() != 'false');
   if (dtdUri == null && autoDiscover) {
     final candidates = DtdDiscovery.discover();
     final picked = candidates.isEmpty ? null : candidates.first;
     if (picked != null) {
       dtdUri = picked.wsUri;
       io.stderr.writeln(
-        'flutter_network_mcp: auto-discovered DTD at $dtdUri '
+        'glint_network: auto-discovered DTD at $dtdUri '
         '(pid ${picked.pid}, '
         'workspaceRoot: ${picked.workspaceRoot ?? "(unknown)"}, '
         'epoch ${picked.epoch.toIso8601String()}). '
@@ -214,8 +218,8 @@ Future<void> _runMain(List<String> args) async {
 
   final dataDir = results['data-dir'] as String?;
   final capabilities =
-      (results['capabilities'] as String?) ?? env['FLUTTER_NETWORK_MCP_CAPABILITIES'];
-  final disable = (results['disable'] as String?) ?? env['FLUTTER_NETWORK_MCP_DISABLE'];
+      (results['capabilities'] as String?) ?? env['GLINT_NETWORK_CAPABILITIES'];
+  final disable = (results['disable'] as String?) ?? env['GLINT_NETWORK_DISABLE'];
 
   try {
     CapabilityConfig.install(
@@ -228,25 +232,25 @@ Future<void> _runMain(List<String> args) async {
   }
 
   final noPersist = (results['no-persist'] as bool? ?? false) ||
-      env['FLUTTER_NETWORK_MCP_NO_PERSIST']?.toLowerCase() == 'true';
+      env['GLINT_NETWORK_NO_PERSIST']?.toLowerCase() == 'true';
 
   try {
     CapturesDatabase.open(dataDir: dataDir, inMemory: noPersist);
   } on io.FileSystemException catch (e) {
     io.stderr.writeln(
-      'flutter_network_mcp: cannot create data dir '
+      'glint_network: cannot create data dir '
       '(${e.osError?.message ?? e.message}).\n'
-      'Pass --data-dir <writable path> or set FLUTTER_NETWORK_MCP_DATA_DIR.',
+      'Pass --data-dir <writable path> or set GLINT_NETWORK_DATA_DIR.',
     );
     io.exitCode = 73; // EX_CANTCREAT
     return;
   } on NewerDatabaseError catch (e) {
-    io.stderr.writeln('flutter_network_mcp: $e');
+    io.stderr.writeln('glint_network: $e');
     io.exitCode = 78; // EX_CONFIG
     return;
   } on StateError catch (e) {
     // Thrown by CapturesDatabase.open() when every candidate failed.
-    io.stderr.writeln('flutter_network_mcp: ${e.message}');
+    io.stderr.writeln('glint_network: ${e.message}');
     io.exitCode = 73;
     return;
   } catch (e, st) {
@@ -255,7 +259,7 @@ Future<void> _runMain(List<String> args) async {
     // first PRAGMA. Whatever the source, surface a clean error + exit
     // code 70 (EX_SOFTWARE) instead of crashing with a raw Dart stack.
     io.stderr.writeln(
-      'flutter_network_mcp: database open failed ($e). The DB may be '
+      'glint_network: database open failed ($e). The DB may be '
       'corrupted or running a migration this binary version doesn\'t '
       'support. Try --data-dir <fresh path> to bypass.',
     );
@@ -274,12 +278,12 @@ Future<void> _runMain(List<String> args) async {
       final orphaned = CapturesDao().endOrphanedSessions();
       if (orphaned > 0) {
         io.stderr.writeln(
-          'flutter_network_mcp: ended $orphaned session(s) left open by an '
+          'glint_network: ended $orphaned session(s) left open by an '
           'earlier process; their captures stay readable as history.',
         );
       }
     } catch (e) {
-      io.stderr.writeln('flutter_network_mcp: orphan sweep failed: $e');
+      io.stderr.writeln('glint_network: orphan sweep failed: $e');
     }
   }
 
@@ -294,12 +298,12 @@ Future<void> _runMain(List<String> args) async {
         final repaired = CapturesDao().repairSearchIndex();
         if (repaired > 0) {
           io.stderr.writeln(
-            'flutter_network_mcp: search-index repair added $repaired '
+            'glint_network: search-index repair added $repaired '
             'previously-unindexed request(s).',
           );
         }
       } catch (e) {
-        io.stderr.writeln('flutter_network_mcp: search-index repair failed: $e');
+        io.stderr.writeln('glint_network: search-index repair failed: $e');
       }
     }));
   }
@@ -309,7 +313,7 @@ Future<void> _runMain(List<String> args) async {
   SessionRegistry.instance.startHeartbeat();
 
   // Background "is there a newer version?" probe. Daily-cached, opt-out
-  // via FLUTTER_NETWORK_MCP_NO_UPDATE_CHECK=true. Fire-and-forget — never
+  // via GLINT_NETWORK_NO_UPDATE_CHECK=true. Fire-and-forget — never
   // blocks the MCP-host JSON-RPC handshake, never disturbs startup.
   unawaited(
     UpdateCheck.maybeCheck(
@@ -319,14 +323,14 @@ Future<void> _runMain(List<String> args) async {
   );
 
   // Background usage-rollup ship (#79 Phase 3). Daily-gated and opt-in
-  // (FLUTTER_NETWORK_MCP_TELEMETRY=on). Folds the events accrued
+  // (GLINT_NETWORK_TELEMETRY=on). Folds the events accrued
   // since the last ship into one privacy-safe aggregate, records it to the
   // tamper-evident audit log, and POSTs to the collector when configured.
   // Fire-and-forget: never blocks the MCP-host handshake, never throws.
   unawaited(UsageReporter.maybeAutoShip());
 
   // Optional: watch DTD for new apps and auto-attach. CLI flag takes
-  // priority; env var fallback is FLUTTER_NETWORK_MCP_AUTO_ATTACH=app1,app2.
+  // priority; env var fallback is GLINT_NETWORK_AUTO_ATTACH=app1,app2.
   // Value is a comma-separated allowlist of substring patterns. Empty /
   // absent disables. No bool form — to enable auto-attach you must say
   // which apps it's allowed to grab.
@@ -335,14 +339,14 @@ Future<void> _runMain(List<String> args) async {
   // sets via the agent-callable `auto_attach_config` tool; env vars and
   // flags are per-launch overrides.
   final fileConfig = AutoAttachConfig.loadFromFile();
-  final envAllowRaw = env['FLUTTER_NETWORK_MCP_AUTO_ATTACH'];
+  final envAllowRaw = env['GLINT_NETWORK_AUTO_ATTACH'];
   final flagAllowRaw = results['auto-attach'] as String?;
   final autoAttachAllowlist = flagAllowRaw != null
       ? _parseAllowlist(flagAllowRaw)
       : envAllowRaw != null
           ? _parseAllowlist(envAllowRaw)
           : fileConfig.allowed;
-  final envDenyRaw = env['FLUTTER_NETWORK_MCP_AUTO_ATTACH_DENY'];
+  final envDenyRaw = env['GLINT_NETWORK_AUTO_ATTACH_DENY'];
   final flagDenyRaw = results['auto-attach-deny'] as String?;
   final autoAttachDenylist = flagDenyRaw != null
       ? _parseAllowlist(flagDenyRaw)
@@ -370,14 +374,14 @@ Future<void> _runMain(List<String> args) async {
   // #16: hot-restart auto-migration watcher. Keeps a session id stable when
   // an attached app's VM URI changes across a restart, for ANY attached app
   // (not just auto-attached ones). Cheap when nothing is attached (the tick
-  // early-returns). Opt out with FLUTTER_NETWORK_MCP_NO_AUTO_MIGRATE=true.
-  if (env['FLUTTER_NETWORK_MCP_NO_AUTO_MIGRATE']?.toLowerCase() != 'true') {
+  // early-returns). Opt out with GLINT_NETWORK_NO_AUTO_MIGRATE=true.
+  if (env['GLINT_NETWORK_NO_AUTO_MIGRATE']?.toLowerCase() != 'true') {
     SessionMigrator(defaultDtdUri: dtdUri).start();
   }
 
   // Alert retention: auto-expire old alerts from non-attached sessions so
   // the pending banner reflects recent state instead of accumulating for
-  // weeks. Window via FLUTTER_NETWORK_MCP_ALERT_RETENTION_DAYS (default 14,
+  // weeks. Window via GLINT_NETWORK_ALERT_RETENTION_DAYS (default 14,
   // 0 = keep forever); runtime-tunable via alerts_config. Runs a deferred
   // first sweep + hourly, independent of attach.
   if (!noPersist) {
@@ -392,7 +396,7 @@ Future<void> _runMain(List<String> args) async {
 /// VM-service WebSockets all hold the event loop open. Before this guard,
 /// killing or reconnecting the MCP host (a `/mcp` reconnect, a crashed IDE,
 /// a closed terminal) orphaned the server — observed in the wild as
-/// multi-day `flutter_network_mcp` processes re-parented to PID 1. The pub
+/// multi-day `glint_network` processes re-parented to PID 1. The pub
 /// `sh` shim compounds it: it neither execs nor forwards signals, so a
 /// SIGTERM aimed at the wrapper never reaches the Dart VM.
 ///
@@ -408,7 +412,7 @@ void _installLifecycleGuard(FlutterNetworkMcpServer server) {
   Never shutdown(String reason) {
     if (!exiting) {
       exiting = true;
-      io.stderr.writeln('flutter_network_mcp: $reason — shutting down.');
+      io.stderr.writeln('glint_network: $reason — shutting down.');
       try {
         CapturesDatabase.instance.close();
       } catch (_) {/* already closed or never opened */}

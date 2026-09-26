@@ -9,7 +9,7 @@ when_to_use: At the start of any debugging turn — it surfaces issues the serve
 - Nothing is attached and no session is opened: the call fails with a scope error (not a global drain). Pass `sessionId`, `session_open` one, or `network_attach` first.
 - You want to look without committing — use `alerts_peek`. Drain marks alerts as seen; a second call returns empty.
 - The user wants you to keep ignoring noisy alerts — tune them via `alerts_config` (disable rules / raise `slowThresholdMs`), not by silently draining.
-- You're polling more than ~once per turn: HTTP alerts fire on capture-writer ticks (default every 2s, `FLUTTER_NETWORK_MCP_POLL_MS`) and log alerts as each record is stored, so over-polling doesn't surface anything new.
+- You're polling more than ~once per turn: HTTP alerts fire on capture-writer ticks (default every 2s, `GLINT_NETWORK_POLL_MS`) and log alerts as each record is stored, so over-polling doesn't surface anything new.
 
 ## Use this when
 

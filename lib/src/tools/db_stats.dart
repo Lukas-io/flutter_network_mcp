@@ -83,7 +83,7 @@ FutureOr<CallToolResult> dbStats(CallToolRequest request) async {
         'enabled': capBytes != null,
         if (capBytes != null) 'maxBytes': capBytes,
         if (capBytes != null) 'maxMb': (capBytes / (1024 * 1024)).toStringAsFixed(0),
-        'env': 'FLUTTER_NETWORK_MCP_MAX_DB_BYTES (0/off disables)',
+        'env': 'GLINT_NETWORK_MAX_DB_BYTES (0/off disables)',
       },
       'alertRetention': {
         'days': AlertRules.instance.alertRetentionDays,

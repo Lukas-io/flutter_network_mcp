@@ -1,4 +1,4 @@
-import 'dart:io' as io;
+import '../util/network_env.dart';
 
 /// Decides whether a captured request is persisted (issue #64). Two layers:
 ///
@@ -6,7 +6,7 @@ import 'dart:io' as io;
 ///   whole host (the pre-#64 behavior); an entry containing `/` is a
 ///   `host/path` glob, so `dev.example.com/socket.io/*` silences just the
 ///   socket.io polling while the REST API on the same host keeps flowing.
-/// - **Allowlist** — opt-in via `FLUTTER_NETWORK_MCP_CAPTURE_ALLOW` (comma-
+/// - **Allowlist** — opt-in via `GLINT_NETWORK_CAPTURE_ALLOW` (comma-
 ///   separated patterns). When non-empty, ONLY matching requests are persisted;
 ///   everything else is dropped. For focused debugging ("just /stock/*").
 ///
@@ -40,7 +40,7 @@ class CaptureFilter {
 
   /// Builds from the denylist [denyEntries] (ignored_hosts) and the allowlist,
   /// which is the union of the persistent [allowEntries] (the `capture_allow`
-  /// table) and the `FLUTTER_NETWORK_MCP_CAPTURE_ALLOW` env var. [allowOverride]
+  /// table) and the `GLINT_NETWORK_CAPTURE_ALLOW` env var. [allowOverride]
   /// lets tests inject the full allowlist instead of the table + env.
   static CaptureFilter build(
     Set<String> denyEntries, {
@@ -56,7 +56,7 @@ class CaptureFilter {
   }
 
   static List<String> _allowFromEnv() {
-    final raw = io.Platform.environment['FLUTTER_NETWORK_MCP_CAPTURE_ALLOW'];
+    final raw = networkEnv['GLINT_NETWORK_CAPTURE_ALLOW'];
     if (raw == null || raw.trim().isEmpty) return const [];
     return [
       for (final p in raw.split(','))

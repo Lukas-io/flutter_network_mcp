@@ -21,10 +21,10 @@ void main() {
           dataDir.path,
         ],
         environment: {
-          'FLUTTER_NETWORK_MCP_NO_UPDATE_CHECK': 'true',
-          'FLUTTER_NETWORK_MCP_NO_JIT_NUDGE': 'true',
-          'FLUTTER_NETWORK_MCP_NO_USAGE': 'true',
-          'FLUTTER_NETWORK_MCP_NO_TELEMETRY': 'true',
+          'GLINT_NETWORK_NO_UPDATE_CHECK': 'true',
+          'GLINT_NETWORK_NO_JIT_NUDGE': 'true',
+          'GLINT_NETWORK_NO_USAGE': 'true',
+          'GLINT_NETWORK_NO_TELEMETRY': 'true',
         },
       );
 

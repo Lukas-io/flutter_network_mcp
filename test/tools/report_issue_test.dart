@@ -3,16 +3,16 @@ import 'package:test/test.dart';
 
 void main() {
   group('labelsForType', () {
-    test('bug → [bug, agent-filed]', () {
-      expect(labelsForTypeForTest('bug'), ['bug', 'agent-filed']);
+    test('bug → [network, bug, agent-filed]', () {
+      expect(labelsForTypeForTest('bug'), ['network', 'bug', 'agent-filed']);
     });
 
-    test('ux → [ux-friction, agent-filed]', () {
-      expect(labelsForTypeForTest('ux'), ['ux-friction', 'agent-filed']);
+    test('ux → [network, ux-friction, agent-filed]', () {
+      expect(labelsForTypeForTest('ux'), ['network', 'ux-friction', 'agent-filed']);
     });
 
-    test('unknown type → [agent-filed]', () {
-      expect(labelsForTypeForTest('weird'), ['agent-filed']);
+    test('unknown type → [network, agent-filed]', () {
+      expect(labelsForTypeForTest('weird'), ['network', 'agent-filed']);
     });
   });
 
@@ -74,7 +74,7 @@ void main() {
       );
       expect(
         url,
-        startsWith('https://github.com/Lukas-io/flutter_network_mcp/issues/new?'),
+        startsWith('https://github.com/Lukas-io/glint/issues/new?'),
       );
       expect(url, contains('title=crash+on+attach'));
       expect(url, contains('body=StateError+thrown'));

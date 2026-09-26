@@ -17,7 +17,7 @@ when_to_use: For focused debugging — "I only care about /stock/*". The inverse
 
 ## How it works
 
-`add`/`remove` write to the `capture_allow` table (persistent across restarts) and refresh the `CaptureFilter` of every attached session's capture writer immediately; `list` reads the table. The effective allowlist is the **union** of this table and the `FLUTTER_NETWORK_MCP_CAPTURE_ALLOW` startup env var (comma-separated). `list` here shows only the table entries; `ignored_hosts action:"list"` shows the full union under `captureAllowlist.patterns`. A request is captured when `(allowlist empty OR it matches the allowlist) AND it is not matched by the ignored_hosts denylist`, so **deny still wins inside the allowed set**.
+`add`/`remove` write to the `capture_allow` table (persistent across restarts) and refresh the `CaptureFilter` of every attached session's capture writer immediately; `list` reads the table. The effective allowlist is the **union** of this table and the `GLINT_NETWORK_CAPTURE_ALLOW` startup env var (comma-separated). `list` here shows only the table entries; `ignored_hosts action:"list"` shows the full union under `captureAllowlist.patterns`. A request is captured when `(allowlist empty OR it matches the allowlist) AND it is not matched by the ignored_hosts denylist`, so **deny still wins inside the allowed set**.
 
 Same pattern syntax as `ignored_hosts`, compared case-insensitively against `host + path` (no scheme, port or query):
 - An entry with **no `/`** is an exact host match. Wildcards are not expanded there, so `*.example.com` matches nothing.
@@ -45,7 +45,7 @@ Patterns are stored as given. `remove` matches the stored string exactly, so pas
 // list
 {"action":"list", "summary":"1 allowlist pattern(s) — ONLY matching requests are captured; everything else is dropped.",
  "count":1, "patterns":[{"pattern":"api.example.com/stock/*", "addedMs":..., "reason":"focus"}],
- "envNote":"FLUTTER_NETWORK_MCP_CAPTURE_ALLOW adds startup patterns too; both unions apply.", "nextSteps":[...]}
+ "envNote":"GLINT_NETWORK_CAPTURE_ALLOW adds startup patterns too; both unions apply.", "nextSteps":[...]}
 
 // remove
 {"action":"remove", "summary":"Removed \"api.example.com/stock/*\" from the allowlist. If the allowlist is now empty, all requests are captured again.",

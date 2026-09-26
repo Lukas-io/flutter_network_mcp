@@ -8,9 +8,9 @@ import '../telemetry/path_redactor.dart';
 import 'error_kind.dart';
 import 'result.dart';
 
-const String _kRepo = 'Lukas-io/flutter_network_mcp';
+const String _kRepo = 'Lukas-io/glint';
 const String _kIssueNewBase =
-    'https://github.com/Lukas-io/flutter_network_mcp/issues/new';
+    'https://github.com/Lukas-io/glint/issues/new';
 
 final reportIssueTool = Tool(
   name: 'report_issue',
@@ -153,11 +153,11 @@ FutureOr<CallToolResult> reportIssue(CallToolRequest request) async {
 List<String> _labelsForType(String type) {
   switch (type) {
     case 'bug':
-      return const ['bug', 'agent-filed'];
+      return const ['network', 'bug', 'agent-filed'];
     case 'ux':
-      return const ['ux-friction', 'agent-filed'];
+      return const ['network', 'ux-friction', 'agent-filed'];
     default:
-      return const ['agent-filed'];
+      return const ['network', 'agent-filed'];
   }
 }
 

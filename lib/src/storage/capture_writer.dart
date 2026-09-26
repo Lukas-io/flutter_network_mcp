@@ -13,6 +13,7 @@ import 'captures_db.dart';
 import 'db_cap.dart';
 import 'ws_timeline_ingestor.dart';
 import '../util/searchable_text.dart';
+import '../util/network_env.dart';
 
 /// Periodically polls the VM service and writes HTTP + socket data into the
 /// captures DB. Also drives the alert detector on each upserted request and
@@ -23,9 +24,9 @@ class CaptureWriter {
 
   final Duration pollInterval;
 
-  /// Reads `FLUTTER_NETWORK_MCP_POLL_MS` env var (50–60000). Defaults to 2000.
+  /// Reads `GLINT_NETWORK_POLL_MS` env var (50–60000). Defaults to 2000.
   static Duration _envPollInterval() {
-    final raw = io.Platform.environment['FLUTTER_NETWORK_MCP_POLL_MS'];
+    final raw = networkEnv['GLINT_NETWORK_POLL_MS'];
     final parsed = raw == null ? null : int.tryParse(raw);
     if (parsed == null) return const Duration(seconds: 2);
     final clamped = parsed < 50 ? 50 : (parsed > 60000 ? 60000 : parsed);
